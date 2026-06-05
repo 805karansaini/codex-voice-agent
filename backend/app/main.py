@@ -46,6 +46,12 @@ async def list_history() -> list[dict[str, object]]:
     return history.list()
 
 
+@app.delete("/api/history")
+async def clear_history() -> dict[str, object]:
+    history.clear()
+    return {"ok": True}
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest) -> dict[str, object]:
     text = req.message.strip()

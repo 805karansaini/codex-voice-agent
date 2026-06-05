@@ -29,3 +29,7 @@ class HistoryStore:
             rows.append(item)
             self.path.write_text(json.dumps(rows[-200:], indent=2), encoding="utf-8")
         return item
+
+    def clear(self) -> None:
+        with self.lock:
+            self.path.write_text("[]", encoding="utf-8")

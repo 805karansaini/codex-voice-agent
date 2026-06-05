@@ -15,6 +15,3 @@ dependencies = [
 
 [tool.uv]
 compile-bytecode = false
-
-[tool.uv.env]
-PYTHONDONTWRITEBYTECODE = "1"
