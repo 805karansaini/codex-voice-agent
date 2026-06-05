@@ -1,0 +1,20 @@
+[project]
+name = "codex-voice-agent"
+version = "0.1.0"
+description = "Local voice app that uses Gemini Live and Codex SDK."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.14",
+    "uvicorn[standard]==0.35.0",
+    "google-genai==1.33.0",
+    "openai-codex",
+    "python-dotenv==1.1.1",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.10",
+]
+
+[tool.uv]
+compile-bytecode = false
+
+[tool.uv.env]
+PYTHONDONTWRITEBYTECODE = "1"
