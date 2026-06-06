@@ -50,13 +50,91 @@ class AudioStreamPlayer {
   private nextPlayTime: number = 0;
   private activeSources: AudioBufferSourceNode[] = [];
   private sampleRate: number = 24000;
+  private workletNode: AudioWorkletNode | null = null;
+  private useWorklet: boolean = false;
 
   constructor() {}
 
   init() {
     if (!this.ctx) {
-      this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      try {
+        this.ctx = new AudioCtx({ sampleRate: 24000 });
+      } catch {
+        this.ctx = new AudioCtx();
+      }
       this.nextPlayTime = 0;
+
+      if (this.ctx.audioWorklet) {
+        const code = `
+          class PlaybackProcessor extends AudioWorkletProcessor {
+            constructor() {
+              super();
+              this.buffer = new Float32Array(24000 * 4);
+              this.writePtr = 0;
+              this.readPtr = 0;
+              this.bufferedCount = 0;
+              this.prebuffering = true;
+              this.prebufferThreshold = 2400 * 2; // ~200ms prebuffer
+
+              this.port.onmessage = (e) => {
+                if (e.data === "clear") {
+                  this.writePtr = 0;
+                  this.readPtr = 0;
+                  this.bufferedCount = 0;
+                  this.prebuffering = true;
+                  return;
+                }
+                const data = e.data;
+                for (let i = 0; i < data.length; i++) {
+                  this.buffer[this.writePtr] = data[i];
+                  this.writePtr = (this.writePtr + 1) % this.buffer.length;
+                }
+                this.bufferedCount += data.length;
+                if (this.prebuffering && this.bufferedCount >= this.prebufferThreshold) {
+                  this.prebuffering = false;
+                }
+              };
+            }
+
+            process(inputs, outputs, parameters) {
+              const output = outputs[0];
+              const channel = output[0];
+              const length = channel.length;
+
+              if (this.prebuffering || this.bufferedCount < length) {
+                for (let i = 0; i < length; i++) {
+                  channel[i] = 0;
+                }
+                if (this.bufferedCount < length && !this.prebuffering) {
+                  this.prebuffering = true;
+                }
+              } else {
+                for (let i = 0; i < length; i++) {
+                  channel[i] = this.buffer[this.readPtr];
+                  this.readPtr = (this.readPtr + 1) % this.buffer.length;
+                }
+                this.bufferedCount -= length;
+              }
+              return true;
+            }
+          }
+          registerProcessor('playback-processor', PlaybackProcessor);
+        `;
+        const blob = new Blob([code], { type: "application/javascript" });
+        const url = URL.createObjectURL(blob);
+        this.ctx.audioWorklet.addModule(url).then(() => {
+          URL.revokeObjectURL(url);
+          if (this.ctx) {
+            this.workletNode = new AudioWorkletNode(this.ctx, 'playback-processor');
+            this.workletNode.connect(this.ctx.destination);
+            this.useWorklet = true;
+          }
+        }).catch((err) => {
+          console.warn("Could not load playback audio worklet, falling back", err);
+          this.useWorklet = false;
+        });
+      }
     }
     if (this.ctx.state === "suspended") {
       this.ctx.resume();
@@ -67,30 +145,37 @@ class AudioStreamPlayer {
     this.init();
     if (!this.ctx) return;
 
-    const audioBuffer = this.ctx.createBuffer(1, float32Data.length, this.sampleRate);
-    audioBuffer.getChannelData(0).set(float32Data);
+    if (this.useWorklet && this.workletNode) {
+      this.workletNode.port.postMessage(float32Data);
+    } else {
+      const audioBuffer = this.ctx.createBuffer(1, float32Data.length, this.sampleRate);
+      audioBuffer.getChannelData(0).set(float32Data);
 
-    const source = this.ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.ctx.destination);
+      const source = this.ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.ctx.destination);
 
-    const currentTime = this.ctx.currentTime;
-    if (this.nextPlayTime < currentTime) {
-      this.nextPlayTime = currentTime + 0.03; // 30ms latency buffer to prevent gaps
+      const currentTime = this.ctx.currentTime;
+      if (this.nextPlayTime < currentTime) {
+        this.nextPlayTime = currentTime + 0.03;
+      }
+
+      source.start(this.nextPlayTime);
+      this.activeSources.push(source);
+
+      const duration = audioBuffer.duration;
+      source.onended = () => {
+        this.activeSources = this.activeSources.filter((s) => s !== source);
+      };
+
+      this.nextPlayTime += duration;
     }
-
-    source.start(this.nextPlayTime);
-    this.activeSources.push(source);
-
-    const duration = audioBuffer.duration;
-    source.onended = () => {
-      this.activeSources = this.activeSources.filter((s) => s !== source);
-    };
-
-    this.nextPlayTime += duration;
   }
 
   stop() {
+    if (this.workletNode) {
+      this.workletNode.port.postMessage("clear");
+    }
     this.activeSources.forEach((source) => {
       try {
         source.stop();
@@ -160,7 +245,7 @@ export function useLiveVoice({
   const websocketRef = useRef<WebSocket | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | AudioWorkletNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const bufferedAudioRef = useRef<string[]>([]);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -442,35 +527,91 @@ export function useLiveVoice({
       });
       const audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
 
       streamRef.current = stream;
       contextRef.current = audioContext;
       sourceRef.current = source;
-      processorRef.current = processor;
+
+      let micWorkletNode: AudioWorkletNode | null = null;
+      const hasWorklet = typeof audioContext.audioWorklet !== "undefined";
+
+      if (hasWorklet) {
+        const micCode = `
+          class MicProcessor extends AudioWorkletProcessor {
+            process(inputs, outputs, parameters) {
+              const input = inputs[0];
+              if (input && input.length > 0) {
+                const channelData = input[0];
+                this.port.postMessage(new Float32Array(channelData));
+              }
+              return true;
+            }
+          }
+          registerProcessor('mic-processor', MicProcessor);
+        `;
+        const blob = new Blob([micCode], { type: "application/javascript" });
+        const url = URL.createObjectURL(blob);
+        try {
+          await audioContext.audioWorklet.addModule(url);
+          URL.revokeObjectURL(url);
+          micWorkletNode = new AudioWorkletNode(audioContext, 'mic-processor');
+          processorRef.current = micWorkletNode;
+
+          micWorkletNode.port.onmessage = (event) => {
+            if (mutedRef.current) return;
+            const input = event.data;
+            const payload = JSON.stringify({
+              type: "audio",
+              mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
+              data: encodePcmChunk(input, audioContext.sampleRate),
+            });
+            const websocket = websocketRef.current;
+            if (websocket?.readyState === WebSocket.OPEN) {
+              websocket.send(payload);
+              return;
+            }
+            bufferedAudioRef.current.push(payload);
+            if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
+              bufferedAudioRef.current.splice(0, bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS);
+            }
+          };
+
+          source.connect(micWorkletNode);
+          micWorkletNode.connect(audioContext.destination);
+        } catch (workletErr) {
+          console.warn("Failed to load mic audio worklet, falling back to script processor", workletErr);
+          micWorkletNode = null;
+        }
+      }
+
+      if (!micWorkletNode) {
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
+
+        processor.onaudioprocess = (event) => {
+          if (mutedRef.current) return;
+          const input = event.inputBuffer.getChannelData(0);
+          const payload = JSON.stringify({
+            type: "audio",
+            mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
+            data: encodePcmChunk(input, audioContext.sampleRate),
+          });
+          const websocket = websocketRef.current;
+          if (websocket?.readyState === WebSocket.OPEN) {
+            websocket.send(payload);
+            return;
+          }
+          bufferedAudioRef.current.push(payload);
+          if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
+            bufferedAudioRef.current.splice(0, bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS);
+          }
+        };
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+      }
+
       connectSocket();
-
-      processor.onaudioprocess = (event) => {
-        if (mutedRef.current) return;
-        const input = event.inputBuffer.getChannelData(0);
-        const payload = JSON.stringify({
-          type: "audio",
-          mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
-          data: encodePcmChunk(input, audioContext.sampleRate),
-        });
-        const websocket = websocketRef.current;
-        if (websocket?.readyState === WebSocket.OPEN) {
-          websocket.send(payload);
-          return;
-        }
-        bufferedAudioRef.current.push(payload);
-        if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
-          bufferedAudioRef.current.splice(0, bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS);
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
     } catch (err) {
       await stopMicrophone();
       websocketRef.current?.close();
