@@ -373,6 +373,13 @@ async def live_voice(websocket: WebSocket) -> None:
                     for part in content.model_turn.parts or []:
                         if part.inline_data and part.inline_data.data:
                             audio_chunks.append(part.inline_data.data)
+                            audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
+                            await websocket.send_json(
+                                {
+                                    "type": "assistant_audio_delta",
+                                    "data": audio_b64,
+                                }
+                            )
                         if part.text:
                             output_text_chunks.append(part.text)
                             await websocket.send_json({"type": "assistant_delta", "text": part.text})

@@ -30,6 +30,77 @@ function encodePcmChunk(input: Float32Array, sourceRate: number): string {
   return btoa(binary);
 }
 
+function base64ToFloat32Array(base64: string): Float32Array {
+  const binaryString = window.atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const int16Array = new Int16Array(bytes.buffer);
+  const float32Array = new Float32Array(int16Array.length);
+  for (let i = 0; i < int16Array.length; i++) {
+    float32Array[i] = int16Array[i] / 32768;
+  }
+  return float32Array;
+}
+
+class AudioStreamPlayer {
+  private ctx: AudioContext | null = null;
+  private nextPlayTime: number = 0;
+  private activeSources: AudioBufferSourceNode[] = [];
+  private sampleRate: number = 24000;
+
+  constructor() {}
+
+  init() {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      this.nextPlayTime = 0;
+    }
+    if (this.ctx.state === "suspended") {
+      this.ctx.resume();
+    }
+  }
+
+  playChunk(float32Data: Float32Array) {
+    this.init();
+    if (!this.ctx) return;
+
+    const audioBuffer = this.ctx.createBuffer(1, float32Data.length, this.sampleRate);
+    audioBuffer.getChannelData(0).set(float32Data);
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.ctx.destination);
+
+    const currentTime = this.ctx.currentTime;
+    if (this.nextPlayTime < currentTime) {
+      this.nextPlayTime = currentTime + 0.03; // 30ms latency buffer to prevent gaps
+    }
+
+    source.start(this.nextPlayTime);
+    this.activeSources.push(source);
+
+    const duration = audioBuffer.duration;
+    source.onended = () => {
+      this.activeSources = this.activeSources.filter((s) => s !== source);
+    };
+
+    this.nextPlayTime += duration;
+  }
+
+  stop() {
+    this.activeSources.forEach((source) => {
+      try {
+        source.stop();
+      } catch {}
+    });
+    this.activeSources = [];
+    this.nextPlayTime = 0;
+  }
+}
+
 interface UseLiveVoiceProps {
   getWorkdir: () => string | undefined;
   getProjectId: () => string | undefined;
@@ -70,6 +141,16 @@ export function useLiveVoice({
   const reconnectTimerRef = useRef<number | null>(null);
   const manuallyStoppedRef = useRef(false);
   const usedCodexRef = useRef(false);
+  const audioPlayerRef = useRef<AudioStreamPlayer | null>(null);
+  const hasStreamedAudioRef = useRef(false);
+
+  const getAudioPlayer = () => {
+    if (!audioPlayerRef.current) {
+      audioPlayerRef.current = new AudioStreamPlayer();
+    }
+    audioPlayerRef.current.init();
+    return audioPlayerRef.current;
+  };
   const cbRef = useRef({
     onTurn,
     onAudio,
@@ -180,14 +261,29 @@ export function useLiveVoice({
             cbRef.current.onTurn(userText || "Voice message", assistantText || "Done.", usedCodexRef.current);
           }
           usedCodexRef.current = false;
-          if (payload.audio_data_url) cbRef.current.onAudio(payload.audio_data_url);
+          if (payload.audio_data_url && !hasStreamedAudioRef.current) {
+            cbRef.current.onAudio(payload.audio_data_url);
+          }
+          hasStreamedAudioRef.current = false;
           setUserPreview("");
           setAssistantPreview("");
           setState("live");
           setMessage("Live with Gemini — speak again when ready.");
         } else if (payload.type === "interrupted") {
           setAssistantPreview("");
+          audioPlayerRef.current?.stop();
           log("Response interrupted by new speech.");
+        } else if (payload.type === "assistant_audio_delta") {
+          const audioB64 = payload.data;
+          if (audioB64) {
+            try {
+              const float32 = base64ToFloat32Array(audioB64);
+              getAudioPlayer().playChunk(float32);
+              hasStreamedAudioRef.current = true;
+            } catch (err) {
+              log(`Error playing audio chunk: ${err}`);
+            }
+          }
         } else if (payload.type === "tool_call_started") {
           usedCodexRef.current = true;
           setState("working");
@@ -270,6 +366,7 @@ export function useLiveVoice({
       reconnectTimerRef.current = null;
     }
     bufferedAudioRef.current = [];
+    audioPlayerRef.current?.stop();
     await stopMicrophone();
     websocketRef.current?.send(JSON.stringify({ type: "close" }));
     websocketRef.current?.close();
@@ -294,6 +391,10 @@ export function useLiveVoice({
     setMuted(false);
     mutedRef.current = false;
     bufferedAudioRef.current = [];
+    hasStreamedAudioRef.current = false;
+    try {
+      getAudioPlayer();
+    } catch {}
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
