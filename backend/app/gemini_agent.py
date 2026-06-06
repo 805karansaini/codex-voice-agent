@@ -55,14 +55,11 @@ def _pcm_to_wav_data_url(audio_chunks: list[bytes], sample_rate: int = 24000) ->
     return f"data:audio/wav;base64,{encoded}"
 
 
-async def ask_gemini(message: str, settings: Settings) -> dict[str, Any]:
-    if not settings.google_api_key:
-        raise RuntimeError("GOOGLE_API_KEY is not set")
-
-    client = genai.Client(api_key=settings.google_api_key)
-    config = types.LiveConnectConfig(
+def live_connect_config(settings: Settings) -> types.LiveConnectConfig:
+    return types.LiveConnectConfig(
         system_instruction=SYSTEM_INSTRUCTION,
         response_modalities=[types.Modality.AUDIO],
+        input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         speech_config=types.SpeechConfig(
             language_code=settings.gemini_language_code,
@@ -72,6 +69,14 @@ async def ask_gemini(message: str, settings: Settings) -> dict[str, Any]:
         ),
         tools=[_codex_tool()],
     )
+
+
+async def ask_gemini(message: str, settings: Settings) -> dict[str, Any]:
+    if not settings.google_api_key:
+        raise RuntimeError("GOOGLE_API_KEY is not set")
+
+    client = genai.Client(api_key=settings.google_api_key)
+    config = live_connect_config(settings)
 
     tool_calls = []
     text_chunks: list[str] = []

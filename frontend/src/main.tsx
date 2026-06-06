@@ -36,6 +36,7 @@ type TranscribeResponse = {
 };
 
 const API = import.meta.env.VITE_API_BASE_URL || "";
+const LIVE_AUDIO_RATE = 16000;
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
 const PREFERRED_VOICE_NAMES = [
@@ -51,6 +52,12 @@ const PREFERRED_VOICE_NAMES = [
 ];
 
 type SpeechState = "idle" | "starting" | "listening" | "recording" | "processing" | "unsupported" | "error";
+type LiveVoiceState = "idle" | "connecting" | "live" | "thinking" | "error";
+type DebugEntry = {
+  id: string;
+  time: string;
+  message: string;
+};
 
 function useSpeech(onText: (text: string) => void, onAudio: (audio: Blob) => void) {
   const [listening, setListening] = useState(false);
@@ -121,6 +128,27 @@ function useSpeech(onText: (text: string) => void, onAudio: (audio: Blob) => voi
     return true;
   };
 
+  const startFallbackRecorder = async (fallbackMessage: string) => {
+    try {
+      const recorderStarted = await startRecorder();
+      if (!recorderStarted) {
+        setListening(false);
+        setState("unsupported");
+        setMessage("Recorded voice input is not available in this browser.");
+        return false;
+      }
+      setListening(true);
+      setState("recording");
+      setMessage(fallbackMessage);
+      return true;
+    } catch {
+      setListening(false);
+      setState("error");
+      setMessage("Microphone permission was blocked. Allow microphone access and try again.");
+      return false;
+    }
+  };
+
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -160,15 +188,18 @@ function useSpeech(onText: (text: string) => void, onAudio: (audio: Blob) => voi
 
       transcriptRef.current = clean;
       setTranscriptPreview(transcriptRef.current);
-      setState("processing");
-      setMessage("Got it. Preparing the message.");
 
       const finalResult = Array.from(event.results).some((result: any) => result.isFinal);
       if (finalResult && !sentRef.current) {
         sentRef.current = true;
         stopRecorder(false);
         setListening(false);
+        setState("processing");
+        setMessage("Got it. Preparing the message.");
         onTextRef.current(transcriptRef.current);
+      } else {
+        setState("listening");
+        setMessage("Listening. Keep speaking.");
       }
     };
 
@@ -192,10 +223,10 @@ function useSpeech(onText: (text: string) => void, onAudio: (audio: Blob) => voi
       }
 
       errorRef.current = true;
-      if ((error === "network" || error === "no-speech") && recorderRef.current?.state === "recording") {
-        setListening(true);
-        setState("recording");
-        setMessage("Browser speech failed. I am recording instead; press Stop voice when you finish speaking.");
+      if (error === "network" || error === "service-not-allowed") {
+        void startFallbackRecorder(
+          "Browser live speech failed. I am recording instead; press Stop voice when you finish speaking.",
+        );
         return;
       }
 
@@ -272,39 +303,14 @@ function useSpeech(onText: (text: string) => void, onAudio: (audio: Blob) => voi
       setState("starting");
       setMessage("Opening microphone.");
 
-      let recorderStarted = false;
-      try {
-        recorderStarted = await startRecorder();
-      } catch {
-        setListening(false);
-        setState("error");
-        setMessage("Microphone permission was blocked. Allow microphone access and try again.");
-        return;
-      }
-
       if (!recognitionRef.current) {
-        if (recorderStarted) {
-          setListening(true);
-          setState("recording");
-          setMessage("Recording audio. Press Stop voice when you finish speaking.");
-          return;
-        }
-        setState("unsupported");
-        setMessage("Speech input is not available in this browser.");
+        await startFallbackRecorder("Browser live speech is unavailable. Recording audio instead; press Stop voice when finished.");
         return;
       }
       try {
         recognitionRef.current.start();
       } catch {
-        if (recorderStarted) {
-          setListening(true);
-          setState("recording");
-          setMessage("Browser speech is unavailable. Recording audio instead; press Stop voice when finished.");
-          return;
-        }
-        setListening(false);
-        setState("error");
-        setMessage("Voice input is already starting. Wait a moment and try again.");
+        await startFallbackRecorder("Browser live speech did not start. Recording audio instead; press Stop voice when finished.");
       }
     },
     stop: () => {
@@ -333,6 +339,228 @@ function useSpeech(onText: (text: string) => void, onAudio: (audio: Blob) => voi
   };
 }
 
+function websocketUrl(path: string) {
+  if (API.startsWith("http")) return `${API.replace(/^http/, "ws")}${path}`;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}${path}`;
+}
+
+function encodePcmChunk(input: Float32Array, sourceRate: number) {
+  const ratio = sourceRate / LIVE_AUDIO_RATE;
+  const outputLength = Math.max(1, Math.floor(input.length / ratio));
+  const pcm = new Int16Array(outputLength);
+
+  for (let index = 0; index < outputLength; index += 1) {
+    const start = Math.floor(index * ratio);
+    const end = Math.min(input.length, Math.floor((index + 1) * ratio));
+    let total = 0;
+    let samples = 0;
+    for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+      total += input[sampleIndex];
+      samples += 1;
+    }
+    const sample = Math.max(-1, Math.min(1, samples ? total / samples : input[start] || 0));
+    pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+
+  const bytes = new Uint8Array(pcm.buffer);
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    binary += String.fromCharCode(bytes[index]);
+  }
+  return btoa(binary);
+}
+
+function useLiveVoice({
+  onTurn,
+  onAudio,
+  onDebug,
+}: {
+  onTurn: (userText: string, assistantText: string) => void;
+  onAudio: (audioUrl: string) => void;
+  onDebug: (message: string) => void;
+}) {
+  const [state, setState] = useState<LiveVoiceState>("idle");
+  const [message, setMessage] = useState("Gemini Live voice is ready.");
+  const [userPreview, setUserPreview] = useState("");
+  const [assistantPreview, setAssistantPreview] = useState("");
+  const websocketRef = useRef<WebSocket | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const contextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const onTurnRef = useRef(onTurn);
+  const onAudioRef = useRef(onAudio);
+  const onDebugRef = useRef(onDebug);
+
+  useEffect(() => {
+    onTurnRef.current = onTurn;
+    onAudioRef.current = onAudio;
+    onDebugRef.current = onDebug;
+  }, [onTurn, onAudio, onDebug]);
+
+  const log = useCallback((text: string) => {
+    onDebugRef.current(text);
+  }, []);
+
+  const stopMicrophone = useCallback(async () => {
+    processorRef.current?.disconnect();
+    sourceRef.current?.disconnect();
+    processorRef.current = null;
+    sourceRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (contextRef.current && contextRef.current.state !== "closed") {
+      await contextRef.current.close().catch(() => undefined);
+    }
+    contextRef.current = null;
+  }, []);
+
+  const stop = useCallback(async () => {
+    log("Stopping live voice session.");
+    await stopMicrophone();
+    websocketRef.current?.send(JSON.stringify({ type: "close" }));
+    websocketRef.current?.close();
+    websocketRef.current = null;
+    setState("idle");
+    setMessage("Gemini Live voice is ready.");
+  }, [log, stopMicrophone]);
+
+  const start = useCallback(async () => {
+    if (state === "connecting" || state === "live" || state === "thinking") return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof window.AudioContext === "undefined") {
+      setState("error");
+      setMessage("This browser cannot open live microphone audio.");
+      log("Live voice blocked: browser does not expose microphone audio APIs.");
+      return;
+    }
+
+    setState("connecting");
+    setMessage("Connecting live microphone to Gemini.");
+    setUserPreview("");
+    setAssistantPreview("");
+    log("Opening microphone for Gemini Live.");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const websocket = new WebSocket(websocketUrl("/api/live"));
+
+      streamRef.current = stream;
+      contextRef.current = audioContext;
+      sourceRef.current = source;
+      processorRef.current = processor;
+      websocketRef.current = websocket;
+
+      websocket.onopen = () => {
+        log("WebSocket connected to backend live endpoint.");
+        setState("live");
+        setMessage("Live with Gemini. Speak naturally; pause when you want the agent to answer.");
+      };
+
+      websocket.onmessage = (event) => {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "ready" || payload.type === "debug") {
+          log(payload.message || payload.type);
+        } else if (payload.type === "user_transcript") {
+          setUserPreview((current) => `${current}${payload.text || ""}`);
+          setState("thinking");
+          setMessage("Gemini heard you. Waiting for the reply.");
+        } else if (payload.type === "assistant_delta") {
+          setAssistantPreview((current) => `${current}${payload.text || ""}`);
+          setState("thinking");
+          setMessage("Gemini is replying.");
+        } else if (payload.type === "turn_complete") {
+          const userText = String(payload.user_text || "").trim();
+          const assistantText = String(payload.assistant_text || "").trim();
+          if (userText || assistantText) onTurnRef.current(userText || "Voice message", assistantText || "Done.");
+          if (payload.audio_data_url) onAudioRef.current(payload.audio_data_url);
+          setUserPreview("");
+          setAssistantPreview("");
+          setState("live");
+          setMessage("Live with Gemini. Speak again when ready.");
+          log("Gemini Live turn complete.");
+        } else if (payload.type === "interrupted") {
+          setAssistantPreview("");
+          log("Gemini response interrupted by new speech.");
+        } else if (payload.type === "tool_call") {
+          log(`Codex handoff finished: ${payload.name || "tool"}.`);
+        } else if (payload.type === "error") {
+          setState("error");
+          setMessage(payload.message || "Live voice failed.");
+          log(`Live voice error: ${payload.message || "unknown error"}`);
+        }
+      };
+
+      websocket.onerror = () => {
+        setState("error");
+        setMessage("Live voice connection failed.");
+        log("WebSocket error from live voice connection.");
+      };
+
+      websocket.onclose = () => {
+        void stopMicrophone();
+        websocketRef.current = null;
+        setState((current) => (current === "error" ? current : "idle"));
+        setMessage((current) => (current === "Live voice connection failed." ? current : "Gemini Live voice is ready."));
+        log("Live voice socket closed.");
+      };
+
+      processor.onaudioprocess = (event) => {
+        if (websocket.readyState !== WebSocket.OPEN) return;
+        const input = event.inputBuffer.getChannelData(0);
+        websocket.send(
+          JSON.stringify({
+            type: "audio",
+            mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
+            data: encodePcmChunk(input, audioContext.sampleRate),
+          }),
+        );
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      log(`Streaming microphone PCM at ${LIVE_AUDIO_RATE} Hz from ${Math.round(audioContext.sampleRate)} Hz input.`);
+    } catch (err) {
+      await stopMicrophone();
+      websocketRef.current?.close();
+      websocketRef.current = null;
+      setState("error");
+      setMessage(err instanceof Error ? err.message : "Could not start live voice.");
+      log(`Could not start live voice: ${err instanceof Error ? err.message : "unknown error"}`);
+    }
+  }, [log, state, stopMicrophone]);
+
+  useEffect(() => {
+    return () => {
+      void stop();
+    };
+  }, [stop]);
+
+  return {
+    active: state === "connecting" || state === "live" || state === "thinking",
+    supported: Boolean(
+      typeof navigator.mediaDevices?.getUserMedia === "function" &&
+        typeof window.AudioContext !== "undefined" &&
+        typeof window.WebSocket !== "undefined",
+    ),
+    state,
+    message,
+    transcriptPreview: userPreview || assistantPreview,
+    start,
+    stop,
+  };
+}
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -344,6 +572,8 @@ function App() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
   const [pendingAudioUrl, setPendingAudioUrl] = useState("");
+  const [debugOpen, setDebugOpen] = useState(true);
+  const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const hasMessages = messages.length > 0;
@@ -480,15 +710,31 @@ function App() {
     [send],
   );
 
-  const speech = useSpeech((text) => send(text), transcribeAndSend);
-  const voiceActive = speech.listening || speech.state === "recording";
+  const addDebug = useCallback((message: string) => {
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setDebugEntries((current) => [{ id: crypto.randomUUID(), time, message }, ...current].slice(0, 18));
+  }, []);
+
+  const liveVoice = useLiveVoice({
+    onTurn: (userText, assistantText) => {
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "user", text: userText },
+        { id: crypto.randomUUID(), role: "assistant", text: assistantText },
+      ]);
+      scrollToBottom();
+    },
+    onAudio: playResponseAudio,
+    onDebug: addDebug,
+  });
+  const voiceActive = liveVoice.active;
 
   const toggleVoice = () => {
     primeAudioPlayback();
     if (voiceActive) {
-      speech.stop();
+      liveVoice.stop();
     } else {
-      speech.start();
+      liveVoice.start();
     }
   };
 
@@ -533,21 +779,17 @@ function App() {
 
   const statusClass = status === "Ready" ? "ready" : status === "Backend offline" ? "offline" : "warn";
   const voiceHeading =
-    speech.state === "starting"
-      ? "Opening microphone"
-      : speech.state === "listening"
-        ? "Listening"
-        : speech.state === "recording"
-          ? "Recording fallback"
-          : speech.state === "processing"
-            ? "Processing speech"
-            : speech.state === "error"
-              ? "Voice needs attention"
-              : speech.state === "unsupported"
-                ? "Voice unavailable"
-                : busy
-                  ? "Agent running"
-                  : "Ready for the next task";
+    liveVoice.state === "connecting"
+      ? "Connecting live voice"
+      : liveVoice.state === "live"
+        ? "Live conversation"
+        : liveVoice.state === "thinking"
+          ? "Gemini is responding"
+          : liveVoice.state === "error"
+            ? "Voice needs attention"
+            : busy
+              ? "Agent running"
+              : "Ready for the next task";
 
   return (
     <main className="appShell">
@@ -608,19 +850,19 @@ function App() {
             <div className="startCopy">
               <p className="panelLabel">Start</p>
               <h3>{voiceHeading}</h3>
-              <p>{speech.message}</p>
-              {speech.transcriptPreview && <p className="voiceFeedback">Heard: {speech.transcriptPreview}</p>}
+              <p>{liveVoice.message}</p>
+              {liveVoice.transcriptPreview && <p className="voiceFeedback">{liveVoice.transcriptPreview}</p>}
             </div>
             <button
               className="voiceButton"
               onClick={toggleVoice}
-              disabled={!speech.supported || busy}
+              disabled={!liveVoice.supported || busy}
               type="button"
             >
               {voiceActive ? <MicrophoneSlash size={18} weight="bold" /> : <Microphone size={18} weight="bold" />}
-              {voiceActive ? "Stop voice" : "Start voice"}
+              {voiceActive ? "End live" : "Start live"}
             </button>
-            {!speech.supported && <p className="inlineHint">This browser does not expose speech input here.</p>}
+            {!liveVoice.supported && <p className="inlineHint">This browser does not expose live microphone audio here.</p>}
           </div>
 
           <div className="systemGrid">
@@ -644,7 +886,7 @@ function App() {
           <div className="voiceSelect">
             <label htmlFor="responseVoice">
               <SpeakerHigh size={17} weight="duotone" />
-              Fallback voice
+              Browser fallback voice
             </label>
             <select
               id="responseVoice"
@@ -659,6 +901,27 @@ function App() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="debugPanel">
+            <button className="debugToggle" type="button" onClick={() => setDebugOpen((current) => !current)}>
+              Live debug
+              <span>{debugOpen ? "Hide" : "Show"}</span>
+            </button>
+            {debugOpen && (
+              <div className="debugLog" aria-live="polite">
+                {debugEntries.length === 0 ? (
+                  <p>No live voice events yet.</p>
+                ) : (
+                  debugEntries.map((entry) => (
+                    <p key={entry.id}>
+                      <span>{entry.time}</span>
+                      {entry.message}
+                    </p>
+                  ))
+                )}
+              </div>
+            )}
           </div>
 
           <div className="activityPanel">

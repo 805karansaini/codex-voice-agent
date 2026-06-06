@@ -427,6 +427,59 @@ h3 {
   background: #f2f5f2;
 }
 
+.debugPanel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(30, 39, 46, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.debugToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  color: #24312d;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.debugToggle span {
+  color: #65706b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.debugLog {
+  max-height: 132px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  color: #394541;
+  background: rgba(242, 245, 241, 0.86);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.debugLog p {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.debugLog span {
+  color: #6d7773;
+  font-variant-numeric: tabular-nums;
+}
+
 .systemGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;

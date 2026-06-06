@@ -1,11 +1,14 @@
 import base64
+import asyncio
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from google import genai
+from google.genai import types
 
 from .codex_runner import run_codex
-from .gemini_agent import ask_gemini, transcribe_audio
+from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, live_connect_config, transcribe_audio
 from .history import HistoryStore
 from .settings import get_settings
 
@@ -83,6 +86,132 @@ async def transcribe(req: TranscribeRequest) -> dict[str, object]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"text": text}
+
+
+@app.websocket("/api/live")
+async def live_voice(websocket: WebSocket) -> None:
+    await websocket.accept()
+    if not settings.google_api_key:
+        await websocket.send_json({"type": "error", "message": "GOOGLE_API_KEY is not set"})
+        await websocket.close()
+        return
+
+    client = genai.Client(api_key=settings.google_api_key)
+    audio_chunks: list[bytes] = []
+    input_text_chunks: list[str] = []
+    output_text_chunks: list[str] = []
+
+    async def send_client_audio(session: object) -> None:
+        while True:
+            payload = await websocket.receive_json()
+            event_type = payload.get("type")
+            if event_type == "audio":
+                audio_base64 = str(payload.get("data") or "")
+                if not audio_base64:
+                    continue
+                audio_bytes = base64.b64decode(audio_base64)
+                mime_type = str(payload.get("mime_type") or "audio/pcm;rate=16000")
+                await session.send_realtime_input(audio=types.Blob(data=audio_bytes, mime_type=mime_type))
+            elif event_type == "stop":
+                await session.send_realtime_input(audio_stream_end=True)
+                await websocket.send_json({"type": "debug", "message": "Sent audio stream end to Gemini."})
+            elif event_type == "close":
+                return
+
+    async def receive_gemini(session: object) -> None:
+        nonlocal audio_chunks, input_text_chunks, output_text_chunks
+        async for server_message in session.receive():
+            if server_message.setup_complete:
+                await websocket.send_json({"type": "ready", "message": "Gemini Live session ready."})
+
+            if server_message.tool_call and server_message.tool_call.function_calls:
+                responses = []
+                user_text = "".join(input_text_chunks).strip()
+                for call in server_message.tool_call.function_calls:
+                    args = dict(call.args or {})
+                    task = str(args.get("task") or user_text or "Run the requested local task.")
+                    workdir = str(args.get("workdir") or settings.codex_default_workdir)
+                    codex_result = await run_codex(task, workdir, settings)
+                    responses.append(
+                        types.FunctionResponse(
+                            id=call.id,
+                            name=call.name,
+                            response={"result": codex_result.final_response, "workdir": codex_result.workdir},
+                        )
+                    )
+                    await websocket.send_json(
+                        {
+                            "type": "tool_call",
+                            "name": call.name,
+                            "result": codex_result.final_response,
+                            "workdir": codex_result.workdir,
+                        }
+                    )
+                await session.send_tool_response(function_responses=responses)
+
+            content = server_message.server_content
+            if not content:
+                continue
+
+            if content.interrupted:
+                audio_chunks = []
+                output_text_chunks = []
+                await websocket.send_json({"type": "interrupted"})
+
+            if content.input_transcription and content.input_transcription.text:
+                text = content.input_transcription.text
+                input_text_chunks.append(text)
+                await websocket.send_json({"type": "user_transcript", "text": text})
+
+            if content.output_transcription and content.output_transcription.text:
+                text = content.output_transcription.text
+                output_text_chunks.append(text)
+                await websocket.send_json({"type": "assistant_delta", "text": text})
+
+            if content.model_turn:
+                for part in content.model_turn.parts or []:
+                    if part.inline_data and part.inline_data.data:
+                        audio_chunks.append(part.inline_data.data)
+                    if part.text:
+                        output_text_chunks.append(part.text)
+                        await websocket.send_json({"type": "assistant_delta", "text": part.text})
+
+            if content.turn_complete:
+                user_text = "".join(input_text_chunks).strip()
+                assistant_text = "".join(output_text_chunks).strip() or "Done."
+                if user_text:
+                    history.append("user", user_text)
+                history.append("assistant", assistant_text)
+                await websocket.send_json(
+                    {
+                        "type": "turn_complete",
+                        "user_text": user_text,
+                        "assistant_text": assistant_text,
+                        "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
+                    }
+                )
+                audio_chunks = []
+                input_text_chunks = []
+                output_text_chunks = []
+
+    try:
+        async with client.aio.live.connect(model=settings.gemini_model, config=live_connect_config(settings)) as session:
+            await websocket.send_json({"type": "debug", "message": "Connected to Gemini Live."})
+            send_task = asyncio.create_task(send_client_audio(session))
+            receive_task = asyncio.create_task(receive_gemini(session))
+            done, pending = await asyncio.wait({send_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            for task in done:
+                task.result()
+            await websocket.close()
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        try:
+            await websocket.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            return
 
 
 @app.post("/api/codex")
