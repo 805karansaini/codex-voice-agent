@@ -13,9 +13,16 @@ class HistoryStore:
         if not self.path.exists():
             self.path.write_text("[]", encoding="utf-8")
 
-    def list(self, project_id: str | None = None, workdir: str | None = None) -> list[dict[str, Any]]:
+    def list(
+        self,
+        project_id: str | None = None,
+        workdir: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         with self.lock:
             rows = json.loads(self.path.read_text(encoding="utf-8"))
+        if chat_id is not None:
+            return [row for row in rows if row.get("meta", {}).get("chat_id") == chat_id]
         if project_id is not None:
             return [row for row in rows if row.get("meta", {}).get("project_id") == project_id]
         if workdir is not None:
@@ -35,15 +42,22 @@ class HistoryStore:
             self.path.write_text(json.dumps(rows[-200:], indent=2), encoding="utf-8")
         return item
 
-    def clear(self, project_id: str | None = None, workdir: str | None = None) -> None:
+    def clear(
+        self,
+        project_id: str | None = None,
+        workdir: str | None = None,
+        chat_id: str | None = None,
+    ) -> None:
         with self.lock:
-            if project_id is None and workdir is None:
+            if project_id is None and workdir is None and chat_id is None:
                 self.path.write_text("[]", encoding="utf-8")
                 return
             rows = json.loads(self.path.read_text(encoding="utf-8"))
             kept = []
             for row in rows:
                 meta = row.get("meta", {})
+                if chat_id is not None and meta.get("chat_id") == chat_id:
+                    continue
                 if project_id is not None and meta.get("project_id") == project_id:
                     continue
                 if workdir is not None and meta.get("workdir") == workdir:
@@ -76,4 +90,48 @@ class ProjectStore:
         with self.lock:
             rows = json.loads(self.path.read_text(encoding="utf-8"))
             rows = [row for row in rows if row.get("id") != project_id]
+            self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+
+
+class ChatStore:
+    """Stores the list of chats (conversations) that live inside each project.
+
+    A project is pinned to one folder (the working directory); a chat is one
+    conversation thread inside that project. Multiple chats share the project's
+    folder but keep independent message histories (keyed by chat_id in the
+    HistoryStore).
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.lock = Lock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.write_text("[]", encoding="utf-8")
+
+    def list(self, project_id: str | None = None) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = json.loads(self.path.read_text(encoding="utf-8"))
+        if project_id is not None:
+            return [row for row in rows if row.get("projectId") == project_id]
+        return rows
+
+    def upsert(self, chat: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            rows = json.loads(self.path.read_text(encoding="utf-8"))
+            rows = [row for row in rows if row.get("id") != chat.get("id")]
+            rows.insert(0, chat)
+            self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        return chat
+
+    def delete(self, chat_id: str) -> None:
+        with self.lock:
+            rows = json.loads(self.path.read_text(encoding="utf-8"))
+            rows = [row for row in rows if row.get("id") != chat_id]
+            self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+
+    def delete_for_project(self, project_id: str) -> None:
+        with self.lock:
+            rows = json.loads(self.path.read_text(encoding="utf-8"))
+            rows = [row for row in rows if row.get("projectId") != project_id]
             self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")

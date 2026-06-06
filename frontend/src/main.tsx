@@ -6,6 +6,7 @@ import {
   BracketsCurly,
   CaretLeft,
   CaretRight,
+  ChatText,
   Cpu,
   DotsThreeVertical,
   FileMagnifyingGlass,
@@ -16,11 +17,14 @@ import {
   Microphone,
   MicrophoneSlash,
   Moon,
+  PencilSimple,
   Plugs,
+  Plus,
   SpeakerHigh,
   Sun,
   Terminal,
   TerminalWindow,
+  Trash,
   TreeStructure,
 } from "@phosphor-icons/react";
 import "./styles.css";
@@ -55,6 +59,13 @@ type Project = {
   createdAt: number;
 };
 
+type Chat = {
+  id: string;
+  projectId: string;
+  title: string;
+  createdAt: number;
+};
+
 type AgentResponse = {
   reply?: string;
   tool_calls?: unknown[];
@@ -71,6 +82,7 @@ type HistoryRow = {
     tool_calls?: unknown[];
     workdir?: string;
     project_id?: string;
+    chat_id?: string;
   };
 };
 
@@ -88,6 +100,7 @@ type ActionEntry = {
 type PendingAction = {
   text: string;
   project: Project;
+  chatId: string;
   mode: "agent" | "codex";
   reason: string;
 };
@@ -110,7 +123,10 @@ const PREFERRED_VOICE_NAMES = [
 
 const LS_PROJECTS = "cva.projects.v1";
 const LS_ACTIVE = "cva.activeProject.v1";
-const LS_THREADS = "cva.threads.v1";
+const LS_THREADS = "cva.threads.v1"; // legacy: one thread per project (migrated to chats)
+const LS_CHATS = "cva.chats.v1";
+const LS_MESSAGES = "cva.messages.v1";
+const LS_ACTIVE_CHAT = "cva.activeChat.v1";
 const LS_THEME = "cva.theme.v1";
 
 /* ---------------------------------------------------------------- storage */
@@ -129,6 +145,45 @@ function saveJSON(key: string, value: unknown) {
   } catch {
     /* ignore quota */
   }
+}
+
+/* ---------------------------------------------------------------- chat state */
+
+type ChatState = {
+  chats: Record<string, Chat[]>; // keyed by projectId, newest first
+  messages: Record<string, Message[]>; // keyed by chatId
+  activeChat: Record<string, string>; // projectId -> active chatId
+};
+
+function chatTitleFrom(text: string) {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (!clean) return "New chat";
+  return clean.length > 42 ? `${clean.slice(0, 42)}…` : clean;
+}
+
+// Hydrate chat state from localStorage. The first time the new multi-chat model
+// runs we migrate the legacy single-thread-per-project store so existing
+// conversations are not lost — each old project thread becomes one chat.
+function loadChatState(): ChatState {
+  if (localStorage.getItem(LS_CHATS) !== null) {
+    return {
+      chats: loadJSON<Record<string, Chat[]>>(LS_CHATS, {}),
+      messages: loadJSON<Record<string, Message[]>>(LS_MESSAGES, {}),
+      activeChat: loadJSON<Record<string, string>>(LS_ACTIVE_CHAT, {}),
+    };
+  }
+  const legacy = loadJSON<Record<string, Message[]>>(LS_THREADS, {});
+  const chats: Record<string, Chat[]> = {};
+  const messages: Record<string, Message[]> = {};
+  const activeChat: Record<string, string> = {};
+  for (const [projectId, msgs] of Object.entries(legacy)) {
+    const id = crypto.randomUUID();
+    const firstUser = msgs.find((m) => m.role === "user");
+    chats[projectId] = [{ id, projectId, title: firstUser ? chatTitleFrom(firstUser.text) : "Chat 1", createdAt: Date.now() }];
+    messages[id] = msgs;
+    activeChat[projectId] = id;
+  }
+  return { chats, messages, activeChat };
 }
 
 /* ---------------------------------------------------------------- audio utils */
@@ -168,6 +223,7 @@ function encodePcmChunk(input: Float32Array, sourceRate: number) {
 function useLiveVoice({
   getWorkdir,
   getProjectId,
+  getChatId,
   onTurn,
   onAudio,
   onDebug,
@@ -175,6 +231,7 @@ function useLiveVoice({
 }: {
   getWorkdir: () => string | undefined;
   getProjectId: () => string | undefined;
+  getChatId: () => string | undefined;
   onTurn: (userText: string, assistantText: string, usedCodex: boolean) => void;
   onAudio: (audioUrl: string) => void;
   onDebug: (message: string) => void;
@@ -193,11 +250,11 @@ function useLiveVoice({
   const reconnectTimerRef = useRef<number | null>(null);
   const manuallyStoppedRef = useRef(false);
   const usedCodexRef = useRef(false);
-  const cbRef = useRef({ onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId });
+  const cbRef = useRef({ onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId, getChatId });
 
   useEffect(() => {
-    cbRef.current = { onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId };
-  }, [onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId]);
+    cbRef.current = { onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId, getChatId };
+  }, [onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId, getChatId]);
 
   const log = useCallback((text: string) => cbRef.current.onDebug(text), []);
 
@@ -229,7 +286,8 @@ function useLiveVoice({
       // Forward the active project's directory so Codex handoffs run there.
       const workdir = cbRef.current.getWorkdir();
       const projectId = cbRef.current.getProjectId();
-      if (workdir) websocket.send(JSON.stringify({ type: "config", workdir, project_id: projectId }));
+      const chatId = cbRef.current.getChatId();
+      if (workdir) websocket.send(JSON.stringify({ type: "config", workdir, project_id: projectId, chat_id: chatId }));
       flushBufferedAudio(websocket);
       setState("live");
       setMessage("Live with Gemini — speak naturally, pause to let the agent answer.");
@@ -671,7 +729,10 @@ function ActionPreviewModal({
 function App() {
   const [projects, setProjects] = useState<Project[]>(() => loadJSON<Project[]>(LS_PROJECTS, []));
   const [activeId, setActiveId] = useState<string>(() => loadJSON<string>(LS_ACTIVE, ""));
-  const [threads, setThreads] = useState<Record<string, Message[]>>(() => loadJSON(LS_THREADS, {}));
+  const initialChatState = useRef(loadChatState()).current;
+  const [chats, setChats] = useState<Record<string, Chat[]>>(initialChatState.chats);
+  const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>(initialChatState.messages);
+  const [activeChatByProject, setActiveChatByProject] = useState<Record<string, string>>(initialChatState.activeChat);
   const [theme, setTheme] = useState<"dark" | "light">(() => loadJSON<"dark" | "light">(LS_THEME, "dark"));
 
   const [input, setInput] = useState("");
@@ -697,16 +758,73 @@ function App() {
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const active = useMemo(() => projects.find((p) => p.id === activeId) || null, [projects, activeId]);
-  const messages = active ? threads[active.id] || [] : [];
+  const projectChats = active ? chats[active.id] || [] : [];
+  const activeChatId = active ? activeChatByProject[active.id] || "" : "";
+  const activeChat = projectChats.find((c) => c.id === activeChatId) || null;
+  const messages = activeChatId ? messagesByChat[activeChatId] || [] : [];
 
   /* persistence */
   useEffect(() => saveJSON(LS_PROJECTS, projects), [projects]);
   useEffect(() => saveJSON(LS_ACTIVE, activeId), [activeId]);
-  useEffect(() => saveJSON(LS_THREADS, threads), [threads]);
+  useEffect(() => saveJSON(LS_CHATS, chats), [chats]);
+  useEffect(() => saveJSON(LS_MESSAGES, messagesByChat), [messagesByChat]);
+  useEffect(() => saveJSON(LS_ACTIVE_CHAT, activeChatByProject), [activeChatByProject]);
   useEffect(() => {
     saveJSON(LS_THEME, theme);
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  /* chats (conversations inside a project) */
+  const persistChat = useCallback((chat: Chat) => {
+    fetch(`${API}/api/chats`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(chat),
+    }).catch(() => undefined);
+  }, []);
+
+  const createChat = useCallback(
+    (projectId: string, opts?: { title?: string; activate?: boolean }) => {
+      const chat: Chat = { id: crypto.randomUUID(), projectId, title: opts?.title || "New chat", createdAt: Date.now() };
+      setChats((current) => ({ ...current, [projectId]: [chat, ...(current[projectId] || [])] }));
+      setMessagesByChat((current) => ({ ...current, [chat.id]: [] }));
+      if (opts?.activate !== false) setActiveChatByProject((current) => ({ ...current, [projectId]: chat.id }));
+      persistChat(chat);
+      return chat;
+    },
+    [persistChat],
+  );
+
+  const selectChat = useCallback((projectId: string, chatId: string) => {
+    setActiveChatByProject((current) => ({ ...current, [projectId]: chatId }));
+  }, []);
+
+  const renameChat = useCallback(
+    (projectId: string, chatId: string, title: string) => {
+      const clean = title.trim();
+      if (!clean) return;
+      let updated: Chat | undefined;
+      setChats((current) => {
+        const next = (current[projectId] || []).map((c) => (c.id === chatId ? (updated = { ...c, title: clean }) : c));
+        return { ...current, [projectId]: next };
+      });
+      if (updated) persistChat(updated);
+    },
+    [persistChat],
+  );
+
+  const removeChat = useCallback((projectId: string, chatId: string) => {
+    window.speechSynthesis?.cancel();
+    setChats((current) => ({ ...current, [projectId]: (current[projectId] || []).filter((c) => c.id !== chatId) }));
+    // If the removed chat was active, clear it; the ensure-active effect picks the next one (or creates one).
+    setActiveChatByProject((current) => (current[projectId] === chatId ? { ...current, [projectId]: "" } : current));
+    setMessagesByChat((current) => {
+      const next = { ...current };
+      delete next[chatId];
+      return next;
+    });
+    fetch(`${API}/api/chats/${encodeURIComponent(chatId)}`, { method: "DELETE" }).catch(() => undefined);
+  }, []);
 
   /* voices */
   useEffect(() => {
@@ -757,26 +875,65 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
+  /* server-backed chats */
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API}/api/chats`)
+      .then((r) => (r.ok ? (r.json() as Promise<Chat[]>) : Promise.reject()))
+      .then((serverChats) => {
+        if (cancelled || serverChats.length === 0) return;
+        setChats((current) => {
+          const grouped = new Map<string, Map<string, Chat>>();
+          for (const [pid, list] of Object.entries(current)) grouped.set(pid, new Map(list.map((c) => [c.id, c])));
+          for (const chat of serverChats) {
+            if (!grouped.has(chat.projectId)) grouped.set(chat.projectId, new Map());
+            grouped.get(chat.projectId)!.set(chat.id, chat);
+          }
+          const next: Record<string, Chat[]> = {};
+          for (const [pid, byId] of grouped) next[pid] = Array.from(byId.values()).sort((a, b) => b.createdAt - a.createdAt);
+          return next;
+        });
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
       streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: "smooth" });
     });
   }, []);
 
-  useEffect(() => scrollToBottom(), [activeId, scrollToBottom]);
+  useEffect(() => scrollToBottom(), [activeId, activeChatId, scrollToBottom]);
 
+  // Every project needs at least one chat, and one of them must be active.
   useEffect(() => {
     if (!active) return;
+    const list = chats[active.id] || [];
+    if (list.length === 0) {
+      createChat(active.id);
+      return;
+    }
+    if (!list.some((c) => c.id === activeChatByProject[active.id])) {
+      setActiveChatByProject((current) => ({ ...current, [active.id]: list[0].id }));
+    }
+  }, [active, chats, activeChatByProject, createChat]);
+
+  // Hydrate the active chat's messages from server history (only if empty locally).
+  useEffect(() => {
+    if (!activeChatId) return;
     let cancelled = false;
-    fetch(`${API}/api/history?project_id=${encodeURIComponent(active.id)}`)
+    fetch(`${API}/api/history?chat_id=${encodeURIComponent(activeChatId)}`)
       .then((r) => (r.ok ? (r.json() as Promise<HistoryRow[]>) : Promise.reject()))
       .then((rows) => {
         if (cancelled || rows.length === 0) return;
-        setThreads((current) => ({ ...current, [active.id]: historyRowsToMessages(rows) }));
+        setMessagesByChat((current) =>
+          (current[activeChatId] || []).length > 0 ? current : { ...current, [activeChatId]: historyRowsToMessages(rows) },
+        );
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [active]);
+  }, [activeChatId]);
 
   // Validate the active folder and pull live git branch + file count for the panel.
   useEffect(() => {
@@ -810,17 +967,17 @@ function App() {
   }, []);
 
   const appendMessage = useCallback(
-    (projectId: string, msg: Message) => {
-      setThreads((current) => ({ ...current, [projectId]: [...(current[projectId] || []), msg] }));
+    (chatId: string, msg: Message) => {
+      setMessagesByChat((current) => ({ ...current, [chatId]: [...(current[chatId] || []), msg] }));
       scrollToBottom();
     },
     [scrollToBottom],
   );
 
-  const updateMessage = useCallback((projectId: string, id: string, patch: (m: Message) => Message) => {
-    setThreads((current) => {
-      const thread = current[projectId] || [];
-      return { ...current, [projectId]: thread.map((m) => (m.id === id ? patch(m) : m)) };
+  const updateMessage = useCallback((chatId: string, id: string, patch: (m: Message) => Message) => {
+    setMessagesByChat((current) => {
+      const thread = current[chatId] || [];
+      return { ...current, [chatId]: thread.map((m) => (m.id === id ? patch(m) : m)) };
     });
   }, []);
 
@@ -858,28 +1015,35 @@ function App() {
     }
   }, []);
 
-  const getWorkdir = useCallback(() => active?.path, [active]);
-  const getProjectId = useCallback(() => active?.id, [active]);
+  // Live voice is pinned to the project + chat it started in, so you can run a
+  // voice conversation in one chat while typing in another. The context is
+  // captured at start() time (see toggleVoice) and read back here.
+  const voiceCtxRef = useRef<{ project: Project; chatId: string } | null>(null);
+  const getWorkdir = useCallback(() => voiceCtxRef.current?.project.path ?? active?.path, [active]);
+  const getProjectId = useCallback(() => voiceCtxRef.current?.project.id ?? active?.id, [active]);
+  const getChatId = useCallback(() => voiceCtxRef.current?.chatId ?? activeChatId, [activeChatId]);
 
   const liveVoice = useLiveVoice({
     getWorkdir,
     getProjectId,
+    getChatId,
     onTurn: (userText, assistantText, usedCodex) => {
-      if (!active) return;
-      appendMessage(active.id, { id: crypto.randomUUID(), role: "user", text: userText, workdir: active.path });
-      appendMessage(active.id, { id: crypto.randomUUID(), role: "assistant", text: assistantText, usedCodex });
+      const ctx = voiceCtxRef.current;
+      if (!ctx) return;
+      appendMessage(ctx.chatId, { id: crypto.randomUUID(), role: "user", text: userText, workdir: ctx.project.path });
+      appendMessage(ctx.chatId, { id: crypto.randomUUID(), role: "assistant", text: assistantText, usedCodex });
     },
     onAudio: playResponseAudio,
     onDebug: addDebug,
     onHandoff: (name, summary) => {
       addHandoff(name, summary);
-      addAction({ title: "Voice handoff to Codex", status: "done", detail: summary, workdir: active?.path });
+      addAction({ title: "Voice handoff to Codex", status: "done", detail: summary, workdir: voiceCtxRef.current?.project.path });
     },
   });
   const voiceActive = liveVoice.active;
 
   const streamCodex = useCallback(
-    async (task: string, project: Project) => {
+    async (task: string, project: Project, chatId: string) => {
       const actionId = addAction({
         title: "Codex task",
         status: "running",
@@ -887,16 +1051,16 @@ function App() {
         workdir: project.path,
       });
       const assistantId = crypto.randomUUID();
-      appendMessage(project.id, { id: assistantId, role: "assistant", text: "", usedCodex: true, streaming: true });
+      appendMessage(chatId, { id: assistantId, role: "assistant", text: "", usedCodex: true, streaming: true });
 
       const res = await fetch(`${API}/api/codex/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task, workdir: project.path, project_id: project.id }),
+        body: JSON.stringify({ task, workdir: project.path, project_id: project.id, chat_id: chatId }),
       });
       if (!res.ok || !res.body) {
         const payload = await res.json().catch(() => ({}));
-        updateMessage(project.id, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Codex request failed." }));
+        updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Codex request failed." }));
         updateAction(actionId, { status: "failed", detail: (payload as any).detail || "Codex request failed" });
         throw new Error((payload as any).detail || "Codex request failed");
       }
@@ -906,11 +1070,11 @@ function App() {
       const handle = (evt: any) => {
         if (evt.type === "delta" && evt.text) {
           finalText += evt.text;
-          updateMessage(project.id, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
+          updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
           scrollToBottom();
         } else if (evt.type === "done") {
           finalText = String(evt.text ?? finalText);
-          updateMessage(project.id, assistantId, (m) => ({ ...m, text: finalText || m.text, streaming: false, workdir: evt.workdir }));
+          updateMessage(chatId, assistantId, (m) => ({ ...m, text: finalText || m.text, streaming: false, workdir: evt.workdir }));
           updateAction(actionId, {
             status: "done",
             detail: finalText ? `Completed. ${finalText.slice(0, 180)}` : "Completed.",
@@ -918,7 +1082,7 @@ function App() {
           });
           addHandoff("run_codex_task", finalText.slice(0, 160));
         } else if (evt.type === "error") {
-          updateMessage(project.id, assistantId, (m) => ({ ...m, streaming: false }));
+          updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false }));
           updateAction(actionId, { status: "failed", detail: String(evt.message || "Codex failed") });
           setError(String(evt.message || "Codex failed"));
         }
@@ -926,7 +1090,7 @@ function App() {
 
       await readSseStream(res, handle);
 
-      updateMessage(project.id, assistantId, (m) => (m.streaming ? { ...m, streaming: false } : m));
+      updateMessage(chatId, assistantId, (m) => (m.streaming ? { ...m, streaming: false } : m));
       // TTS only once, on the complete response.
       if (finalText) speak(finalText);
     },
@@ -934,18 +1098,18 @@ function App() {
   );
 
   const streamAgent = useCallback(
-    async (message: string, project: Project) => {
+    async (message: string, project: Project, chatId: string) => {
       const assistantId = crypto.randomUUID();
-      appendMessage(project.id, { id: assistantId, role: "assistant", text: "", streaming: true });
+      appendMessage(chatId, { id: assistantId, role: "assistant", text: "", streaming: true });
 
       const res = await fetch(`${API}/api/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, workdir: project.path, project_id: project.id }),
+        body: JSON.stringify({ message, workdir: project.path, project_id: project.id, chat_id: chatId }),
       });
       if (!res.ok || !res.body) {
         const payload = await res.json().catch(() => ({}));
-        updateMessage(project.id, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Agent request failed." }));
+        updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Agent request failed." }));
         throw new Error((payload as any).detail || "Agent request failed");
       }
 
@@ -957,7 +1121,7 @@ function App() {
       await readSseStream(res, (evt) => {
         if (evt.type === "delta" && evt.text) {
           finalText += evt.text;
-          updateMessage(project.id, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
+          updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
           scrollToBottom();
         } else if (evt.type === "tool_call") {
           usedCodex = true;
@@ -967,7 +1131,7 @@ function App() {
             detail: String(evt.task || "Local task"),
             workdir: String(evt.workdir || project.path),
           });
-          updateMessage(project.id, assistantId, (m) => ({ ...m, usedCodex: true }));
+          updateMessage(chatId, assistantId, (m) => ({ ...m, usedCodex: true }));
         } else if (evt.type === "tool_result") {
           usedCodex = true;
           const summary = String(evt.result || "").slice(0, 180);
@@ -983,7 +1147,7 @@ function App() {
           finalText = String(evt.text ?? finalText);
           finalAudioUrl = String(evt.audio_data_url || "");
           usedCodex = usedCodex || (Array.isArray(evt.tool_calls) && evt.tool_calls.length > 0);
-          updateMessage(project.id, assistantId, (m) => ({
+          updateMessage(chatId, assistantId, (m) => ({
             ...m,
             text: finalText || m.text || "Done.",
             streaming: false,
@@ -991,13 +1155,13 @@ function App() {
             workdir: evt.workdir || project.path,
           }));
         } else if (evt.type === "error") {
-          updateMessage(project.id, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Agent failed." }));
+          updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Agent failed." }));
           if (activeActionId) updateAction(activeActionId, { status: "failed", detail: String(evt.message || "Agent failed") });
           setError(String(evt.message || "Agent failed"));
         }
       });
 
-      updateMessage(project.id, assistantId, (m) => (m.streaming ? { ...m, streaming: false } : m));
+      updateMessage(chatId, assistantId, (m) => (m.streaming ? { ...m, streaming: false } : m));
       if (finalAudioUrl) await playResponseAudio(finalAudioUrl);
       else if (finalText) speak(finalText);
     },
@@ -1005,27 +1169,34 @@ function App() {
   );
 
   const send = useCallback(
-    async (raw?: string, skipPreview = false, projectOverride?: Project) => {
+    async (raw?: string, skipPreview = false, projectOverride?: Project, chatOverride?: string) => {
       const text = (raw ?? input).trim();
       const project = projectOverride || active;
       if (!text || busy || !project) return;
+      // Resolve the target chat: an explicit override, the project's active chat,
+      // or a fresh one if the project somehow has none yet.
+      let chatId = chatOverride || activeChatByProject[project.id] || "";
+      if (!chatId) chatId = createChat(project.id).id;
+
       const risk = riskyActionReason(text);
       if (risk && !skipPreview) {
-        setPendingAction({ text, project, mode, reason: risk });
+        setPendingAction({ text, project, chatId, mode, reason: risk });
         return;
       }
       setInput("");
       if (textareaRef.current) textareaRef.current.style.height = "auto";
       setError("");
       setBusy(true);
-      appendMessage(project.id, { id: crypto.randomUUID(), role: "user", text, workdir: project.path });
+      // Name the chat from its first message.
+      if ((messagesByChat[chatId] || []).length === 0) renameChat(project.id, chatId, chatTitleFrom(text));
+      appendMessage(chatId, { id: crypto.randomUUID(), role: "user", text, workdir: project.path });
 
       try {
         if (mode === "codex") {
           // Stream Codex output token-by-token into the bubble; speak only at the end.
-          await streamCodex(text, project);
+          await streamCodex(text, project, chatId);
         } else {
-          await streamAgent(text, project);
+          await streamAgent(text, project, chatId);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
@@ -1033,22 +1204,27 @@ function App() {
         setBusy(false);
       }
     },
-    // streamCodex is stable (defined below with useCallback)
-    [active, appendMessage, busy, input, mode, primeAudioPlayback, streamAgent, streamCodex],
+    [active, activeChatByProject, appendMessage, busy, createChat, input, messagesByChat, mode, renameChat, streamAgent, streamCodex],
   );
 
   const toggleVoice = () => {
     primeAudioPlayback();
-    if (voiceActive) liveVoice.stop();
-    else liveVoice.start();
+    if (voiceActive) {
+      liveVoice.stop();
+      voiceCtxRef.current = null;
+    } else if (active && activeChatId) {
+      // Pin this voice session to the chat it starts in.
+      voiceCtxRef.current = { project: active, chatId: activeChatId };
+      liveVoice.start();
+    }
   };
 
   const createProject = (p: Omit<Project, "id" | "createdAt">) => {
     const project: Project = { ...p, id: crypto.randomUUID(), createdAt: Date.now() };
     setProjects((current) => [project, ...current]);
     setActiveId(project.id);
-    setThreads((current) => ({ ...current, [project.id]: current[project.id] || [] }));
     setShowAdd(false);
+    createChat(project.id);
     fetch(`${API}/api/projects`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1057,10 +1233,21 @@ function App() {
   };
 
   const removeProject = (id: string) => {
+    const chatIds = new Set((chats[id] || []).map((c) => c.id));
     setProjects((current) => current.filter((p) => p.id !== id));
-    setThreads((current) => {
+    setChats((current) => {
       const next = { ...current };
       delete next[id];
+      return next;
+    });
+    setActiveChatByProject((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setMessagesByChat((current) => {
+      const next: Record<string, Message[]> = {};
+      for (const [cid, msgs] of Object.entries(current)) if (!chatIds.has(cid)) next[cid] = msgs;
       return next;
     });
     setActiveId((current) => (current === id ? "" : current));
@@ -1068,13 +1255,13 @@ function App() {
   };
 
   const clearThread = () => {
-    if (!active) return;
+    if (!active || !activeChatId) return;
     window.speechSynthesis?.cancel();
-    setThreads((current) => ({ ...current, [active.id]: [] }));
+    setMessagesByChat((current) => ({ ...current, [activeChatId]: [] }));
     setHandoffs([]);
     setActions([]);
     setError("");
-    fetch(`${API}/api/history?project_id=${encodeURIComponent(active.id)}`, { method: "DELETE" }).catch(() => undefined);
+    fetch(`${API}/api/history?chat_id=${encodeURIComponent(activeChatId)}`, { method: "DELETE" }).catch(() => undefined);
   };
 
   const onComposerInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1125,33 +1312,83 @@ function App() {
             </div>
           ) : (
             <div className="projectList">
-              {projects.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={`projectCard ${p.id === activeId ? "active" : ""}`}
-                  style={{ ["--projColor" as string]: p.color }}
-                  onClick={() => setActiveId(p.id)}
-                >
-                  <span className="projectGlyph" style={{ background: p.color }}>{glyphFor(p.name)}</span>
-                  <span className="projectMeta">
-                    <span className="projectName">{p.name}</span>
-                    <span className="projectPath">{p.path}</span>
-                  </span>
-                  <span
-                    className="projectKebab"
-                    role="button"
-                    tabIndex={-1}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (window.confirm(`Remove project “${p.name}”? This clears its local chat history.`)) removeProject(p.id);
-                    }}
-                    aria-label="Remove project"
-                  >
-                    <DotsThreeVertical size={16} weight="bold" />
-                  </span>
-                </button>
-              ))}
+              {projects.map((p) => {
+                const isActiveProject = p.id === activeId;
+                const pChats = chats[p.id] || [];
+                const pActiveChat = activeChatByProject[p.id] || "";
+                return (
+                  <div className="projectGroup" key={p.id} style={{ ["--projColor" as string]: p.color }}>
+                    <button
+                      type="button"
+                      className={`projectCard ${isActiveProject ? "active" : ""}`}
+                      onClick={() => setActiveId(p.id)}
+                    >
+                      <span className="projectGlyph" style={{ background: p.color }}>{glyphFor(p.name)}</span>
+                      <span className="projectMeta">
+                        <span className="projectName">{p.name}</span>
+                        <span className="projectPath">{p.path}</span>
+                      </span>
+                      <span
+                        className="projectKebab"
+                        role="button"
+                        tabIndex={-1}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`Remove project “${p.name}”? This clears its chats and local history.`)) removeProject(p.id);
+                        }}
+                        aria-label="Remove project"
+                      >
+                        <DotsThreeVertical size={16} weight="bold" />
+                      </span>
+                    </button>
+
+                    {isActiveProject && (
+                      <div className="chatList">
+                        {pChats.map((c) => (
+                          <div
+                            key={c.id}
+                            className={`chatRow ${c.id === pActiveChat ? "active" : ""}`}
+                            onClick={() => selectChat(p.id, c.id)}
+                            role="button"
+                            tabIndex={0}
+                          >
+                            <ChatText size={14} weight={c.id === pActiveChat ? "fill" : "regular"} />
+                            <span className="chatTitle">{c.title}</span>
+                            <span className="chatActions">
+                              <span
+                                role="button"
+                                tabIndex={-1}
+                                aria-label="Rename chat"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const next = window.prompt("Rename chat", c.title);
+                                  if (next != null) renameChat(p.id, c.id, next);
+                                }}
+                              >
+                                <PencilSimple size={13} weight="bold" />
+                              </span>
+                              <span
+                                role="button"
+                                tabIndex={-1}
+                                aria-label="Delete chat"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (window.confirm(`Delete chat “${c.title}”?`)) removeChat(p.id, c.id);
+                                }}
+                              >
+                                <Trash size={13} weight="bold" />
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                        <button className="newChat" type="button" onClick={() => createChat(p.id)}>
+                          <Plus size={13} weight="bold" /> New chat
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -1190,6 +1427,9 @@ function App() {
               <div className="crumbs">
                 {active ? (
                   <>
+                    {activeChat && (
+                      <span className="pill chat"><ChatText size={13} weight="bold" />{activeChat.title}</span>
+                    )}
                     <span className="pill cwd"><Terminal size={13} weight="bold" />{active.path}</span>
                     {projectInfo?.branch && (
                       <span className="pill git"><GitBranch size={13} weight="bold" />{projectInfo.branch}</span>
@@ -1528,7 +1768,7 @@ function App() {
             const action = pendingAction;
             setPendingAction(null);
             primeAudioPlayback();
-            void send(action.text, true, action.project);
+            void send(action.text, true, action.project, action.chatId);
           }}
         />
       )}

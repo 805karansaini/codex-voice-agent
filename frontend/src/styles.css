@@ -399,6 +399,100 @@ h4 {
   line-height: 1.5;
 }
 
+/* ---- chats nested under the active project ---- */
+.projectGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.chatList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 6px;
+  padding-left: 14px;
+  margin-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+.chatRow {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.chatRow:hover {
+  background: var(--ink-850);
+  color: var(--text-mid);
+}
+.chatRow.active {
+  background: var(--ink-800);
+  border-color: var(--line);
+  color: var(--text-hi);
+}
+.chatRow.active svg {
+  color: var(--projColor, var(--lime));
+}
+
+.chatTitle {
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatActions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 130ms ease;
+}
+.chatRow:hover .chatActions {
+  opacity: 1;
+}
+.chatActions [role="button"] {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  transition: background 130ms ease, color 130ms ease;
+}
+.chatActions [role="button"]:hover {
+  background: var(--line);
+  color: var(--text-hi);
+}
+
+.newChat {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.newChat:hover {
+  color: var(--text-hi);
+  border-color: var(--projColor, var(--lime));
+  background: var(--ink-850);
+}
+
 .railFoot {
   border-top: 1px solid var(--line);
   padding: 12px 16px 14px;
@@ -555,6 +649,13 @@ h4 {
 }
 .pill.git svg {
   color: var(--amber);
+}
+.pill.chat {
+  color: var(--text-hi);
+  max-width: 220px;
+}
+.pill.chat svg {
+  color: var(--lime);
 }
 .pill.danger {
   color: #ffb3aa;
