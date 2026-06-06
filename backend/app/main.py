@@ -1,9 +1,11 @@
+import base64
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .codex_runner import run_codex
-from .gemini_agent import ask_gemini
+from .gemini_agent import ask_gemini, transcribe_audio
 from .history import HistoryStore
 from .settings import get_settings
 
@@ -31,11 +33,18 @@ class CodexRequest(BaseModel):
     workdir: str | None = None
 
 
+class TranscribeRequest(BaseModel):
+    audio_base64: str
+    mime_type: str = "audio/webm"
+
+
 @app.get("/api/health")
 async def health() -> dict[str, object]:
     return {
         "ok": True,
         "gemini_model": settings.gemini_model,
+        "gemini_transcription_model": settings.gemini_transcription_model,
+        "gemini_voice_name": settings.gemini_voice_name,
         "has_google_api_key": bool(settings.google_api_key),
         "codex_default_workdir": settings.codex_default_workdir,
     }
@@ -64,6 +73,16 @@ async def chat(req: ChatRequest) -> dict[str, object]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     history.append("assistant", result["reply"], {"tool_calls": result["tool_calls"]})
     return result
+
+
+@app.post("/api/transcribe")
+async def transcribe(req: TranscribeRequest) -> dict[str, object]:
+    try:
+        audio_bytes = base64.b64decode(req.audio_base64)
+        text = await transcribe_audio(audio_bytes, req.mime_type, settings)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"text": text}
 
 
 @app.post("/api/codex")

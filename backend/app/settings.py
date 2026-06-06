@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     google_api_key: str | None = Field(default=None, alias="GOOGLE_API_KEY")
     gemini_model: str = Field(default="gemini-3.1-flash-live-preview", alias="GEMINI_MODEL")
+    gemini_transcription_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_TRANSCRIPTION_MODEL")
+    gemini_voice_name: str = Field(default="Aoede", alias="GEMINI_VOICE_NAME")
+    gemini_language_code: str = Field(default="en-US", alias="GEMINI_LANGUAGE_CODE")
     codex_default_workdir: str = Field(default=str(Path.home()), alias="CODEX_DEFAULT_WORKDIR")
     codex_approval_mode: str = Field(default="never", alias="CODEX_APPROVAL_MODE")
     codex_sandbox_mode: str = Field(default="danger-full-access", alias="CODEX_SANDBOX_MODE")

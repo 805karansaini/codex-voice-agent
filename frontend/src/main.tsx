@@ -10,6 +10,7 @@ import {
   MicrophoneSlash,
   PlugsConnected,
   Pulse,
+  SpeakerHigh,
   Sparkle,
   TerminalWindow,
   Waveform,
@@ -23,38 +24,311 @@ type Message = {
   meta?: Record<string, unknown>;
 };
 
-const API = `${window.location.protocol}//${window.location.hostname}:8765`;
+type AgentResponse = {
+  reply?: string;
+  tool_calls?: unknown[];
+  workdir?: string;
+  audio_data_url?: string | null;
+};
 
-function useSpeech(onText: (text: string) => void) {
+type TranscribeResponse = {
+  text?: string;
+};
+
+const API = import.meta.env.VITE_API_BASE_URL || "";
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
+const PREFERRED_VOICE_NAMES = [
+  "Samantha",
+  "Karen",
+  "Moira",
+  "Tessa",
+  "Google UK English Female",
+  "Google US English",
+  "Microsoft Aria",
+  "Microsoft Jenny",
+  "Zira",
+];
+
+type SpeechState = "idle" | "starting" | "listening" | "recording" | "processing" | "unsupported" | "error";
+
+function useSpeech(onText: (text: string) => void, onAudio: (audio: Blob) => void) {
   const [listening, setListening] = useState(false);
+  const [state, setState] = useState<SpeechState>("idle");
+  const [message, setMessage] = useState("Voice is ready.");
+  const [transcriptPreview, setTranscriptPreview] = useState("");
   const recognitionRef = useRef<any>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const transcriptRef = useRef("");
+  const sentRef = useRef(false);
+  const errorRef = useRef(false);
+  const onTextRef = useRef(onText);
+  const onAudioRef = useRef(onAudio);
+
+  useEffect(() => {
+    onTextRef.current = onText;
+  }, [onText]);
+
+  useEffect(() => {
+    onAudioRef.current = onAudio;
+  }, [onAudio]);
+
+  const stopTracks = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  };
+
+  const stopRecorder = (sendAudio: boolean) => {
+    const recorder = recorderRef.current;
+    if (!recorder) {
+      stopTracks();
+      return;
+    }
+    (recorder as any).__sendAudio = sendAudio;
+    if (recorder.state === "recording") {
+      recorder.stop();
+    } else {
+      stopTracks();
+    }
+  };
+
+  const startRecorder = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return false;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    streamRef.current = stream;
+    audioChunksRef.current = [];
+
+    const recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) audioChunksRef.current.push(event.data);
+    };
+    recorder.onstop = () => {
+      const shouldSend = Boolean((recorder as any).__sendAudio);
+      const mimeType = recorder.mimeType || "audio/webm";
+      recorderRef.current = null;
+      stopTracks();
+      if (!shouldSend || sentRef.current || audioChunksRef.current.length === 0) return;
+      sentRef.current = true;
+      setListening(false);
+      setState("processing");
+      setMessage("Transcribing recorded audio with Gemini.");
+      onAudioRef.current(new Blob(audioChunksRef.current, { type: mimeType }));
+    };
+    recorderRef.current = recorder;
+    recorder.start();
+    return true;
+  };
 
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+        setState("unsupported");
+        setMessage("Speech input is not available in this browser.");
+      } else {
+        setMessage("Browser speech is unavailable. Voice will use recorded audio.");
+      }
+      return;
+    }
+
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
     recognition.lang = "en-US";
-    recognition.onresult = (event: any) => {
-      const transcript = event.results?.[0]?.[0]?.transcript;
-      if (transcript) onText(transcript);
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      transcriptRef.current = "";
+      sentRef.current = false;
+      errorRef.current = false;
+      setTranscriptPreview("");
+      setListening(true);
+      setState("listening");
+      setMessage("Listening. Speak now.");
     };
-    recognition.onend = () => setListening(false);
-    recognition.onerror = () => setListening(false);
+
+    recognition.onresult = (event: any) => {
+      let fullTranscript = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        fullTranscript += event.results[index]?.[0]?.transcript || "";
+      }
+
+      const clean = fullTranscript.trim();
+      if (!clean) return;
+
+      transcriptRef.current = clean;
+      setTranscriptPreview(transcriptRef.current);
+      setState("processing");
+      setMessage("Got it. Preparing the message.");
+
+      const finalResult = Array.from(event.results).some((result: any) => result.isFinal);
+      if (finalResult && !sentRef.current) {
+        sentRef.current = true;
+        stopRecorder(false);
+        setListening(false);
+        onTextRef.current(transcriptRef.current);
+      }
+    };
+
+    recognition.onnomatch = () => {
+      errorRef.current = true;
+      setState("error");
+      setMessage("I could not make out the speech. Try again closer to the microphone.");
+    };
+
+    recognition.onerror = (event: any) => {
+      const error = event?.error || "unknown";
+      const clean = transcriptRef.current.trim();
+      if (clean && !sentRef.current) {
+        sentRef.current = true;
+        stopRecorder(false);
+        setListening(false);
+        setState("processing");
+        setMessage("Got it. Sending the captured speech.");
+        onTextRef.current(clean);
+        return;
+      }
+
+      errorRef.current = true;
+      if ((error === "network" || error === "no-speech") && recorderRef.current?.state === "recording") {
+        setListening(true);
+        setState("recording");
+        setMessage("Browser speech failed. I am recording instead; press Stop voice when you finish speaking.");
+        return;
+      }
+
+      const messages: Record<string, string> = {
+        "not-allowed": "Microphone permission was blocked. Allow microphone access and try again.",
+        "service-not-allowed": "The browser blocked speech recognition for this page.",
+        "no-speech": "I did not hear speech. Try again after the listening state appears.",
+        "audio-capture": "No microphone was found. Check the selected input device.",
+        network: "Speech recognition could not reach the browser speech service.",
+        aborted: "Voice input was stopped.",
+      };
+      stopRecorder(false);
+      setListening(false);
+      setState(error === "aborted" ? "idle" : "error");
+      setMessage(messages[error] || "Speech recognition stopped before producing text.");
+    };
+
+    recognition.onend = () => {
+      const clean = transcriptRef.current.trim();
+      if (clean && !sentRef.current) {
+        sentRef.current = true;
+        stopRecorder(false);
+        setListening(false);
+        setState("processing");
+        setMessage("Got it. Sending the message.");
+        onTextRef.current(clean);
+        return;
+      }
+      if (recorderRef.current?.state === "recording" && errorRef.current) {
+        setListening(true);
+        setState("recording");
+        return;
+      }
+      setListening(false);
+      if (!clean && !errorRef.current) {
+        setState("idle");
+        setMessage("No speech was captured. Try again after the listening state appears.");
+      }
+    };
+
     recognitionRef.current = recognition;
-  }, [onText]);
+
+    return () => {
+      recognition.onstart = null;
+      recognition.onresult = null;
+      recognition.onnomatch = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try {
+        recognition.abort();
+      } catch {
+        undefined;
+      }
+      stopRecorder(false);
+    };
+  }, []);
 
   return {
-    supported: Boolean(recognitionRef.current || (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
+    supported: Boolean(
+        recognitionRef.current ||
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition ||
+        (typeof navigator.mediaDevices?.getUserMedia === "function" && typeof MediaRecorder !== "undefined"),
+    ),
     listening,
-    start: () => {
-      recognitionRef.current?.start();
-      setListening(true);
+    state,
+    message,
+    transcriptPreview,
+    start: async () => {
+      transcriptRef.current = "";
+      sentRef.current = false;
+      errorRef.current = false;
+      setTranscriptPreview("");
+      setState("starting");
+      setMessage("Opening microphone.");
+
+      let recorderStarted = false;
+      try {
+        recorderStarted = await startRecorder();
+      } catch {
+        setListening(false);
+        setState("error");
+        setMessage("Microphone permission was blocked. Allow microphone access and try again.");
+        return;
+      }
+
+      if (!recognitionRef.current) {
+        if (recorderStarted) {
+          setListening(true);
+          setState("recording");
+          setMessage("Recording audio. Press Stop voice when you finish speaking.");
+          return;
+        }
+        setState("unsupported");
+        setMessage("Speech input is not available in this browser.");
+        return;
+      }
+      try {
+        recognitionRef.current.start();
+      } catch {
+        if (recorderStarted) {
+          setListening(true);
+          setState("recording");
+          setMessage("Browser speech is unavailable. Recording audio instead; press Stop voice when finished.");
+          return;
+        }
+        setListening(false);
+        setState("error");
+        setMessage("Voice input is already starting. Wait a moment and try again.");
+      }
     },
     stop: () => {
+      const clean = transcriptRef.current.trim();
+      if (clean && !sentRef.current) {
+        sentRef.current = true;
+        stopRecorder(false);
+        recognitionRef.current?.stop();
+        setListening(false);
+        setState("processing");
+        setMessage("Got it. Sending the captured speech.");
+        onTextRef.current(clean);
+        return;
+      }
       recognitionRef.current?.stop();
+      if (recorderRef.current?.state === "recording") {
+        setState("processing");
+        setMessage("Transcribing recorded audio with Gemini.");
+        stopRecorder(true);
+        return;
+      }
       setListening(false);
+      setState("idle");
+      setMessage("Voice input stopped.");
     },
   };
 }
@@ -67,14 +341,70 @@ function App() {
   const [mode, setMode] = useState<"agent" | "codex">("agent");
   const [status, setStatus] = useState("Checking backend");
   const [model, setModel] = useState("Gemini Live");
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
+  const [pendingAudioUrl, setPendingAudioUrl] = useState("");
   const historyRef = useRef<HTMLDivElement | null>(null);
+  const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const hasMessages = messages.length > 0;
+
+  useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+
+    const loadVoices = () => {
+      const browserVoices = window.speechSynthesis.getVoices();
+      setVoices(browserVoices);
+      setSelectedVoiceURI((current) => {
+        if (current || browserVoices.length === 0) return current;
+        const preferredVoice =
+          PREFERRED_VOICE_NAMES.map((name) =>
+            browserVoices.find((voice) => voice.name.toLowerCase().includes(name.toLowerCase())),
+          ).find(Boolean) ||
+          browserVoices.find((voice) => voice.lang.toLowerCase().startsWith("en") && voice.name.toLowerCase().includes("female")) ||
+          browserVoices.find((voice) => voice.lang.toLowerCase().startsWith("en")) ||
+          browserVoices[0];
+        return preferredVoice?.voiceURI || "";
+      });
+    };
+
+    loadVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
+  }, []);
 
   const scrollToBottom = () => {
     requestAnimationFrame(() => {
       historyRef.current?.scrollTo({ top: historyRef.current.scrollHeight, behavior: "smooth" });
     });
   };
+
+  const blobToBase64 = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(new Error("Could not read recorded audio"));
+      reader.readAsDataURL(blob);
+    });
+
+  const primeAudioPlayback = useCallback(() => {
+    const audio = new Audio(SILENT_WAV);
+    audio.volume = 0;
+    audio.play().catch(() => undefined);
+  }, []);
+
+  const playResponseAudio = useCallback(async (audioUrl: string) => {
+    window.speechSynthesis?.cancel();
+    responseAudioRef.current?.pause();
+    const audio = new Audio(audioUrl);
+    responseAudioRef.current = audio;
+    try {
+      await audio.play();
+      setPendingAudioUrl("");
+    } catch {
+      setPendingAudioUrl(audioUrl);
+      setError("Audio is ready, but this browser blocked automatic playback. Tap Play response.");
+    }
+  }, []);
 
   const send = useCallback(
     async (text = input) => {
@@ -96,7 +426,7 @@ function App() {
           const payload = await res.json().catch(() => ({}));
           throw new Error(payload.detail || "Request failed");
         }
-        const data = await res.json();
+        const data = (await res.json()) as AgentResponse;
         const assistantMsg: Message = {
           id: crypto.randomUUID(),
           role: "assistant",
@@ -105,9 +435,16 @@ function App() {
         };
         setMessages((prev) => [...prev, assistantMsg]);
         scrollToBottom();
-        if ("speechSynthesis" in window) {
+        if (data.audio_data_url) {
+          await playResponseAudio(data.audio_data_url);
+        } else if ("speechSynthesis" in window) {
+          const utterance = new SpeechSynthesisUtterance(assistantMsg.text.slice(0, 500));
+          const selectedVoice = voices.find((voice) => voice.voiceURI === selectedVoiceURI);
+          if (selectedVoice) utterance.voice = selectedVoice;
+          utterance.rate = 0.94;
+          utterance.pitch = 1.08;
           window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(new SpeechSynthesisUtterance(assistantMsg.text.slice(0, 500)));
+          window.speechSynthesis.speak(utterance);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
@@ -115,10 +452,45 @@ function App() {
         setBusy(false);
       }
     },
-    [busy, input, mode],
+    [busy, input, mode, playResponseAudio, selectedVoiceURI, voices],
   );
 
-  const speech = useSpeech((text) => send(text));
+  const transcribeAndSend = useCallback(
+    async (audio: Blob) => {
+      setError("");
+      try {
+        const audioBase64 = await blobToBase64(audio);
+        const res = await fetch(`${API}/api/transcribe`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audio_base64: audioBase64, mime_type: audio.type || "audio/webm" }),
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          throw new Error(payload.detail || "Could not transcribe recorded audio");
+        }
+        const data = (await res.json()) as TranscribeResponse;
+        const text = data.text?.trim();
+        if (!text) throw new Error("No speech was found in the recording");
+        send(text);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not transcribe recorded audio");
+      }
+    },
+    [send],
+  );
+
+  const speech = useSpeech((text) => send(text), transcribeAndSend);
+  const voiceActive = speech.listening || speech.state === "recording";
+
+  const toggleVoice = () => {
+    primeAudioPlayback();
+    if (voiceActive) {
+      speech.stop();
+    } else {
+      speech.start();
+    }
+  };
 
   const refreshHistory = useCallback(() => {
     fetch(`${API}/api/health`)
@@ -160,6 +532,22 @@ function App() {
   }, [messages]);
 
   const statusClass = status === "Ready" ? "ready" : status === "Backend offline" ? "offline" : "warn";
+  const voiceHeading =
+    speech.state === "starting"
+      ? "Opening microphone"
+      : speech.state === "listening"
+        ? "Listening"
+        : speech.state === "recording"
+          ? "Recording fallback"
+          : speech.state === "processing"
+            ? "Processing speech"
+            : speech.state === "error"
+              ? "Voice needs attention"
+              : speech.state === "unsupported"
+                ? "Voice unavailable"
+                : busy
+                  ? "Agent running"
+                  : "Ready for the next task";
 
   return (
     <main className="appShell">
@@ -213,27 +601,24 @@ function App() {
 
         <div className="operatorBoard">
           <div className="startPanel">
-            <div className={`voiceDisc ${speech.listening ? "isListening" : ""}`}>
+            <div className={`voiceDisc ${voiceActive ? "isListening" : ""}`}>
               <Waveform size={68} weight="duotone" />
               <span />
             </div>
             <div className="startCopy">
               <p className="panelLabel">Start</p>
-              <h3>{speech.listening ? "Listening" : busy ? "Agent running" : "Ready for the next task"}</h3>
-              <p>
-                {speech.listening
-                  ? "Speak naturally. The transcript is sent as soon as the browser finishes recognition."
-                  : "Use voice for quick tasks, or type in the side chat when precision matters."}
-              </p>
+              <h3>{voiceHeading}</h3>
+              <p>{speech.message}</p>
+              {speech.transcriptPreview && <p className="voiceFeedback">Heard: {speech.transcriptPreview}</p>}
             </div>
             <button
               className="voiceButton"
-              onClick={() => (speech.listening ? speech.stop() : speech.start())}
+              onClick={toggleVoice}
               disabled={!speech.supported || busy}
               type="button"
             >
-              {speech.listening ? <MicrophoneSlash size={18} weight="bold" /> : <Microphone size={18} weight="bold" />}
-              {speech.listening ? "Stop voice" : "Start voice"}
+              {voiceActive ? <MicrophoneSlash size={18} weight="bold" /> : <Microphone size={18} weight="bold" />}
+              {voiceActive ? "Stop voice" : "Start voice"}
             </button>
             {!speech.supported && <p className="inlineHint">This browser does not expose speech input here.</p>}
           </div>
@@ -254,6 +639,26 @@ function App() {
               <span>Handoffs</span>
               <strong>{toolSummary}</strong>
             </div>
+          </div>
+
+          <div className="voiceSelect">
+            <label htmlFor="responseVoice">
+              <SpeakerHigh size={17} weight="duotone" />
+              Fallback voice
+            </label>
+            <select
+              id="responseVoice"
+              value={selectedVoiceURI}
+              onChange={(event) => setSelectedVoiceURI(event.target.value)}
+              disabled={voices.length === 0}
+            >
+              {voices.length === 0 && <option value="">Browser default</option>}
+              {voices.map((voice) => (
+                <option value={voice.voiceURI} key={voice.voiceURI}>
+                  {voice.name} ({voice.lang})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="activityPanel">
@@ -309,11 +714,18 @@ function App() {
         </div>
 
         {error && <div className="errorStrip">{error}</div>}
+        {pendingAudioUrl && (
+          <button className="playResponse" onClick={() => playResponseAudio(pendingAudioUrl)} type="button">
+            <SpeakerHigh size={18} weight="bold" />
+            Play response
+          </button>
+        )}
 
         <form
           className="composer"
           onSubmit={(event) => {
             event.preventDefault();
+            primeAudioPlayback();
             send();
           }}
         >
@@ -326,6 +738,7 @@ function App() {
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
+                  primeAudioPlayback();
                   send();
                 }
               }}

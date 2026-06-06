@@ -236,6 +236,17 @@ h3 {
   line-height: 1.55;
 }
 
+.voiceFeedback {
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(23, 63, 55, 0.13);
+  border-radius: 10px;
+  color: #173f37;
+  background: rgba(237, 242, 237, 0.82);
+  font-size: 13px;
+}
+
 .voiceButton:disabled,
 .composer button:disabled {
   cursor: not-allowed;
@@ -363,7 +374,7 @@ h3 {
 .operatorBoard {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 16px;
   overflow: hidden;
   border: 1px solid rgba(30, 39, 46, 0.1);
@@ -375,6 +386,45 @@ h3 {
     rgba(255, 255, 255, 0.78);
   background-size: 44px 44px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 24px 80px rgba(36, 44, 51, 0.08);
+}
+
+.voiceSelect {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid rgba(30, 39, 46, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.voiceSelect label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #4d5652;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.voiceSelect select {
+  min-width: 0;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid rgba(30, 39, 46, 0.12);
+  border-radius: 10px;
+  outline: 0;
+  color: #171a1f;
+  background: #ffffff;
+  font: inherit;
+}
+
+.voiceSelect select:disabled {
+  color: #77817d;
+  background: #f2f5f2;
 }
 
 .systemGrid {
@@ -604,6 +654,28 @@ h3 {
   background: #fff4f1;
 }
 
+.playResponse {
+  min-height: 42px;
+  margin: 0 18px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 10px;
+  color: #f9faf8;
+  background: #173f37;
+  cursor: pointer;
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms ease;
+}
+
+.playResponse:hover {
+  background: #21564c;
+}
+
+.playResponse:active {
+  transform: translateY(1px);
+}
+
 .composer {
   display: grid;
   gap: 8px;
@@ -716,7 +788,8 @@ textarea::placeholder {
   }
 
   .startPanel,
-  .systemGrid {
+  .systemGrid,
+  .voiceSelect {
     grid-template-columns: 1fr;
   }
 
