@@ -329,7 +329,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     for call in server_message.tool_call.function_calls:
                         args = dict(call.args or {})
                         task = str(args.get("task") or user_text or "Run the requested local task.")
-                        workdir = str(args.get("workdir") or session_workdir or settings.codex_default_workdir)
+                        workdir = session_workdir or settings.codex_default_workdir
                         
                         await websocket.send_json(
                             {

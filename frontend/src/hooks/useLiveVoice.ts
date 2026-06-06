@@ -259,25 +259,28 @@ export function useLiveVoice({
     buffered.forEach((payload) => websocket.send(payload));
   }, []);
 
+  const sendSessionConfig = useCallback((websocket: WebSocket) => {
+    const workdir = cbRef.current.getWorkdir();
+    const projectId = cbRef.current.getProjectId();
+    const chatId = cbRef.current.getChatId();
+    if (!workdir || websocket.readyState !== WebSocket.OPEN) return;
+    websocket.send(
+      JSON.stringify({
+        type: "config",
+        workdir,
+        project_id: projectId,
+        chat_id: chatId,
+      })
+    );
+  }, []);
+
   const connectSocket = useCallback(() => {
     const websocket = new WebSocket(getWebSocketUrl("/api/live"));
     websocketRef.current = websocket;
 
     websocket.onopen = () => {
       log("Live channel connected.");
-      const workdir = cbRef.current.getWorkdir();
-      const projectId = cbRef.current.getProjectId();
-      const chatId = cbRef.current.getChatId();
-      if (workdir) {
-        websocket.send(
-          JSON.stringify({
-            type: "config",
-            workdir,
-            project_id: projectId,
-            chat_id: chatId,
-          })
-        );
-      }
+      sendSessionConfig(websocket);
       flushBufferedAudio(websocket);
       setState("live");
       setMessage("Live with Gemini — speak naturally, pause to let the agent answer.");
@@ -400,7 +403,7 @@ export function useLiveVoice({
     };
 
     return websocket;
-  }, [flushBufferedAudio, log, stopMicrophone]);
+  }, [flushBufferedAudio, log, sendSessionConfig, stopMicrophone]);
 
   const stop = useCallback(async () => {
     manuallyStoppedRef.current = true;

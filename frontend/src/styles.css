@@ -95,6 +95,7 @@
     font-family: var(--font-sans);
     font-feature-settings: "cv11", "ss01", "kern";
     -webkit-font-smoothing: antialiased;
+    overscroll-behavior-x: none;
   }
   ::selection {
     background: color-mix(in oklab, var(--color-accent) 40%, transparent);
@@ -186,5 +187,132 @@
   @keyframes bounce-eq {
     0%, 100% { transform: scaleY(0.2); }
     50% { transform: scaleY(1); }
+  }
+
+  /* animate-in system (fade, slide, zoom) */
+  .animate-in {
+    animation-duration: 150ms;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    animation-fill-mode: both;
+  }
+  .fade-in {
+    animation-name: fadeIn;
+  }
+  .slide-in-from-bottom-2 {
+    animation-name: slideInFromBottom2;
+  }
+  .duration-200 {
+    animation-duration: 200ms;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes slideInFromBottom2 {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+}
+
+/* Markdown & Code Block styles (used by MarkdownRenderer) */
+@layer components {
+  .markdown-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .markdown-paragraph {
+    margin: 0;
+    line-height: 1.6;
+  }
+  .markdown-inline-code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: var(--color-surface-3);
+    border: 1px solid var(--color-line);
+    color: var(--color-accent);
+  }
+  .markdown-list {
+    margin: 0;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .markdown-list-item {
+    line-height: 1.5;
+  }
+  .markdown-link {
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    transition: opacity 150ms ease;
+  }
+  .markdown-link:hover {
+    opacity: 0.85;
+  }
+  .markdown-h1, .markdown-h2, .markdown-h3, .markdown-h4, .markdown-h5, .markdown-h6 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    color: var(--color-fg);
+    margin-top: 14px;
+    margin-bottom: 6px;
+  }
+  .markdown-h1 { font-size: 1.5em; }
+  .markdown-h2 { font-size: 1.35em; }
+  .markdown-h3 { font-size: 1.2em; }
+  .markdown-h4 { font-size: 1.1em; }
+
+  .code-block-wrapper {
+    margin: 12px 0;
+    border-radius: var(--radius-md);
+    background: oklch(0.14 0.01 260);
+    border: 1px solid var(--color-line);
+    overflow: hidden;
+  }
+  .code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: oklch(0.17 0.01 260);
+    border-bottom: 1px solid var(--color-line);
+  }
+  .code-block-lang {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--color-fg-muted);
+  }
+  .code-block-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--color-fg-dim);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: color 150ms ease, background 150ms ease;
+  }
+  .code-block-copy:hover {
+    color: var(--color-fg);
+    background: color-mix(in oklab, var(--color-fg) 5%, transparent);
+  }
+  .code-block-pre {
+    margin: 0;
+    padding: 14px;
+    overflow-x: auto;
+  }
+  .code-block-code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--color-fg);
   }
 }

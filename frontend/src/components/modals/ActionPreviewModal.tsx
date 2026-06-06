@@ -31,7 +31,7 @@ export const ActionPreviewModal: React.FC<ActionPreviewModalProps> = ({
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-lg rounded-xl border border-danger/30 bg-surface-1 p-6 shadow-xl flex flex-col gap-5 animate-in fade-in duration-200"
+        className="relative w-[95vw] sm:w-full max-w-lg rounded-xl border border-danger/30 bg-surface-1 p-5 sm:p-6 shadow-xl flex flex-col gap-5 animate-in fade-in duration-200"
       >
         {/* Close Button */}
         <button

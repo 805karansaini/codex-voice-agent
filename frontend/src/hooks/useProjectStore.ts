@@ -148,7 +148,6 @@ export function useProjectStore() {
     return () => { cancelled = true; };
   }, [activeChatId]);
 
-  // Ensure every project has at least one chat
   const createChat = useCallback((projectId: string, opts?: { title?: string; activate?: boolean }) => {
     const chat: Chat = {
       id: crypto.randomUUID(),
@@ -171,17 +170,13 @@ export function useProjectStore() {
   useEffect(() => {
     if (!activeProject) return;
     const list = chats[activeProject.id] || [];
-    if (list.length === 0) {
-      createChat(activeProject.id);
-      return;
-    }
     if (!list.some((c) => c.id === activeChatByProject[activeProject.id])) {
       setActiveChatByProject((current) => ({
         ...current,
-        [activeProject.id]: list[0].id,
+        [activeProject.id]: list[0]?.id || "",
       }));
     }
-  }, [activeProject, chats, activeChatByProject, createChat]);
+  }, [activeProject, chats, activeChatByProject]);
 
   const selectChat = useCallback((projectId: string, chatId: string) => {
     setActiveChatByProject((current) => ({ ...current, [projectId]: chatId }));
@@ -227,9 +222,8 @@ export function useProjectStore() {
     };
     setProjects((current) => [project, ...current]);
     setActiveId(project.id);
-    createChat(project.id);
     api.saveProject(project).catch(() => {});
-  }, [createChat]);
+  }, []);
 
   const removeProject = useCallback((id: string) => {
     const chatIds = new Set((chats[id] || []).map((c) => c.id));

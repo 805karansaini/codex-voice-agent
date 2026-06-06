@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Copy, Check } from "@phosphor-icons/react";
+import { Copy, Check } from "lucide-react";
 
 interface MarkdownRendererProps {
   content: string;
@@ -49,7 +49,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
       <div className="code-block-header">
         <span className="code-block-lang">{language || "text"}</span>
         <button className="code-block-copy" onClick={handleCopy} title="Copy code">
-          {copied ? <Check size={14} weight="bold" /> : <Copy size={14} />}
+          {copied ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : <Copy className="h-3.5 w-3.5" />}
           <span>{copied ? "Copied!" : "Copy"}</span>
         </button>
       </div>

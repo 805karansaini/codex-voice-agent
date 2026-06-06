@@ -118,7 +118,7 @@ async def ask_gemini(message: str, settings: Settings, workdir: str | None = Non
                     for call in server_message.tool_call.function_calls:
                         args = dict(call.args or {})
                         task = str(args.get("task") or message)
-                        chosen_workdir = str(args.get("workdir") or session_workdir or settings.codex_default_workdir)
+                        chosen_workdir = session_workdir or settings.codex_default_workdir
                         codex_result = await run_codex(task, chosen_workdir, settings)
                         tool_calls.append(
                             {
@@ -203,7 +203,7 @@ async def ask_gemini_stream(message: str, settings: Settings, workdir: str | Non
                         for call in server_message.tool_call.function_calls:
                             args = dict(call.args or {})
                             task = str(args.get("task") or message)
-                            chosen_workdir = str(args.get("workdir") or session_workdir or settings.codex_default_workdir)
+                            chosen_workdir = session_workdir or settings.codex_default_workdir
                             yield {
                                 "type": "tool_call",
                                 "name": call.name,
