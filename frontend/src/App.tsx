@@ -211,11 +211,23 @@ export function App() {
     return id;
   }, []);
 
-  const updateAction = useCallback((id: string, patch: Partial<ActionEntry>) => {
-    setActions((current) =>
-      current.map((action) => (action.id === id ? { ...action, ...patch } : action))
-    );
-  }, []);
+  const updateAction = useCallback(
+    (
+      id: string,
+      patch: Partial<ActionEntry> | ((prev: ActionEntry) => Partial<ActionEntry>)
+    ) => {
+      setActions((current) =>
+        current.map((action) => {
+          if (action.id === id) {
+            const resolvedPatch = typeof patch === "function" ? patch(action) : patch;
+            return { ...action, ...resolvedPatch };
+          }
+          return action;
+        })
+      );
+    },
+    []
+  );
 
   const speak = useCallback(
     (text: string) => {
@@ -263,6 +275,8 @@ export function App() {
     store.activeChatId,
   ]);
 
+  const activeVoiceActionIdRef = useRef<string | null>(null);
+
   const liveVoice = useLiveVoice({
     getWorkdir,
     getProjectId,
@@ -285,14 +299,48 @@ export function App() {
     },
     onAudio: playResponseAudio,
     onDebug: addDebug,
-    onHandoff: (name, summary) => {
-      addHandoff(name, summary);
-      addAction({
+    onHandoffStart: (name, task, workdir) => {
+      const id = addAction({
         title: "Voice handoff to Codex",
-        status: "done",
-        detail: summary,
-        workdir: voiceCtxRef.current?.project.path,
+        status: "running",
+        detail: task,
+        workdir: workdir || voiceCtxRef.current?.project.path,
       });
+      activeVoiceActionIdRef.current = id;
+    },
+    onHandoffProgress: (name, text) => {
+      if (activeVoiceActionIdRef.current) {
+        updateAction(activeVoiceActionIdRef.current, (prev) => ({
+          detail: prev.detail + text,
+        }));
+      }
+    },
+    onHandoffFailed: (name, message) => {
+      if (activeVoiceActionIdRef.current) {
+        updateAction(activeVoiceActionIdRef.current, {
+          status: "failed",
+          detail: message,
+        });
+        activeVoiceActionIdRef.current = null;
+      }
+    },
+    onHandoff: (name, summary, workdir) => {
+      addHandoff(name, summary);
+      if (activeVoiceActionIdRef.current) {
+        updateAction(activeVoiceActionIdRef.current, {
+          status: "done",
+          detail: summary,
+          workdir: workdir || voiceCtxRef.current?.project.path,
+        });
+        activeVoiceActionIdRef.current = null;
+      } else {
+        addAction({
+          title: "Voice handoff to Codex",
+          status: "done",
+          detail: summary,
+          workdir: workdir || voiceCtxRef.current?.project.path,
+        });
+      }
     },
   });
   const voiceActive = liveVoice.active;
@@ -412,6 +460,18 @@ export function App() {
             workdir: String(evt.workdir || project.path),
           });
           store.updateMessage(chatId, assistantId, (m) => ({ ...m, usedCodex: true }));
+        } else if (evt.type === "tool_progress" && evt.text) {
+          if (activeActionId) {
+            updateAction(activeActionId, (prev) => ({
+              detail: prev.detail + evt.text,
+            }));
+          }
+        } else if (evt.type === "status") {
+          if (activeActionId) {
+            updateAction(activeActionId, {
+              detail: evt.message,
+            });
+          }
         } else if (evt.type === "tool_result") {
           usedCodex = true;
           const summary = String(evt.result || "").slice(0, 180);
@@ -541,6 +601,8 @@ export function App() {
       ? "Live conversation"
       : liveVoice.state === "thinking"
       ? "Gemini is responding"
+      : liveVoice.state === "working"
+      ? "Codex is working"
       : liveVoice.state === "error"
       ? "Voice needs attention"
       : "Live voice";

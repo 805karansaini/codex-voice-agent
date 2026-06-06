@@ -53,7 +53,7 @@ export type HistoryRow = {
   };
 };
 
-export type LiveVoiceState = "idle" | "connecting" | "live" | "thinking" | "error";
+export type LiveVoiceState = "idle" | "connecting" | "live" | "thinking" | "working" | "error";
 
 export type DebugEntry = {
   id: string;

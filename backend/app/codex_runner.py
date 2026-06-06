@@ -95,3 +95,69 @@ async def run_codex_stream(prompt: str, workdir: str, settings: Settings) -> Asy
             yield item
     finally:
         await future
+
+
+async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Settings) -> AsyncIterator[dict]:
+    """Stream a Codex turn with a background timer that emits status events for long-running tasks.
+
+    Yields incremental events:
+      - {"type": "delta", "text": str}
+      - {"type": "status", "message": str, "elapsed": int}
+      - {"type": "done", "text": str, "workdir": str}
+      - {"type": "error", "message": str}
+    """
+    import time
+    queue: asyncio.Queue = asyncio.Queue()
+    done = False
+
+    async def stream_reader():
+        nonlocal done
+        try:
+            async for event in run_codex_stream(prompt, workdir, settings):
+                await queue.put(event)
+        except Exception as exc:
+            await queue.put({"type": "error", "message": str(exc)})
+        finally:
+            done = True
+            await queue.put(None)
+
+    async def timer_worker():
+        start_time = time.time()
+        try:
+            # Wait 30 seconds for the first "still working" update
+            await asyncio.sleep(30)
+            if not done:
+                elapsed = int(time.time() - start_time)
+                await queue.put({
+                    "type": "status",
+                    "message": f"Codex has been working for {elapsed} seconds...",
+                    "elapsed": elapsed
+                })
+            
+            # After that, send updates every 120 seconds (2 minutes)
+            while not done:
+                await asyncio.sleep(120)
+                if not done:
+                    elapsed = int(time.time() - start_time)
+                    await queue.put({
+                        "type": "status",
+                        "message": f"Codex is still working on the task (elapsed: {elapsed}s)...",
+                        "elapsed": elapsed
+                    })
+        except asyncio.CancelledError:
+            pass
+
+    reader_task = asyncio.create_task(stream_reader())
+    timer_task = asyncio.create_task(timer_worker())
+
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+    finally:
+        timer_task.cancel()
+        reader_task.cancel()
+        await asyncio.gather(reader_task, timer_task, return_exceptions=True)
+

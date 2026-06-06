@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
-from .codex_runner import resolve_workdir, run_codex, run_codex_stream
+from .codex_runner import resolve_workdir, run_codex, run_codex_stream, run_codex_stream_with_timer
 from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, ask_gemini_stream, live_connect_config, transcribe_audio
 from .history import ChatStore, HistoryStore, ProjectStore
 from .settings import get_settings
@@ -288,20 +288,63 @@ async def live_voice(websocket: WebSocket) -> None:
                         args = dict(call.args or {})
                         task = str(args.get("task") or user_text or "Run the requested local task.")
                         workdir = str(args.get("workdir") or session_workdir or settings.codex_default_workdir)
-                        codex_result = await run_codex(task, workdir, settings)
+                        
+                        await websocket.send_json(
+                            {
+                                "type": "tool_call_started",
+                                "name": call.name,
+                                "task": task,
+                                "workdir": workdir,
+                            }
+                        )
+
+                        final_response = ""
+                        resolved_workdir = workdir
+                        async for event in run_codex_stream_with_timer(task, workdir, settings):
+                            if event.get("type") == "delta":
+                                text_delta = event.get("text", "")
+                                final_response += text_delta
+                                await websocket.send_json(
+                                    {
+                                        "type": "tool_progress",
+                                        "name": call.name,
+                                        "text": text_delta,
+                                    }
+                                )
+                            elif event.get("type") == "status":
+                                await websocket.send_json(
+                                    {
+                                        "type": "status",
+                                        "message": event.get("message"),
+                                        "elapsed": event.get("elapsed"),
+                                    }
+                                )
+                            elif event.get("type") == "done":
+                                final_response = event.get("text", final_response)
+                                resolved_workdir = event.get("workdir", workdir)
+                            elif event.get("type") == "error":
+                                final_response = f"Error: {event.get('message')}"
+                                await websocket.send_json(
+                                    {
+                                        "type": "tool_call_failed",
+                                        "name": call.name,
+                                        "message": event.get("message"),
+                                    }
+                                )
+
                         responses.append(
                             types.FunctionResponse(
                                 id=call.id,
                                 name=call.name,
-                                response={"result": codex_result.final_response, "workdir": codex_result.workdir},
+                                response={"result": final_response, "workdir": resolved_workdir},
                             )
                         )
                         await websocket.send_json(
                             {
                                 "type": "tool_call",
                                 "name": call.name,
-                                "result": codex_result.final_response,
-                                "workdir": codex_result.workdir,
+                                "result": final_response,
+                                "workdir": resolved_workdir,
                             }
                         )
                     await session.send_tool_response(function_responses=responses)
@@ -312,6 +355,7 @@ async def live_voice(websocket: WebSocket) -> None:
 
                 if content.interrupted:
                     audio_chunks = []
+                    input_text_chunks = []
                     output_text_chunks = []
                     await websocket.send_json({"type": "interrupted"})
 

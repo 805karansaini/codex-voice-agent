@@ -6,15 +6,16 @@ from typing import Any, AsyncIterator
 from google import genai
 from google.genai import types
 
-from .codex_runner import run_codex
+from .codex_runner import run_codex, run_codex_stream_with_timer
 from .settings import Settings
 
 
 SYSTEM_INSTRUCTION = """
 You are a voice-first local work assistant. Keep replies short and clear.
-When the user asks you to inspect, edit, build, debug, test, run, or review local files,
-call the run_codex_task tool. Ask Codex to do the actual computer work.
-If the user is just chatting or asking a simple planning question, answer directly.
+When the user asks you to perform local tasks (like inspect, edit, build, debug, test, run, or review local files), you MUST:
+1. Immediately give a very brief spoken acknowledgment and a one-sentence plan of what you will do (e.g., "Got it. I'll inspect those files to find the issue.").
+2. Then, call the run_codex_task tool to hand off the task.
+If the user is just chatting or asking a simple planning question, answer directly without calling any tools.
 """
 
 
@@ -194,27 +195,53 @@ async def ask_gemini_stream(message: str, settings: Settings, workdir: str | Non
                                 "task": task,
                                 "workdir": chosen_workdir,
                             }
-                            codex_result = await run_codex(task, chosen_workdir, settings)
+                            final_response = ""
+                            resolved_workdir = chosen_workdir
+                            async for event in run_codex_stream_with_timer(task, chosen_workdir, settings):
+                                if event.get("type") == "delta":
+                                    text_delta = event.get("text", "")
+                                    final_response += text_delta
+                                    yield {
+                                        "type": "tool_progress",
+                                        "name": call.name,
+                                        "text": text_delta,
+                                    }
+                                elif event.get("type") == "status":
+                                    yield {
+                                        "type": "status",
+                                        "message": event.get("message"),
+                                        "elapsed": event.get("elapsed"),
+                                    }
+                                elif event.get("type") == "done":
+                                    final_response = event.get("text", final_response)
+                                    resolved_workdir = event.get("workdir", chosen_workdir)
+                                elif event.get("type") == "error":
+                                    final_response = f"Error: {event.get('message')}"
+                                    yield {
+                                        "type": "error",
+                                        "message": event.get("message")
+                                    }
+
                             tool_call = {
                                 "name": call.name,
                                 "args": args,
-                                "result": codex_result.final_response,
-                                "workdir": codex_result.workdir,
+                                "result": final_response,
+                                "workdir": resolved_workdir,
                             }
                             tool_calls.append(tool_call)
                             yield {
                                 "type": "tool_result",
                                 "name": call.name,
-                                "result": codex_result.final_response,
-                                "workdir": codex_result.workdir,
+                                "result": final_response,
+                                "workdir": resolved_workdir,
                             }
                             responses.append(
                                 types.FunctionResponse(
                                     id=call.id,
                                     name=call.name,
                                     response={
-                                        "result": codex_result.final_response,
-                                        "workdir": codex_result.workdir,
+                                        "result": final_response,
+                                        "workdir": resolved_workdir,
                                     },
                                 )
                             )
