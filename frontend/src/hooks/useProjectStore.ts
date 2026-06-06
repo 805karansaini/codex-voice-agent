@@ -162,10 +162,11 @@ export function useProjectStore() {
     setMessagesByChat((current) => ({ ...current, [chat.id]: [] }));
     if (opts?.activate !== false) {
       setActiveChatByProject((current) => ({ ...current, [projectId]: chat.id }));
+      setActiveId(projectId);
     }
     api.saveChat(chat).catch(() => {});
     return chat;
-  }, []);
+  }, [setActiveId]);
 
   useEffect(() => {
     if (!activeProject) return;
@@ -180,7 +181,8 @@ export function useProjectStore() {
 
   const selectChat = useCallback((projectId: string, chatId: string) => {
     setActiveChatByProject((current) => ({ ...current, [projectId]: chatId }));
-  }, []);
+    setActiveId(projectId);
+  }, [setActiveId]);
 
   const renameChat = useCallback((projectId: string, chatId: string, title: string) => {
     const clean = title.trim();

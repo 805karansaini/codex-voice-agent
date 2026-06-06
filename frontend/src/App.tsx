@@ -28,6 +28,7 @@ import {
   Waves,
   X,
   Zap,
+  MoreHorizontal,
 } from "lucide-react";
 
 import { useProjectStore } from "./hooks/useProjectStore";
@@ -124,6 +125,8 @@ export function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
   const [activeConsoleTab, setActiveConsoleTab] = useState<"stream" | "actions" | "handoffs" | "voice">("stream");
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
 
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleLoadedChatRef = useRef("");
@@ -936,9 +939,9 @@ export function App() {
           "Summarize this codebase",
         ]
       : [
-          "How many files are in this project?",
+          "Find all TODOs in the codebase",
           "What changed in the last commit?",
-          "Pull the latest from git",
+          "Explain the main entry point of the project",
           "Explain the project structure",
         ];
 
@@ -1159,8 +1162,23 @@ export function App() {
               ) : (
                 store.projects.map((p) => {
                   const isActive = p.id === store.activeId;
+                  const isExpanded = expandedProjects[p.id] !== undefined ? expandedProjects[p.id] : isActive;
                   const pChats = store.chats[p.id] || [];
                   const activeChatId = store.activeChatByProject[p.id] || "";
+
+                  const getChatLimit = (projectId: string, chatsList: typeof pChats, activeId: string) => {
+                    const userLimit = visibleChatsCount[projectId] || 5;
+                    if (!activeId) return userLimit;
+                    const activeIdx = chatsList.findIndex((c) => c.id === activeId);
+                    if (activeIdx === -1) return userLimit;
+                    if (activeIdx >= userLimit) {
+                      return Math.ceil((activeIdx + 1) / 5) * 5;
+                    }
+                    return userLimit;
+                  };
+
+                  const chatLimit = getChatLimit(p.id, pChats, activeChatId);
+                  const visibleChats = pChats.slice(0, chatLimit);
 
                   return (
                     <div key={p.id} className="px-1">
@@ -1170,15 +1188,15 @@ export function App() {
                       )}>
                         <button
                           onClick={() => {
-                            store.setActiveId(p.id);
-                            if (isMobile) {
-                              setMobileView("chat");
-                            }
+                            setExpandedProjects((prev) => ({
+                              ...prev,
+                              [p.id]: !isExpanded,
+                            }));
                           }}
                           className="flex items-center gap-1.5 flex-1 min-w-0"
                         >
                           <ChevronRight
-                            className={cn("h-3.5 w-3.5 text-fg-dim transition-transform shrink-0", isActive && "rotate-90")}
+                            className={cn("h-3.5 w-3.5 text-fg-dim transition-transform shrink-0", isExpanded && "rotate-90")}
                           />
                           <span
                             className="h-2 w-2 rounded-sm shrink-0"
@@ -1188,17 +1206,41 @@ export function App() {
                         </button>
 
                         <button
+                          title="New chat"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            store.createChat(p.id);
+                            setExpandedProjects((prev) => ({
+                              ...prev,
+                              [p.id]: true,
+                            }));
+                            if (isMobile) {
+                              setMobileView("chat");
+                            }
+                          }}
+                          className={cn(
+                            "p-0.5 rounded hover:bg-surface-3 hover:text-accent text-fg-dim transition-all shrink-0",
+                            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                          )}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+
+                        <button
                           title="Remove Project"
                           onClick={() => handleRemoveProject(p.id, p.name)}
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0"
+                          className={cn(
+                            "p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
+                            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                          )}
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
                       </div>
 
-                      {isActive && (
+                      {isExpanded && (
                         <div className="ml-5 mt-0.5 mb-1 border-l border-line-soft pl-2">
-                          {pChats.map((c) => {
+                          {visibleChats.map((c) => {
                             const isChatActive = c.id === activeChatId;
                             return (
                               <div
@@ -1224,31 +1266,40 @@ export function App() {
                                 <button
                                   title="Rename chat"
                                   onClick={() => handleRenameChat(p.id, c.id, c.title)}
-                                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-3 hover:text-fg text-fg-dim transition-all shrink-0"
+                                  className={cn(
+                                    "p-0.5 rounded hover:bg-surface-3 hover:text-fg text-fg-dim transition-all shrink-0",
+                                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                  )}
                                 >
                                   <Pencil className="h-3 w-3" />
                                 </button>
                                 <button
                                   title="Delete chat"
                                   onClick={() => handleRemoveChat(p.id, c.id)}
-                                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0"
+                                  className={cn(
+                                    "p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
+                                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                  )}
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </button>
                               </div>
                             );
                           })}
-                          <button
-                            onClick={() => {
-                              store.createChat(p.id);
-                              if (isMobile) {
-                                setMobileView("chat");
-                              }
-                            }}
-                            className="mt-1 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] text-fg-dim hover:bg-surface-2 hover:text-accent"
-                          >
-                            <Plus className="h-3 w-3" /> New chat
-                          </button>
+                          {pChats.length > chatLimit && (
+                            <button
+                              onClick={() => {
+                                setVisibleChatsCount((prev) => ({
+                                  ...prev,
+                                  [p.id]: (prev[p.id] || 5) + 5,
+                                }));
+                              }}
+                              className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-fg-dim hover:bg-surface-2 hover:text-accent font-medium border border-dashed border-line-soft/60"
+                              title="Show more chats"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
