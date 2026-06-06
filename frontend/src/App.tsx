@@ -559,6 +559,13 @@ export function App() {
     },
   });
   const voiceActive = liveVoice.active;
+  const voiceContext = voiceCtxRef.current;
+  const voiceContextChat = voiceContext
+    ? (store.chats[voiceContext.project.id] || []).find((chat) => chat.id === voiceContext.chatId)
+    : null;
+  const voiceContextLabel = voiceContext
+    ? `${voiceContext.project.name} / ${voiceContextChat?.title || "New chat"}`
+    : "";
 
   useEffect(() => {
     if (!voiceActive) return;
@@ -1463,6 +1470,11 @@ export function App() {
                       {voiceTitle}
                     </p>
                     <p className="text-[11.5px] text-fg-muted mt-1 truncate">{liveVoice.message}</p>
+                    {voiceContextLabel && (
+                      <p className="text-[10.5px] text-fg-dim mt-1 truncate">
+                        Attached to {voiceContextLabel}
+                      </p>
+                    )}
                     {liveVoice.transcriptPreview && (
                       <p className="text-[11.5px] text-accent font-mono italic mt-1 truncate bg-accent/5 border border-accent/10 rounded px-1.5 py-0.5 max-w-full">
                         "{liveVoice.transcriptPreview}"
