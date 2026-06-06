@@ -37,6 +37,8 @@ type TranscribeResponse = {
 
 const API = import.meta.env.VITE_API_BASE_URL || "";
 const LIVE_AUDIO_RATE = 16000;
+const MAX_BUFFERED_AUDIO_CHUNKS = 360;
+const RECONNECT_DELAY_MS = 900;
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
 const PREFERRED_VOICE_NAMES = [
@@ -389,6 +391,9 @@ function useLiveVoice({
   const contextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const bufferedAudioRef = useRef<string[]>([]);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const manuallyStoppedRef = useRef(false);
   const onTurnRef = useRef(onTurn);
   const onAudioRef = useRef(onAudio);
   const onDebugRef = useRef(onDebug);
@@ -416,8 +421,100 @@ function useLiveVoice({
     contextRef.current = null;
   }, []);
 
+  const flushBufferedAudio = useCallback((websocket: WebSocket) => {
+    if (bufferedAudioRef.current.length === 0) return;
+    const buffered = bufferedAudioRef.current.splice(0);
+    buffered.forEach((payload) => websocket.send(payload));
+    log(`Resent ${buffered.length} buffered audio chunks after reconnect.`);
+  }, [log]);
+
+  const connectSocket = useCallback(() => {
+    const websocket = new WebSocket(websocketUrl("/api/live"));
+    websocketRef.current = websocket;
+
+    websocket.onopen = () => {
+      log("WebSocket connected to backend live endpoint.");
+      flushBufferedAudio(websocket);
+      setState("live");
+      setMessage("Live with Gemini. Speak naturally; pause when you want the agent to answer.");
+    };
+
+    websocket.onmessage = (event) => {
+      const payload = JSON.parse(event.data);
+      if (payload.type === "ready" || payload.type === "debug") {
+        log(payload.message || payload.type);
+      } else if (payload.type === "user_transcript") {
+        setUserPreview((current) => `${current}${payload.text || ""}`);
+        setState("thinking");
+        setMessage("Gemini heard you. Waiting for the reply.");
+      } else if (payload.type === "assistant_delta") {
+        setAssistantPreview((current) => `${current}${payload.text || ""}`);
+        setState("thinking");
+        setMessage("Gemini is replying.");
+      } else if (payload.type === "turn_complete") {
+        const userText = String(payload.user_text || "").trim();
+        const assistantText = String(payload.assistant_text || "").trim();
+        if (userText || assistantText) onTurnRef.current(userText || "Voice message", assistantText || "Done.");
+        if (payload.audio_data_url) onAudioRef.current(payload.audio_data_url);
+        setUserPreview("");
+        setAssistantPreview("");
+        setState("live");
+        setMessage("Live with Gemini. Speak again when ready.");
+        log("Gemini Live turn complete.");
+      } else if (payload.type === "interrupted") {
+        setAssistantPreview("");
+        log("Gemini response interrupted by new speech.");
+      } else if (payload.type === "tool_call") {
+        log(`Codex handoff finished: ${payload.name || "tool"}.`);
+      } else if (payload.type === "error") {
+        setState("error");
+        setMessage(payload.message || "Live voice failed.");
+        log(`Live voice error: ${payload.message || "unknown error"}`);
+      }
+    };
+
+    websocket.onerror = () => {
+      log("WebSocket error from live voice connection.");
+    };
+
+    websocket.onclose = () => {
+      websocketRef.current = null;
+      if (manuallyStoppedRef.current) {
+        void stopMicrophone();
+        setState("idle");
+        setMessage("Gemini Live voice is ready.");
+        log("Live voice socket closed.");
+        return;
+      }
+
+      if (streamRef.current) {
+        setState("connecting");
+        setMessage("Live connection dropped. Reconnecting microphone stream.");
+        log("Live voice socket closed unexpectedly. Reconnecting.");
+        if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = window.setTimeout(() => {
+          reconnectTimerRef.current = null;
+          connectSocket();
+        }, RECONNECT_DELAY_MS);
+        return;
+      }
+
+      setState("idle");
+      setMessage("Gemini Live voice is ready.");
+      log("Live voice socket closed.");
+    };
+
+    return websocket;
+  }, [flushBufferedAudio, log, stopMicrophone]);
+
   const stop = useCallback(async () => {
     log("Stopping live voice session.");
+    manuallyStoppedRef.current = true;
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    bufferedAudioRef.current = [];
     await stopMicrophone();
     websocketRef.current?.send(JSON.stringify({ type: "close" }));
     websocketRef.current?.close();
@@ -440,6 +537,8 @@ function useLiveVoice({
     setUserPreview("");
     setAssistantPreview("");
     log("Opening microphone for Gemini Live.");
+    manuallyStoppedRef.current = false;
+    bufferedAudioRef.current = [];
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -453,78 +552,29 @@ function useLiveVoice({
       const audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      const websocket = new WebSocket(websocketUrl("/api/live"));
 
       streamRef.current = stream;
       contextRef.current = audioContext;
       sourceRef.current = source;
       processorRef.current = processor;
-      websocketRef.current = websocket;
-
-      websocket.onopen = () => {
-        log("WebSocket connected to backend live endpoint.");
-        setState("live");
-        setMessage("Live with Gemini. Speak naturally; pause when you want the agent to answer.");
-      };
-
-      websocket.onmessage = (event) => {
-        const payload = JSON.parse(event.data);
-        if (payload.type === "ready" || payload.type === "debug") {
-          log(payload.message || payload.type);
-        } else if (payload.type === "user_transcript") {
-          setUserPreview((current) => `${current}${payload.text || ""}`);
-          setState("thinking");
-          setMessage("Gemini heard you. Waiting for the reply.");
-        } else if (payload.type === "assistant_delta") {
-          setAssistantPreview((current) => `${current}${payload.text || ""}`);
-          setState("thinking");
-          setMessage("Gemini is replying.");
-        } else if (payload.type === "turn_complete") {
-          const userText = String(payload.user_text || "").trim();
-          const assistantText = String(payload.assistant_text || "").trim();
-          if (userText || assistantText) onTurnRef.current(userText || "Voice message", assistantText || "Done.");
-          if (payload.audio_data_url) onAudioRef.current(payload.audio_data_url);
-          setUserPreview("");
-          setAssistantPreview("");
-          setState("live");
-          setMessage("Live with Gemini. Speak again when ready.");
-          log("Gemini Live turn complete.");
-        } else if (payload.type === "interrupted") {
-          setAssistantPreview("");
-          log("Gemini response interrupted by new speech.");
-        } else if (payload.type === "tool_call") {
-          log(`Codex handoff finished: ${payload.name || "tool"}.`);
-        } else if (payload.type === "error") {
-          setState("error");
-          setMessage(payload.message || "Live voice failed.");
-          log(`Live voice error: ${payload.message || "unknown error"}`);
-        }
-      };
-
-      websocket.onerror = () => {
-        setState("error");
-        setMessage("Live voice connection failed.");
-        log("WebSocket error from live voice connection.");
-      };
-
-      websocket.onclose = () => {
-        void stopMicrophone();
-        websocketRef.current = null;
-        setState((current) => (current === "error" ? current : "idle"));
-        setMessage((current) => (current === "Live voice connection failed." ? current : "Gemini Live voice is ready."));
-        log("Live voice socket closed.");
-      };
+      connectSocket();
 
       processor.onaudioprocess = (event) => {
-        if (websocket.readyState !== WebSocket.OPEN) return;
         const input = event.inputBuffer.getChannelData(0);
-        websocket.send(
-          JSON.stringify({
-            type: "audio",
-            mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
-            data: encodePcmChunk(input, audioContext.sampleRate),
-          }),
-        );
+        const payload = JSON.stringify({
+          type: "audio",
+          mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
+          data: encodePcmChunk(input, audioContext.sampleRate),
+        });
+        const websocket = websocketRef.current;
+        if (websocket?.readyState === WebSocket.OPEN) {
+          websocket.send(payload);
+          return;
+        }
+        bufferedAudioRef.current.push(payload);
+        if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
+          bufferedAudioRef.current.splice(0, bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS);
+        }
       };
 
       source.connect(processor);
@@ -538,7 +588,7 @@ function useLiveVoice({
       setMessage(err instanceof Error ? err.message : "Could not start live voice.");
       log(`Could not start live voice: ${err instanceof Error ? err.message : "unknown error"}`);
     }
-  }, [log, state, stopMicrophone]);
+  }, [connectSocket, log, state, stopMicrophone]);
 
   useEffect(() => {
     return () => {

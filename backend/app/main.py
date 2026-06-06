@@ -120,79 +120,85 @@ async def live_voice(websocket: WebSocket) -> None:
 
     async def receive_gemini(session: object) -> None:
         nonlocal audio_chunks, input_text_chunks, output_text_chunks
-        async for server_message in session.receive():
-            if server_message.setup_complete:
-                await websocket.send_json({"type": "ready", "message": "Gemini Live session ready."})
+        while True:
+            received_message = False
+            async for server_message in session.receive():
+                received_message = True
+                if server_message.setup_complete:
+                    await websocket.send_json({"type": "ready", "message": "Gemini Live session ready."})
 
-            if server_message.tool_call and server_message.tool_call.function_calls:
-                responses = []
-                user_text = "".join(input_text_chunks).strip()
-                for call in server_message.tool_call.function_calls:
-                    args = dict(call.args or {})
-                    task = str(args.get("task") or user_text or "Run the requested local task.")
-                    workdir = str(args.get("workdir") or settings.codex_default_workdir)
-                    codex_result = await run_codex(task, workdir, settings)
-                    responses.append(
-                        types.FunctionResponse(
-                            id=call.id,
-                            name=call.name,
-                            response={"result": codex_result.final_response, "workdir": codex_result.workdir},
+                if server_message.tool_call and server_message.tool_call.function_calls:
+                    responses = []
+                    user_text = "".join(input_text_chunks).strip()
+                    for call in server_message.tool_call.function_calls:
+                        args = dict(call.args or {})
+                        task = str(args.get("task") or user_text or "Run the requested local task.")
+                        workdir = str(args.get("workdir") or settings.codex_default_workdir)
+                        codex_result = await run_codex(task, workdir, settings)
+                        responses.append(
+                            types.FunctionResponse(
+                                id=call.id,
+                                name=call.name,
+                                response={"result": codex_result.final_response, "workdir": codex_result.workdir},
+                            )
                         )
-                    )
+                        await websocket.send_json(
+                            {
+                                "type": "tool_call",
+                                "name": call.name,
+                                "result": codex_result.final_response,
+                                "workdir": codex_result.workdir,
+                            }
+                        )
+                    await session.send_tool_response(function_responses=responses)
+
+                content = server_message.server_content
+                if not content:
+                    continue
+
+                if content.interrupted:
+                    audio_chunks = []
+                    output_text_chunks = []
+                    await websocket.send_json({"type": "interrupted"})
+
+                if content.input_transcription and content.input_transcription.text:
+                    text = content.input_transcription.text
+                    input_text_chunks.append(text)
+                    await websocket.send_json({"type": "user_transcript", "text": text})
+
+                if content.output_transcription and content.output_transcription.text:
+                    text = content.output_transcription.text
+                    output_text_chunks.append(text)
+                    await websocket.send_json({"type": "assistant_delta", "text": text})
+
+                if content.model_turn:
+                    for part in content.model_turn.parts or []:
+                        if part.inline_data and part.inline_data.data:
+                            audio_chunks.append(part.inline_data.data)
+                        if part.text:
+                            output_text_chunks.append(part.text)
+                            await websocket.send_json({"type": "assistant_delta", "text": part.text})
+
+                if content.turn_complete:
+                    user_text = "".join(input_text_chunks).strip()
+                    assistant_text = "".join(output_text_chunks).strip() or "Done."
+                    if user_text:
+                        history.append("user", user_text)
+                    history.append("assistant", assistant_text)
                     await websocket.send_json(
                         {
-                            "type": "tool_call",
-                            "name": call.name,
-                            "result": codex_result.final_response,
-                            "workdir": codex_result.workdir,
+                            "type": "turn_complete",
+                            "user_text": user_text,
+                            "assistant_text": assistant_text,
+                            "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
                         }
                     )
-                await session.send_tool_response(function_responses=responses)
-
-            content = server_message.server_content
-            if not content:
-                continue
-
-            if content.interrupted:
-                audio_chunks = []
-                output_text_chunks = []
-                await websocket.send_json({"type": "interrupted"})
-
-            if content.input_transcription and content.input_transcription.text:
-                text = content.input_transcription.text
-                input_text_chunks.append(text)
-                await websocket.send_json({"type": "user_transcript", "text": text})
-
-            if content.output_transcription and content.output_transcription.text:
-                text = content.output_transcription.text
-                output_text_chunks.append(text)
-                await websocket.send_json({"type": "assistant_delta", "text": text})
-
-            if content.model_turn:
-                for part in content.model_turn.parts or []:
-                    if part.inline_data and part.inline_data.data:
-                        audio_chunks.append(part.inline_data.data)
-                    if part.text:
-                        output_text_chunks.append(part.text)
-                        await websocket.send_json({"type": "assistant_delta", "text": part.text})
-
-            if content.turn_complete:
-                user_text = "".join(input_text_chunks).strip()
-                assistant_text = "".join(output_text_chunks).strip() or "Done."
-                if user_text:
-                    history.append("user", user_text)
-                history.append("assistant", assistant_text)
-                await websocket.send_json(
-                    {
-                        "type": "turn_complete",
-                        "user_text": user_text,
-                        "assistant_text": assistant_text,
-                        "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
-                    }
-                )
-                audio_chunks = []
-                input_text_chunks = []
-                output_text_chunks = []
+                    audio_chunks = []
+                    input_text_chunks = []
+                    output_text_chunks = []
+            if received_message:
+                await websocket.send_json({"type": "debug", "message": "Gemini receive loop is waiting for the next turn."})
+            await asyncio.sleep(0.05)
 
     try:
         async with client.aio.live.connect(model=settings.gemini_model, config=live_connect_config(settings)) as session:
