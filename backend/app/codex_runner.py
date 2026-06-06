@@ -12,6 +12,18 @@ class CodexRun:
     workdir: str
 
 
+class CancellationToken:
+    def __init__(self):
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._is_cancelled
+
+
 def resolve_workdir(workdir: str) -> Path:
     """Resolve a project directory to an existing folder on disk.
 
@@ -52,7 +64,7 @@ async def run_codex(prompt: str, workdir: str, settings: Settings) -> CodexRun:
     return await asyncio.to_thread(_run_codex_sync, prompt, workdir, settings)
 
 
-async def run_codex_stream(prompt: str, workdir: str, settings: Settings) -> AsyncIterator[dict]:
+async def run_codex_stream(prompt: str, workdir: str, settings: Settings, cancel_token: CancellationToken = None) -> AsyncIterator[dict]:
     """Stream a Codex turn, yielding incremental events.
 
     Events: {"type":"delta","text":str}, then {"type":"done","text":str,"workdir":str},
@@ -75,12 +87,16 @@ async def run_codex_stream(prompt: str, workdir: str, settings: Settings) -> Asy
                 thread = codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root))
                 turn = thread.turn(prompt)
                 for event in turn.stream():
+                    if cancel_token and cancel_token.is_cancelled:
+                        loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": "Task cancelled by user."})
+                        break
                     payload = event.payload
                     if isinstance(payload, AgentMessageDeltaNotification) and payload.delta:
                         parts.append(payload.delta)
                         loop.call_soon_threadsafe(queue.put_nowait, {"type": "delta", "text": payload.delta})
             final = "".join(parts).strip() or "Done."
-            loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "text": final, "workdir": str(root)})
+            if not (cancel_token and cancel_token.is_cancelled):
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "text": final, "workdir": str(root)})
         except Exception as exc:  # surfaced to the client as an error event
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(exc)})
         finally:
@@ -97,7 +113,24 @@ async def run_codex_stream(prompt: str, workdir: str, settings: Settings) -> Asy
         await future
 
 
-async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Settings) -> AsyncIterator[dict]:
+def summarize_progress(accumulated_text: str) -> str:
+    lines = [line.strip() for line in accumulated_text.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if "Running command" in line or "Executing" in line or "$ " in line:
+            cmd = line.split("Running command:")[-1].split("Executing:")[-1].strip()
+            if cmd.startswith("$"):
+                cmd = cmd[1:].strip()
+            return f"Codex is running: {cmd}"
+        if "Reading file" in line or "inspecting" in line.lower():
+            file = line.split("Reading file")[-1].strip()
+            return f"Codex is reading {Path(file).name if '/' in file else file}"
+        if "Writing file" in line or "Editing file" in line or "Updating file" in line:
+            file = line.split("file")[-1].strip()
+            return f"Codex is modifying {Path(file).name if '/' in file else file}"
+    return "Codex is still working on the task"
+
+
+async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Settings, cancel_token: CancellationToken = None) -> AsyncIterator[dict]:
     """Stream a Codex turn with a background timer that emits status events for long-running tasks.
 
     Yields incremental events:
@@ -109,11 +142,14 @@ async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Setti
     import time
     queue: asyncio.Queue = asyncio.Queue()
     done = False
+    accumulated_parts = []
 
     async def stream_reader():
         nonlocal done
         try:
-            async for event in run_codex_stream(prompt, workdir, settings):
+            async for event in run_codex_stream(prompt, workdir, settings, cancel_token):
+                if event.get("type") == "delta":
+                    accumulated_parts.append(event.get("text", ""))
                 await queue.put(event)
         except Exception as exc:
             await queue.put({"type": "error", "message": str(exc)})
@@ -128,9 +164,12 @@ async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Setti
             await asyncio.sleep(30)
             if not done:
                 elapsed = int(time.time() - start_time)
+                text_so_far = "".join(accumulated_parts)
+                progress_summary = summarize_progress(text_so_far)
+                msg = f"{progress_summary} (elapsed: {elapsed} seconds)"
                 await queue.put({
                     "type": "status",
-                    "message": f"Codex has been working for {elapsed} seconds...",
+                    "message": msg,
                     "elapsed": elapsed
                 })
             
@@ -139,9 +178,12 @@ async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Setti
                 await asyncio.sleep(120)
                 if not done:
                     elapsed = int(time.time() - start_time)
+                    text_so_far = "".join(accumulated_parts)
+                    progress_summary = summarize_progress(text_so_far)
+                    msg = f"{progress_summary} (elapsed: {elapsed}s)..."
                     await queue.put({
                         "type": "status",
-                        "message": f"Codex is still working on the task (elapsed: {elapsed}s)...",
+                        "message": msg,
                         "elapsed": elapsed
                     })
         except asyncio.CancelledError:

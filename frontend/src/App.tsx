@@ -278,6 +278,7 @@ export function App() {
   const activeVoiceActionIdRef = useRef<string | null>(null);
   const activeUserVoiceMsgIdRef = useRef<string | null>(null);
   const activeAssistantVoiceMsgIdRef = useRef<string | null>(null);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
 
   const liveVoice = useLiveVoice({
     getWorkdir,
@@ -445,55 +446,62 @@ export function App() {
         streaming: true,
       });
 
-      const res = await api.postCodexStream({
-        task,
-        workdir: project.path,
-        projectId: project.id,
-        chatId,
-      });
-
-      if (!res.ok || !res.body) {
-        const payload = await res.json().catch(() => ({}));
-        store.updateMessage(chatId, assistantId, (m) => ({
-          ...m,
-          streaming: false,
-          text: m.text || "Codex request failed.",
-        }));
-        updateAction(actionId, {
-          status: "failed",
-          detail: payload.detail || "Codex request failed",
-        });
-        throw new Error(payload.detail || "Codex request failed");
-      }
+      const controller = new AbortController();
+      activeAbortControllerRef.current = controller;
 
       let finalText = "";
 
-      const handle = (evt: any) => {
-        if (evt.type === "delta" && evt.text) {
-          finalText += evt.text;
-          store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
-        } else if (evt.type === "done") {
-          finalText = String(evt.text ?? finalText);
+      try {
+        const res = await api.postCodexStream({
+          task,
+          workdir: project.path,
+          projectId: project.id,
+          chatId,
+        }, controller.signal);
+
+        if (!res.ok || !res.body) {
+          const payload = await res.json().catch(() => ({}));
           store.updateMessage(chatId, assistantId, (m) => ({
             ...m,
-            text: finalText || m.text,
             streaming: false,
-            workdir: evt.workdir,
+            text: m.text || "Codex request failed.",
           }));
           updateAction(actionId, {
-            status: "done",
-            detail: finalText ? `Completed. ${finalText.slice(0, 180)}` : "Completed.",
-            workdir: evt.workdir || project.path,
+            status: "failed",
+            detail: payload.detail || "Codex request failed",
           });
-          addHandoff("run_codex_task", finalText.slice(0, 160));
-        } else if (evt.type === "error") {
-          store.updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false }));
-          updateAction(actionId, { status: "failed", detail: String(evt.message || "Codex failed") });
-          setError(String(evt.message || "Codex failed"));
+          throw new Error(payload.detail || "Codex request failed");
         }
-      };
 
-      await readSseStream(res, handle);
+        const handle = (evt: any) => {
+          if (evt.type === "delta" && evt.text) {
+            finalText += evt.text;
+            store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
+          } else if (evt.type === "done") {
+            finalText = String(evt.text ?? finalText);
+            store.updateMessage(chatId, assistantId, (m) => ({
+              ...m,
+              text: finalText || m.text,
+              streaming: false,
+              workdir: evt.workdir,
+            }));
+            updateAction(actionId, {
+              status: "done",
+              detail: finalText ? `Completed. ${finalText.slice(0, 180)}` : "Completed.",
+              workdir: evt.workdir || project.path,
+            });
+            addHandoff("run_codex_task", finalText.slice(0, 160));
+          } else if (evt.type === "error") {
+            store.updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false }));
+            updateAction(actionId, { status: "failed", detail: String(evt.message || "Codex failed") });
+            setError(String(evt.message || "Codex failed"));
+          }
+        };
+
+        await readSseStream(res, handle);
+      } finally {
+        activeAbortControllerRef.current = null;
+      }
 
       store.updateMessage(chatId, assistantId, (m) =>
         m.streaming ? { ...m, streaming: false } : m
@@ -508,12 +516,15 @@ export function App() {
       const assistantId = crypto.randomUUID();
       store.appendMessage(chatId, { id: assistantId, role: "assistant", text: "", streaming: true });
 
+      const controller = new AbortController();
+      activeAbortControllerRef.current = controller;
+
       const res = await api.postChatStream({
         message,
         workdir: project.path,
         projectId: project.id,
         chatId,
-      });
+      }, controller.signal);
 
       if (!res.ok || !res.body) {
         const payload = await res.json().catch(() => ({}));
@@ -643,11 +654,20 @@ export function App() {
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
       } finally {
+        activeAbortControllerRef.current = null;
         setBusy(false);
       }
     },
     [busy, input, mode, store, streamAgent, streamCodex]
   );
+
+  const handleCancelTask = useCallback(() => {
+    if (activeAbortControllerRef.current) {
+      activeAbortControllerRef.current.abort();
+      activeAbortControllerRef.current = null;
+    }
+    liveVoice.cancelTask();
+  }, [liveVoice]);
 
   const toggleVoice = () => {
     primeAudioPlayback();
@@ -679,6 +699,12 @@ export function App() {
   const statusClass =
     status === "Ready" ? "ready" : status === "Backend offline" ? "offline" : "warn";
 
+  const formatElapsed = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+  };
+
   const voiceTitle =
     liveVoice.state === "connecting"
       ? "Connecting…"
@@ -687,7 +713,7 @@ export function App() {
       : liveVoice.state === "thinking"
       ? "Gemini is responding"
       : liveVoice.state === "working"
-      ? "Codex is working"
+      ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
       : liveVoice.state === "error"
       ? "Voice needs attention"
       : "Live voice";
@@ -827,6 +853,7 @@ export function App() {
           mode={mode}
           error={error}
           primeAudio={primeAudioPlayback}
+          onCancelTask={handleCancelTask}
         />
       </section>
 

@@ -96,7 +96,7 @@ export interface StreamOptions {
   chatId: string;
 }
 
-export async function postCodexStream(options: StreamOptions): Promise<Response> {
+export async function postCodexStream(options: StreamOptions, signal?: AbortSignal): Promise<Response> {
   return fetch(`${API_BASE}/api/codex/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -106,10 +106,11 @@ export async function postCodexStream(options: StreamOptions): Promise<Response>
       project_id: options.projectId,
       chat_id: options.chatId,
     }),
+    signal,
   });
 }
 
-export async function postChatStream(options: StreamOptions): Promise<Response> {
+export async function postChatStream(options: StreamOptions, signal?: AbortSignal): Promise<Response> {
   return fetch(`${API_BASE}/api/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -119,5 +120,6 @@ export async function postChatStream(options: StreamOptions): Promise<Response> 
       project_id: options.projectId,
       chat_id: options.chatId,
     }),
+    signal,
   });
 }

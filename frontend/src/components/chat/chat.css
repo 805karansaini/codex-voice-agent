@@ -735,3 +735,26 @@
   color: var(--lime);
   flex: none;
 }
+
+.stopBtn {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #ffb3aa;
+  background: var(--danger-soft);
+  border: 1px solid rgba(255, 111, 97, 0.32);
+  transition: filter 150ms ease, transform 150ms ease;
+}
+.stopBtn:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+.stopBtn .stopIcon {
+  width: 12px;
+  height: 12px;
+  background: var(--danger);
+  border-radius: 2px;
+}

@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator
 from google import genai
 from google.genai import types
 
-from .codex_runner import run_codex, run_codex_stream_with_timer
+from .codex_runner import run_codex, run_codex_stream_with_timer, CancellationToken
 from .settings import Settings
 
 
@@ -158,7 +158,7 @@ async def ask_gemini(message: str, settings: Settings, workdir: str | None = Non
     }
 
 
-async def ask_gemini_stream(message: str, settings: Settings, workdir: str | None = None) -> AsyncIterator[dict[str, Any]]:
+async def ask_gemini_stream(message: str, settings: Settings, workdir: str | None = None, cancel_token: CancellationToken = None) -> AsyncIterator[dict[str, Any]]:
     if not settings.google_api_key:
         yield {"type": "error", "message": "GOOGLE_API_KEY is not set"}
         return
@@ -197,7 +197,7 @@ async def ask_gemini_stream(message: str, settings: Settings, workdir: str | Non
                             }
                             final_response = ""
                             resolved_workdir = chosen_workdir
-                            async for event in run_codex_stream_with_timer(task, chosen_workdir, settings):
+                            async for event in run_codex_stream_with_timer(task, chosen_workdir, settings, cancel_token):
                                 if event.get("type") == "delta":
                                     text_delta = event.get("text", "")
                                     final_response += text_delta

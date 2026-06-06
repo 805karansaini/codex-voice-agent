@@ -138,10 +138,24 @@ export function useLiveVoice({
   onTurnComplete,
 }: UseLiveVoiceProps) {
   const [state, setState] = useState<LiveVoiceState>("idle");
+  const [elapsed, setElapsed] = useState(0);
   const [message, setMessage] = useState("Gemini Live voice is ready.");
   const [userPreview, setUserPreview] = useState("");
   const [assistantPreview, setAssistantPreview] = useState("");
   const [muted, setMuted] = useState(false);
+
+  useEffect(() => {
+    if (state === "working") {
+      setElapsed(0);
+      const interval = setInterval(() => {
+        setElapsed((e) => e + 1);
+      }, 1000);
+      return () => clearInterval(interval);
+    } else {
+      setElapsed(0);
+    }
+  }, [state]);
+
   const mutedRef = useRef(false);
   const websocketRef = useRef<WebSocket | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -466,21 +480,29 @@ export function useLiveVoice({
     }
   }, [connectSocket, state, stopMicrophone]);
 
+  const cancelTask = useCallback(() => {
+    if (websocketRef.current?.readyState === WebSocket.OPEN) {
+      websocketRef.current.send(JSON.stringify({ type: "cancel_task" }));
+    }
+  }, []);
+
   useEffect(() => () => void stop(), [stop]);
 
   return {
-    active: state === "connecting" || state === "live" || state === "thinking",
+    active: state === "connecting" || state === "live" || state === "thinking" || state === "working",
     supported: Boolean(
       typeof navigator.mediaDevices?.getUserMedia === "function" &&
         typeof window.AudioContext !== "undefined" &&
         typeof window.WebSocket !== "undefined"
     ),
     state,
+    elapsed,
     message,
     transcriptPreview: userPreview || assistantPreview,
     muted,
     toggleMute,
     start,
     stop,
+    cancelTask,
   };
 }

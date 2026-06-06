@@ -20,6 +20,7 @@ interface ComposerProps {
   mode: "agent" | "codex";
   error: string;
   primeAudio: () => void;
+  onCancelTask?: () => void;
 }
 
 export const Composer: React.FC<ComposerProps> = ({
@@ -41,6 +42,7 @@ export const Composer: React.FC<ComposerProps> = ({
   mode,
   error,
   primeAudio,
+  onCancelTask,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -147,15 +149,27 @@ export const Composer: React.FC<ComposerProps> = ({
             onKeyDown={handleKeyDown}
           />
           
-          <button
-            className="sendBtn"
-            type="button"
-            onClick={handleSend}
-            disabled={busy || !input.trim() || !hasActiveProject}
-            aria-label="Send"
-          >
-            <ArrowUp size={20} weight="bold" />
-          </button>
+          {busy ? (
+            <button
+              className="stopBtn"
+              type="button"
+              onClick={onCancelTask}
+              aria-label="Cancel task"
+              title="Cancel running task"
+            >
+              <span className="stopIcon" />
+            </button>
+          ) : (
+            <button
+              className="sendBtn"
+              type="button"
+              onClick={handleSend}
+              disabled={!input.trim() || !hasActiveProject}
+              aria-label="Send"
+            >
+              <ArrowUp size={20} weight="bold" />
+            </button>
+          )}
         </div>
 
         <div className="composerFoot">

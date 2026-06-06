@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
-from .codex_runner import resolve_workdir, run_codex, run_codex_stream, run_codex_stream_with_timer
+from .codex_runner import resolve_workdir, run_codex, run_codex_stream, run_codex_stream_with_timer, CancellationToken
 from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, ask_gemini_stream, live_connect_config, transcribe_audio
 from .history import ChatStore, HistoryStore, ProjectStore
 from .settings import get_settings
@@ -188,12 +188,14 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     workdir = req.workdir or settings.codex_default_workdir
     history.append("user", text, {"workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
 
+    cancel_token = CancellationToken()
+
     async def event_source():
         final_text = ""
         final_workdir = workdir
         final_tool_calls = []
         try:
-            async for event in ask_gemini_stream(text, settings, workdir=req.workdir):
+            async for event in ask_gemini_stream(text, settings, workdir=req.workdir, cancel_token=cancel_token):
                 if event.get("type") == "done":
                     final_text = str(event.get("text") or "")
                     final_workdir = str(event.get("workdir") or workdir)
@@ -202,6 +204,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:
+            cancel_token.cancel()
             if final_text:
                 history.append(
                     "assistant",
@@ -243,12 +246,11 @@ async def live_voice(websocket: WebSocket) -> None:
     audio_chunks: list[bytes] = []
     input_text_chunks: list[str] = []
     output_text_chunks: list[str] = []
-    session_workdir = settings.codex_default_workdir
-    session_project_id: str | None = None
     session_chat_id: str | None = None
+    current_task_cancel_token: CancellationToken | None = None
 
     async def send_client_audio(session: object, initial: dict | None = None) -> None:
-        nonlocal session_workdir, session_project_id, session_chat_id
+        nonlocal session_workdir, session_project_id, session_chat_id, current_task_cancel_token
         pending = initial
         while True:
             payload = pending if pending is not None else await websocket.receive_json()
@@ -269,11 +271,15 @@ async def live_voice(websocket: WebSocket) -> None:
             elif event_type == "stop":
                 await session.send_realtime_input(audio_stream_end=True)
                 await websocket.send_json({"type": "debug", "message": "Sent audio stream end to Gemini."})
+            elif event_type == "cancel_task":
+                if current_task_cancel_token:
+                    current_task_cancel_token.cancel()
+                    await websocket.send_json({"type": "debug", "message": "Codex task cancelled."})
             elif event_type == "close":
                 return
 
     async def receive_gemini(session: object) -> None:
-        nonlocal audio_chunks, input_text_chunks, output_text_chunks
+        nonlocal audio_chunks, input_text_chunks, output_text_chunks, current_task_cancel_token
         while True:
             received_message = False
             async for server_message in session.receive():
@@ -298,9 +304,12 @@ async def live_voice(websocket: WebSocket) -> None:
                             }
                         )
 
+                        cancel_token = CancellationToken()
+                        current_task_cancel_token = cancel_token
+
                         final_response = ""
                         resolved_workdir = workdir
-                        async for event in run_codex_stream_with_timer(task, workdir, settings):
+                        async for event in run_codex_stream_with_timer(task, workdir, settings, cancel_token):
                             if event.get("type") == "delta":
                                 text_delta = event.get("text", "")
                                 final_response += text_delta
@@ -332,6 +341,8 @@ async def live_voice(websocket: WebSocket) -> None:
                                     }
                                 )
 
+                        current_task_cancel_token = None
+
                         responses.append(
                             types.FunctionResponse(
                                 id=call.id,
@@ -354,6 +365,8 @@ async def live_voice(websocket: WebSocket) -> None:
                     continue
 
                 if content.interrupted:
+                    if current_task_cancel_token:
+                        current_task_cancel_token.cancel()
                     audio_chunks = []
                     input_text_chunks = []
                     output_text_chunks = []
@@ -554,11 +567,13 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
     workdir = req.workdir or settings.codex_default_workdir
     history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
 
+    cancel_token = CancellationToken()
+
     async def event_source():
         final_text = ""
         final_workdir = workdir
         try:
-            async for event in run_codex_stream_with_timer(task, workdir, settings):
+            async for event in run_codex_stream_with_timer(task, workdir, settings, cancel_token):
                 if event.get("type") == "done":
                     final_text = str(event.get("text") or "")
                     final_workdir = str(event.get("workdir") or workdir)
@@ -566,6 +581,7 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:
+            cancel_token.cancel()
             if final_text:
                 history.append(
                     "assistant",
