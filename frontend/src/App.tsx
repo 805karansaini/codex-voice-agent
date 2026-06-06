@@ -276,30 +276,113 @@ export function App() {
   ]);
 
   const activeVoiceActionIdRef = useRef<string | null>(null);
+  const activeUserVoiceMsgIdRef = useRef<string | null>(null);
+  const activeAssistantVoiceMsgIdRef = useRef<string | null>(null);
 
   const liveVoice = useLiveVoice({
     getWorkdir,
     getProjectId,
     getChatId,
-    onTurn: (userText, assistantText, usedCodex) => {
-      const ctx = voiceCtxRef.current;
-      if (!ctx) return;
-      store.appendMessage(ctx.chatId, {
-        id: crypto.randomUUID(),
-        role: "user",
-        text: userText,
-        workdir: ctx.project.path,
-      });
-      store.appendMessage(ctx.chatId, {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        text: assistantText,
-        usedCodex,
-      });
-    },
     onAudio: playResponseAudio,
     onDebug: addDebug,
+    onUserTranscript: (text) => {
+      const ctx = voiceCtxRef.current;
+      if (!ctx) return;
+      if (!activeUserVoiceMsgIdRef.current) {
+        const id = crypto.randomUUID();
+        activeUserVoiceMsgIdRef.current = id;
+        store.appendMessage(ctx.chatId, {
+          id,
+          role: "user",
+          text,
+          workdir: ctx.project.path,
+        });
+        if ((store.messagesByChat[ctx.chatId] || []).length === 0) {
+          store.renameChat(ctx.project.id, ctx.chatId, chatTitleFrom(text || "Voice message"));
+        }
+      } else {
+        store.updateMessage(ctx.chatId, activeUserVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          text: m.text + text,
+        }));
+      }
+    },
+    onAssistantDelta: (text) => {
+      const ctx = voiceCtxRef.current;
+      if (!ctx) return;
+      if (!activeAssistantVoiceMsgIdRef.current) {
+        const id = crypto.randomUUID();
+        activeAssistantVoiceMsgIdRef.current = id;
+        store.appendMessage(ctx.chatId, {
+          id,
+          role: "assistant",
+          text,
+          streaming: true,
+        });
+      } else {
+        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          text: m.text + text,
+        }));
+      }
+    },
+    onInterrupted: () => {
+      const ctx = voiceCtxRef.current;
+      if (!ctx) return;
+      if (activeAssistantVoiceMsgIdRef.current) {
+        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          streaming: false,
+          text: m.text + " [Interrupted]",
+        }));
+      }
+      activeUserVoiceMsgIdRef.current = null;
+      activeAssistantVoiceMsgIdRef.current = null;
+    },
+    onTurnComplete: (userText, assistantText, usedCodex, workdir) => {
+      const ctx = voiceCtxRef.current;
+      if (!ctx) return;
+      if (activeUserVoiceMsgIdRef.current) {
+        store.updateMessage(ctx.chatId, activeUserVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          text: userText || m.text,
+        }));
+      } else {
+        store.appendMessage(ctx.chatId, {
+          id: crypto.randomUUID(),
+          role: "user",
+          text: userText,
+          workdir: ctx.project.path,
+        });
+      }
+      if (activeAssistantVoiceMsgIdRef.current) {
+        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          text: assistantText || m.text,
+          streaming: false,
+          usedCodex,
+          workdir,
+        }));
+      } else {
+        store.appendMessage(ctx.chatId, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          text: assistantText,
+          usedCodex,
+          workdir,
+        });
+      }
+      activeUserVoiceMsgIdRef.current = null;
+      activeAssistantVoiceMsgIdRef.current = null;
+    },
     onHandoffStart: (name, task, workdir) => {
+      const ctx = voiceCtxRef.current;
+      if (ctx && activeAssistantVoiceMsgIdRef.current) {
+        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          usedCodex: true,
+        }));
+      }
       const id = addAction({
         title: "Voice handoff to Codex",
         status: "running",
@@ -568,6 +651,8 @@ export function App() {
 
   const toggleVoice = () => {
     primeAudioPlayback();
+    activeUserVoiceMsgIdRef.current = null;
+    activeAssistantVoiceMsgIdRef.current = null;
     if (voiceActive) {
       liveVoice.stop();
       voiceCtxRef.current = null;

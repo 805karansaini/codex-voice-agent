@@ -341,7 +341,7 @@ async def live_voice(websocket: WebSocket) -> None:
                         )
                         await websocket.send_json(
                             {
-                                "type": "tool_call",
+                                "type": "tool_result",
                                 "name": call.name,
                                 "result": final_response,
                                 "workdir": resolved_workdir,
@@ -558,7 +558,7 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
         final_text = ""
         final_workdir = workdir
         try:
-            async for event in run_codex_stream(task, workdir, settings):
+            async for event in run_codex_stream_with_timer(task, workdir, settings):
                 if event.get("type") == "done":
                     final_text = str(event.get("text") or "")
                     final_workdir = str(event.get("workdir") or workdir)

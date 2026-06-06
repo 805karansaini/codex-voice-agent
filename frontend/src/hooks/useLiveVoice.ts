@@ -105,26 +105,37 @@ interface UseLiveVoiceProps {
   getWorkdir: () => string | undefined;
   getProjectId: () => string | undefined;
   getChatId: () => string | undefined;
-  onTurn: (userText: string, assistantText: string, usedCodex: boolean) => void;
   onAudio: (audioUrl: string) => void;
   onDebug: (message: string) => void;
   onHandoff: (name: string, summary: string, workdir?: string) => void;
   onHandoffStart?: (name: string, task: string, workdir: string) => void;
   onHandoffProgress?: (name: string, text: string) => void;
   onHandoffFailed?: (name: string, message: string) => void;
+  onUserTranscript?: (text: string) => void;
+  onAssistantDelta?: (text: string) => void;
+  onInterrupted?: () => void;
+  onTurnComplete?: (
+    userText: string,
+    assistantText: string,
+    usedCodex: boolean,
+    workdir?: string
+  ) => void;
 }
 
 export function useLiveVoice({
   getWorkdir,
   getProjectId,
   getChatId,
-  onTurn,
   onAudio,
   onDebug,
   onHandoff,
   onHandoffStart,
   onHandoffProgress,
   onHandoffFailed,
+  onUserTranscript,
+  onAssistantDelta,
+  onInterrupted,
+  onTurnComplete,
 }: UseLiveVoiceProps) {
   const [state, setState] = useState<LiveVoiceState>("idle");
   const [message, setMessage] = useState("Gemini Live voice is ready.");
@@ -152,13 +163,16 @@ export function useLiveVoice({
     return audioPlayerRef.current;
   };
   const cbRef = useRef({
-    onTurn,
     onAudio,
     onDebug,
     onHandoff,
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
+    onUserTranscript,
+    onAssistantDelta,
+    onInterrupted,
+    onTurnComplete,
     getWorkdir,
     getProjectId,
     getChatId,
@@ -166,25 +180,31 @@ export function useLiveVoice({
 
   useEffect(() => {
     cbRef.current = {
-      onTurn,
       onAudio,
       onDebug,
       onHandoff,
       onHandoffStart,
       onHandoffProgress,
       onHandoffFailed,
+      onUserTranscript,
+      onAssistantDelta,
+      onInterrupted,
+      onTurnComplete,
       getWorkdir,
       getProjectId,
       getChatId,
     };
   }, [
-    onTurn,
     onAudio,
     onDebug,
     onHandoff,
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
+    onUserTranscript,
+    onAssistantDelta,
+    onInterrupted,
+    onTurnComplete,
     getWorkdir,
     getProjectId,
     getChatId,
@@ -250,16 +270,21 @@ export function useLiveVoice({
           setUserPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
           setMessage("Heard you — composing a reply.");
+          cbRef.current.onUserTranscript?.(payload.text || "");
         } else if (payload.type === "assistant_delta") {
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
           setMessage("Gemini is replying.");
+          cbRef.current.onAssistantDelta?.(payload.text || "");
         } else if (payload.type === "turn_complete") {
           const userText = String(payload.user_text || "").trim();
           const assistantText = String(payload.assistant_text || "").trim();
-          if (userText || assistantText) {
-            cbRef.current.onTurn(userText || "Voice message", assistantText || "Done.", usedCodexRef.current);
-          }
+          cbRef.current.onTurnComplete?.(
+            userText || "Voice message",
+            assistantText || "Done.",
+            usedCodexRef.current,
+            payload.workdir
+          );
           usedCodexRef.current = false;
           if (payload.audio_data_url && !hasStreamedAudioRef.current) {
             cbRef.current.onAudio(payload.audio_data_url);
@@ -272,6 +297,7 @@ export function useLiveVoice({
         } else if (payload.type === "interrupted") {
           setAssistantPreview("");
           audioPlayerRef.current?.stop();
+          cbRef.current.onInterrupted?.();
           log("Response interrupted by new speech.");
         } else if (payload.type === "assistant_audio_delta") {
           const audioB64 = payload.data;
@@ -311,7 +337,7 @@ export function useLiveVoice({
             payload.name || "run_codex_task",
             payload.message || "Codex task failed."
           );
-        } else if (payload.type === "tool_call") {
+        } else if (payload.type === "tool_result") {
           usedCodexRef.current = true;
           setState("thinking");
           setMessage("Codex task completed. Gemini is formulating a response.");
