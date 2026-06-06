@@ -4,24 +4,55 @@ import {
   ArrowUp,
   Broom,
   BracketsCurly,
+  CaretLeft,
+  CaretRight,
   Cpu,
-  Gauge,
+  DotsThreeVertical,
+  FileMagnifyingGlass,
+  FolderOpen,
+  FolderPlus,
+  GitBranch,
+  Lightning,
   Microphone,
   MicrophoneSlash,
-  PlugsConnected,
-  Pulse,
+  Moon,
+  Plugs,
   SpeakerHigh,
-  Sparkle,
+  Sun,
+  Terminal,
   TerminalWindow,
-  Waveform,
+  TreeStructure,
 } from "@phosphor-icons/react";
 import "./styles.css";
 
+/* ---------------------------------------------------------------- types */
+
+type Role = "user" | "assistant";
+
 type Message = {
   id: string;
-  role: "user" | "assistant";
+  role: Role;
   text: string;
-  meta?: Record<string, unknown>;
+  usedCodex?: boolean;
+  streaming?: boolean;
+  workdir?: string;
+};
+
+type ProjectInfo = {
+  path: string;
+  name: string;
+  exists: boolean;
+  is_git: boolean;
+  branch: string | null;
+  file_count: number | null;
+};
+
+type Project = {
+  id: string;
+  name: string;
+  path: string;
+  color: string;
+  createdAt: number;
 };
 
 type AgentResponse = {
@@ -31,9 +62,37 @@ type AgentResponse = {
   audio_data_url?: string | null;
 };
 
-type TranscribeResponse = {
-  text?: string;
+type HistoryRow = {
+  id: string;
+  role: Role;
+  text: string;
+  meta?: {
+    direct_codex?: boolean;
+    tool_calls?: unknown[];
+    workdir?: string;
+    project_id?: string;
+  };
 };
+
+type LiveVoiceState = "idle" | "connecting" | "live" | "thinking" | "error";
+
+type DebugEntry = { id: string; time: string; message: string };
+type Handoff = { id: string; name: string; summary: string };
+type ActionEntry = {
+  id: string;
+  title: string;
+  status: "running" | "done" | "failed";
+  detail: string;
+  workdir?: string;
+};
+type PendingAction = {
+  text: string;
+  project: Project;
+  mode: "agent" | "codex";
+  reason: string;
+};
+
+/* ---------------------------------------------------------------- consts */
 
 const API = import.meta.env.VITE_API_BASE_URL || "";
 const LIVE_AUDIO_RATE = 16000;
@@ -41,305 +100,38 @@ const MAX_BUFFERED_AUDIO_CHUNKS = 360;
 const RECONNECT_DELAY_MS = 900;
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
+
+const PROJECT_COLORS = ["#c8f23a", "#f3b85a", "#7fd1c4", "#8ab4ff", "#ff9f7a", "#c79bff"];
 const PREFERRED_VOICE_NAMES = [
-  "Samantha",
-  "Karen",
-  "Moira",
-  "Tessa",
-  "Google UK English Female",
-  "Google US English",
-  "Microsoft Aria",
-  "Microsoft Jenny",
-  "Zira",
+  "Samantha", "Karen", "Moira", "Tessa",
+  "Google UK English Female", "Google US English",
+  "Microsoft Aria", "Microsoft Jenny", "Zira",
 ];
 
-type SpeechState = "idle" | "starting" | "listening" | "recording" | "processing" | "unsupported" | "error";
-type LiveVoiceState = "idle" | "connecting" | "live" | "thinking" | "error";
-type DebugEntry = {
-  id: string;
-  time: string;
-  message: string;
-};
+const LS_PROJECTS = "cva.projects.v1";
+const LS_ACTIVE = "cva.activeProject.v1";
+const LS_THREADS = "cva.threads.v1";
+const LS_THEME = "cva.theme.v1";
 
-function useSpeech(onText: (text: string) => void, onAudio: (audio: Blob) => void) {
-  const [listening, setListening] = useState(false);
-  const [state, setState] = useState<SpeechState>("idle");
-  const [message, setMessage] = useState("Voice is ready.");
-  const [transcriptPreview, setTranscriptPreview] = useState("");
-  const recognitionRef = useRef<any>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const transcriptRef = useRef("");
-  const sentRef = useRef(false);
-  const errorRef = useRef(false);
-  const onTextRef = useRef(onText);
-  const onAudioRef = useRef(onAudio);
+/* ---------------------------------------------------------------- storage */
 
-  useEffect(() => {
-    onTextRef.current = onText;
-  }, [onText]);
-
-  useEffect(() => {
-    onAudioRef.current = onAudio;
-  }, [onAudio]);
-
-  const stopTracks = () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-  };
-
-  const stopRecorder = (sendAudio: boolean) => {
-    const recorder = recorderRef.current;
-    if (!recorder) {
-      stopTracks();
-      return;
-    }
-    (recorder as any).__sendAudio = sendAudio;
-    if (recorder.state === "recording") {
-      recorder.stop();
-    } else {
-      stopTracks();
-    }
-  };
-
-  const startRecorder = async () => {
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return false;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    streamRef.current = stream;
-    audioChunksRef.current = [];
-
-    const recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) audioChunksRef.current.push(event.data);
-    };
-    recorder.onstop = () => {
-      const shouldSend = Boolean((recorder as any).__sendAudio);
-      const mimeType = recorder.mimeType || "audio/webm";
-      recorderRef.current = null;
-      stopTracks();
-      if (!shouldSend || sentRef.current || audioChunksRef.current.length === 0) return;
-      sentRef.current = true;
-      setListening(false);
-      setState("processing");
-      setMessage("Transcribing recorded audio with Gemini.");
-      onAudioRef.current(new Blob(audioChunksRef.current, { type: mimeType }));
-    };
-    recorderRef.current = recorder;
-    recorder.start();
-    return true;
-  };
-
-  const startFallbackRecorder = async (fallbackMessage: string) => {
-    try {
-      const recorderStarted = await startRecorder();
-      if (!recorderStarted) {
-        setListening(false);
-        setState("unsupported");
-        setMessage("Recorded voice input is not available in this browser.");
-        return false;
-      }
-      setListening(true);
-      setState("recording");
-      setMessage(fallbackMessage);
-      return true;
-    } catch {
-      setListening(false);
-      setState("error");
-      setMessage("Microphone permission was blocked. Allow microphone access and try again.");
-      return false;
-    }
-  };
-
-  useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-        setState("unsupported");
-        setMessage("Speech input is not available in this browser.");
-      } else {
-        setMessage("Browser speech is unavailable. Voice will use recorded audio.");
-      }
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      transcriptRef.current = "";
-      sentRef.current = false;
-      errorRef.current = false;
-      setTranscriptPreview("");
-      setListening(true);
-      setState("listening");
-      setMessage("Listening. Speak now.");
-    };
-
-    recognition.onresult = (event: any) => {
-      let fullTranscript = "";
-      for (let index = 0; index < event.results.length; index += 1) {
-        fullTranscript += event.results[index]?.[0]?.transcript || "";
-      }
-
-      const clean = fullTranscript.trim();
-      if (!clean) return;
-
-      transcriptRef.current = clean;
-      setTranscriptPreview(transcriptRef.current);
-
-      const finalResult = Array.from(event.results).some((result: any) => result.isFinal);
-      if (finalResult && !sentRef.current) {
-        sentRef.current = true;
-        stopRecorder(false);
-        setListening(false);
-        setState("processing");
-        setMessage("Got it. Preparing the message.");
-        onTextRef.current(transcriptRef.current);
-      } else {
-        setState("listening");
-        setMessage("Listening. Keep speaking.");
-      }
-    };
-
-    recognition.onnomatch = () => {
-      errorRef.current = true;
-      setState("error");
-      setMessage("I could not make out the speech. Try again closer to the microphone.");
-    };
-
-    recognition.onerror = (event: any) => {
-      const error = event?.error || "unknown";
-      const clean = transcriptRef.current.trim();
-      if (clean && !sentRef.current) {
-        sentRef.current = true;
-        stopRecorder(false);
-        setListening(false);
-        setState("processing");
-        setMessage("Got it. Sending the captured speech.");
-        onTextRef.current(clean);
-        return;
-      }
-
-      errorRef.current = true;
-      if (error === "network" || error === "service-not-allowed") {
-        void startFallbackRecorder(
-          "Browser live speech failed. I am recording instead; press Stop voice when you finish speaking.",
-        );
-        return;
-      }
-
-      const messages: Record<string, string> = {
-        "not-allowed": "Microphone permission was blocked. Allow microphone access and try again.",
-        "service-not-allowed": "The browser blocked speech recognition for this page.",
-        "no-speech": "I did not hear speech. Try again after the listening state appears.",
-        "audio-capture": "No microphone was found. Check the selected input device.",
-        network: "Speech recognition could not reach the browser speech service.",
-        aborted: "Voice input was stopped.",
-      };
-      stopRecorder(false);
-      setListening(false);
-      setState(error === "aborted" ? "idle" : "error");
-      setMessage(messages[error] || "Speech recognition stopped before producing text.");
-    };
-
-    recognition.onend = () => {
-      const clean = transcriptRef.current.trim();
-      if (clean && !sentRef.current) {
-        sentRef.current = true;
-        stopRecorder(false);
-        setListening(false);
-        setState("processing");
-        setMessage("Got it. Sending the message.");
-        onTextRef.current(clean);
-        return;
-      }
-      if (recorderRef.current?.state === "recording" && errorRef.current) {
-        setListening(true);
-        setState("recording");
-        return;
-      }
-      setListening(false);
-      if (!clean && !errorRef.current) {
-        setState("idle");
-        setMessage("No speech was captured. Try again after the listening state appears.");
-      }
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      recognition.onstart = null;
-      recognition.onresult = null;
-      recognition.onnomatch = null;
-      recognition.onerror = null;
-      recognition.onend = null;
-      try {
-        recognition.abort();
-      } catch {
-        undefined;
-      }
-      stopRecorder(false);
-    };
-  }, []);
-
-  return {
-    supported: Boolean(
-        recognitionRef.current ||
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition ||
-        (typeof navigator.mediaDevices?.getUserMedia === "function" && typeof MediaRecorder !== "undefined"),
-    ),
-    listening,
-    state,
-    message,
-    transcriptPreview,
-    start: async () => {
-      transcriptRef.current = "";
-      sentRef.current = false;
-      errorRef.current = false;
-      setTranscriptPreview("");
-      setState("starting");
-      setMessage("Opening microphone.");
-
-      if (!recognitionRef.current) {
-        await startFallbackRecorder("Browser live speech is unavailable. Recording audio instead; press Stop voice when finished.");
-        return;
-      }
-      try {
-        recognitionRef.current.start();
-      } catch {
-        await startFallbackRecorder("Browser live speech did not start. Recording audio instead; press Stop voice when finished.");
-      }
-    },
-    stop: () => {
-      const clean = transcriptRef.current.trim();
-      if (clean && !sentRef.current) {
-        sentRef.current = true;
-        stopRecorder(false);
-        recognitionRef.current?.stop();
-        setListening(false);
-        setState("processing");
-        setMessage("Got it. Sending the captured speech.");
-        onTextRef.current(clean);
-        return;
-      }
-      recognitionRef.current?.stop();
-      if (recorderRef.current?.state === "recording") {
-        setState("processing");
-        setMessage("Transcribing recorded audio with Gemini.");
-        stopRecorder(true);
-        return;
-      }
-      setListening(false);
-      setState("idle");
-      setMessage("Voice input stopped.");
-    },
-  };
+function loadJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
 }
+function saveJSON(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+/* ---------------------------------------------------------------- audio utils */
 
 function websocketUrl(path: string) {
   if (API.startsWith("http")) return `${API.replace(/^http/, "ws")}${path}`;
@@ -351,7 +143,6 @@ function encodePcmChunk(input: Float32Array, sourceRate: number) {
   const ratio = sourceRate / LIVE_AUDIO_RATE;
   const outputLength = Math.max(1, Math.floor(input.length / ratio));
   const pcm = new Int16Array(outputLength);
-
   for (let index = 0; index < outputLength; index += 1) {
     const start = Math.floor(index * ratio);
     const end = Math.min(input.length, Math.floor((index + 1) * ratio));
@@ -364,7 +155,6 @@ function encodePcmChunk(input: Float32Array, sourceRate: number) {
     const sample = Math.max(-1, Math.min(1, samples ? total / samples : input[start] || 0));
     pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
   }
-
   const bytes = new Uint8Array(pcm.buffer);
   let binary = "";
   for (let index = 0; index < bytes.length; index += 1) {
@@ -373,14 +163,22 @@ function encodePcmChunk(input: Float32Array, sourceRate: number) {
   return btoa(binary);
 }
 
+/* ---------------------------------------------------------------- live voice hook */
+
 function useLiveVoice({
+  getWorkdir,
+  getProjectId,
   onTurn,
   onAudio,
   onDebug,
+  onHandoff,
 }: {
-  onTurn: (userText: string, assistantText: string) => void;
+  getWorkdir: () => string | undefined;
+  getProjectId: () => string | undefined;
+  onTurn: (userText: string, assistantText: string, usedCodex: boolean) => void;
   onAudio: (audioUrl: string) => void;
   onDebug: (message: string) => void;
+  onHandoff: (name: string, summary: string) => void;
 }) {
   const [state, setState] = useState<LiveVoiceState>("idle");
   const [message, setMessage] = useState("Gemini Live voice is ready.");
@@ -394,19 +192,14 @@ function useLiveVoice({
   const bufferedAudioRef = useRef<string[]>([]);
   const reconnectTimerRef = useRef<number | null>(null);
   const manuallyStoppedRef = useRef(false);
-  const onTurnRef = useRef(onTurn);
-  const onAudioRef = useRef(onAudio);
-  const onDebugRef = useRef(onDebug);
+  const usedCodexRef = useRef(false);
+  const cbRef = useRef({ onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId });
 
   useEffect(() => {
-    onTurnRef.current = onTurn;
-    onAudioRef.current = onAudio;
-    onDebugRef.current = onDebug;
-  }, [onTurn, onAudio, onDebug]);
+    cbRef.current = { onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId };
+  }, [onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId]);
 
-  const log = useCallback((text: string) => {
-    onDebugRef.current(text);
-  }, []);
+  const log = useCallback((text: string) => cbRef.current.onDebug(text), []);
 
   const stopMicrophone = useCallback(async () => {
     processorRef.current?.disconnect();
@@ -425,18 +218,21 @@ function useLiveVoice({
     if (bufferedAudioRef.current.length === 0) return;
     const buffered = bufferedAudioRef.current.splice(0);
     buffered.forEach((payload) => websocket.send(payload));
-    log(`Resent ${buffered.length} buffered audio chunks after reconnect.`);
-  }, [log]);
+  }, []);
 
   const connectSocket = useCallback(() => {
     const websocket = new WebSocket(websocketUrl("/api/live"));
     websocketRef.current = websocket;
 
     websocket.onopen = () => {
-      log("WebSocket connected to backend live endpoint.");
+      log("Live channel connected.");
+      // Forward the active project's directory so Codex handoffs run there.
+      const workdir = cbRef.current.getWorkdir();
+      const projectId = cbRef.current.getProjectId();
+      if (workdir) websocket.send(JSON.stringify({ type: "config", workdir, project_id: projectId }));
       flushBufferedAudio(websocket);
       setState("live");
-      setMessage("Live with Gemini. Speak naturally; pause when you want the agent to answer.");
+      setMessage("Live with Gemini — speak naturally, pause to let the agent answer.");
     };
 
     websocket.onmessage = (event) => {
@@ -446,7 +242,7 @@ function useLiveVoice({
       } else if (payload.type === "user_transcript") {
         setUserPreview((current) => `${current}${payload.text || ""}`);
         setState("thinking");
-        setMessage("Gemini heard you. Waiting for the reply.");
+        setMessage("Heard you — composing a reply.");
       } else if (payload.type === "assistant_delta") {
         setAssistantPreview((current) => `${current}${payload.text || ""}`);
         setState("thinking");
@@ -454,18 +250,22 @@ function useLiveVoice({
       } else if (payload.type === "turn_complete") {
         const userText = String(payload.user_text || "").trim();
         const assistantText = String(payload.assistant_text || "").trim();
-        if (userText || assistantText) onTurnRef.current(userText || "Voice message", assistantText || "Done.");
-        if (payload.audio_data_url) onAudioRef.current(payload.audio_data_url);
+        if (userText || assistantText) {
+          cbRef.current.onTurn(userText || "Voice message", assistantText || "Done.", usedCodexRef.current);
+        }
+        usedCodexRef.current = false;
+        if (payload.audio_data_url) cbRef.current.onAudio(payload.audio_data_url);
         setUserPreview("");
         setAssistantPreview("");
         setState("live");
-        setMessage("Live with Gemini. Speak again when ready.");
-        log("Gemini Live turn complete.");
+        setMessage("Live with Gemini — speak again when ready.");
       } else if (payload.type === "interrupted") {
         setAssistantPreview("");
-        log("Gemini response interrupted by new speech.");
+        log("Response interrupted by new speech.");
       } else if (payload.type === "tool_call") {
-        log(`Codex handoff finished: ${payload.name || "tool"}.`);
+        usedCodexRef.current = true;
+        cbRef.current.onHandoff(payload.name || "run_codex_task", String(payload.result || "").trim() || "Codex task completed.");
+        log(`Codex handoff: ${payload.name || "tool"}.`);
       } else if (payload.type === "error") {
         setState("error");
         setMessage(payload.message || "Live voice failed.");
@@ -473,9 +273,7 @@ function useLiveVoice({
       }
     };
 
-    websocket.onerror = () => {
-      log("WebSocket error from live voice connection.");
-    };
+    websocket.onerror = () => log("Live channel error.");
 
     websocket.onclose = () => {
       websocketRef.current = null;
@@ -483,14 +281,11 @@ function useLiveVoice({
         void stopMicrophone();
         setState("idle");
         setMessage("Gemini Live voice is ready.");
-        log("Live voice socket closed.");
         return;
       }
-
       if (streamRef.current) {
         setState("connecting");
-        setMessage("Live connection dropped. Reconnecting microphone stream.");
-        log("Live voice socket closed unexpectedly. Reconnecting.");
+        setMessage("Connection dropped — reconnecting microphone stream.");
         if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = window.setTimeout(() => {
           reconnectTimerRef.current = null;
@@ -498,17 +293,14 @@ function useLiveVoice({
         }, RECONNECT_DELAY_MS);
         return;
       }
-
       setState("idle");
       setMessage("Gemini Live voice is ready.");
-      log("Live voice socket closed.");
     };
 
     return websocket;
   }, [flushBufferedAudio, log, stopMicrophone]);
 
   const stop = useCallback(async () => {
-    log("Stopping live voice session.");
     manuallyStoppedRef.current = true;
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
@@ -521,33 +313,26 @@ function useLiveVoice({
     websocketRef.current = null;
     setState("idle");
     setMessage("Gemini Live voice is ready.");
-  }, [log, stopMicrophone]);
+  }, [stopMicrophone]);
 
   const start = useCallback(async () => {
     if (state === "connecting" || state === "live" || state === "thinking") return;
     if (!navigator.mediaDevices?.getUserMedia || typeof window.AudioContext === "undefined") {
       setState("error");
       setMessage("This browser cannot open live microphone audio.");
-      log("Live voice blocked: browser does not expose microphone audio APIs.");
       return;
     }
-
     setState("connecting");
     setMessage("Connecting live microphone to Gemini.");
     setUserPreview("");
     setAssistantPreview("");
-    log("Opening microphone for Gemini Live.");
     manuallyStoppedRef.current = false;
+    usedCodexRef.current = false;
     bufferedAudioRef.current = [];
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       const audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
@@ -579,22 +364,16 @@ function useLiveVoice({
 
       source.connect(processor);
       processor.connect(audioContext.destination);
-      log(`Streaming microphone PCM at ${LIVE_AUDIO_RATE} Hz from ${Math.round(audioContext.sampleRate)} Hz input.`);
     } catch (err) {
       await stopMicrophone();
       websocketRef.current?.close();
       websocketRef.current = null;
       setState("error");
       setMessage(err instanceof Error ? err.message : "Could not start live voice.");
-      log(`Could not start live voice: ${err instanceof Error ? err.message : "unknown error"}`);
     }
-  }, [connectSocket, log, state, stopMicrophone]);
+  }, [connectSocket, state, stopMicrophone]);
 
-  useEffect(() => {
-    return () => {
-      void stop();
-    };
-  }, [stop]);
+  useEffect(() => () => void stop(), [stop]);
 
   return {
     active: state === "connecting" || state === "live" || state === "thinking",
@@ -611,8 +390,290 @@ function useLiveVoice({
   };
 }
 
+/* ---------------------------------------------------------------- helpers */
+
+function glyphFor(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "·";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+/* ---------------------------------------------------------------- Add Project modal */
+
+function normalizePath(raw: string) {
+  let p = raw.trim();
+  if (p.length > 1 && p.endsWith("/")) p = p.replace(/\/+$/, "");
+  return p;
+}
+
+function historyRowsToMessages(rows: HistoryRow[]): Message[] {
+  return rows
+    .filter((row) => row.role === "user" || row.role === "assistant")
+    .map((row) => ({
+      id: row.id,
+      role: row.role,
+      text: row.text,
+      usedCodex: Boolean(row.meta?.direct_codex || (Array.isArray(row.meta?.tool_calls) && row.meta.tool_calls.length > 0)),
+      workdir: row.meta?.workdir,
+    }));
+}
+
+function riskyActionReason(text: string) {
+  const lower = text.toLowerCase();
+  if (
+    /\b(git\s+pull|git\s+push|git\s+merge|git\s+rebase|git\s+reset|git\s+checkout|commit|delete|remove|rm\s+-|install|npm\s+i|npm\s+install|pip\s+install|uv\s+add|write|edit|modify)\b/.test(lower) ||
+    /\b(pull|push|merge|rebase|reset|checkout)\b.*\bgit\b/.test(lower) ||
+    /\bgit\b.*\b(pull|push|merge|rebase|reset|checkout)\b/.test(lower)
+  ) {
+    return "This may change files, dependencies, or git state in the selected folder.";
+  }
+  return "";
+}
+
+async function readSseStream(res: Response, onEvent: (evt: any) => void) {
+  if (!res.body) return;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() || "";
+    for (const frame of frames) {
+      const line = frame.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      try { onEvent(JSON.parse(line.slice(5).trim())); } catch { /* ignore partial */ }
+    }
+  }
+}
+
+function AddProjectModal({
+  onClose,
+  onCreate,
+  usedColors,
+  existingPaths,
+}: {
+  onClose: () => void;
+  onCreate: (p: Omit<Project, "id" | "createdAt">) => void;
+  usedColors: string[];
+  existingPaths: string[];
+}) {
+  const [name, setName] = useState("");
+  const [path, setPath] = useState("");
+  const nextColor = PROJECT_COLORS.find((c) => !usedColors.includes(c)) || PROJECT_COLORS[0];
+  const [color, setColor] = useState(nextColor);
+  const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const pathRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // Opens a real native OS folder dialog via the local backend, which returns
+  // the true absolute path (the browser picker only gives the folder name).
+  const browse = async () => {
+    setError("");
+    setPicking(true);
+    try {
+      const res = await fetch(`${API}/api/fs/pick`, { method: "POST" });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error((payload as any).detail || "picker failed");
+      }
+      const data = (await res.json()) as { path: string | null; cancelled: boolean };
+      if (data.cancelled || !data.path) return;
+      setPath(data.path);
+      if (!name.trim()) setName(data.path.split("/").filter(Boolean).pop() || "");
+    } catch (err) {
+      setError(
+        err instanceof Error && /not available/i.test(err.message)
+          ? err.message
+          : "Couldn’t open the native folder picker. Paste the absolute path instead.",
+      );
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  const submit = async () => {
+    const cleanName = name.trim();
+    const cleanPath = normalizePath(path);
+    if (!cleanName || !cleanPath) return;
+    setError("");
+    setChecking(true);
+    try {
+      // Validate against the real filesystem so we point at the original folder
+      // (never create or duplicate one) and resolve symlinks for de-duplication.
+      const res = await fetch(`${API}/api/project/info?path=${encodeURIComponent(cleanPath)}`);
+      if (res.status === 404) {
+        setError("That directory does not exist. Paste the full absolute path to an existing folder.");
+        return;
+      }
+      if (!res.ok) {
+        setError("Could not reach the backend to validate the path. Is it running?");
+        return;
+      }
+      const info = (await res.json()) as ProjectInfo;
+      const resolved = info.path || cleanPath;
+      if (existingPaths.includes(resolved)) {
+        setError("This folder is already a project.");
+        return;
+      }
+      onCreate({ name: cleanName, path: resolved, color });
+    } catch {
+      setError("Could not reach the backend to validate the path. Is it running?");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="overlay" onMouseDown={onClose}>
+      <div className="modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modalHead">
+          <h3>Add a project</h3>
+          <p>
+            Point the agent at an existing folder on this machine. It works in that folder <strong>in place</strong> —
+            nothing is copied, so your original files are the only files.
+          </p>
+        </div>
+        <div className="modalBody">
+          <div className="field">
+            <label htmlFor="pName">Project name</label>
+            <input
+              id="pName"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Codex Voice Agent"
+              onKeyDown={(e) => e.key === "Enter" && (document.getElementById("pPath") as HTMLInputElement)?.focus()}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="pPath">Directory (absolute path)</label>
+            <div className="pathRow">
+              <input
+                id="pPath"
+                ref={pathRef}
+                className="mono"
+                value={path}
+                onChange={(e) => { setPath(e.target.value); if (error) setError(""); }}
+                placeholder="/Users/you/Projects/my-app"
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+              />
+              <button className="browseBtn" type="button" onClick={browse} disabled={picking}>
+                <FolderOpen size={16} weight="bold" /> {picking ? "Opening…" : "Browse"}
+              </button>
+            </div>
+            <p className="hint">
+              Click <strong>Browse</strong> to pick a folder with the native dialog (fills the real absolute path), or
+              paste a full path like <span className="mono">/Users/karansaini/Projects/app</span>.
+            </p>
+          </div>
+          <div className="field">
+            <label>Accent</label>
+            <div className="swatches">
+              {PROJECT_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`swatch ${c === color ? "on" : ""}`}
+                  style={{ background: c }}
+                  onClick={() => setColor(c)}
+                  aria-label={`Accent ${c}`}
+                />
+              ))}
+            </div>
+          </div>
+          {error && <div className="modalError"><Plugs size={15} weight="bold" /> {error}</div>}
+        </div>
+        <div className="modalFoot">
+          <button className="btnGhost" type="button" onClick={onClose}>Cancel</button>
+          <button className="btnPrimary" type="button" onClick={submit} disabled={!name.trim() || !path.trim() || checking}>
+            {checking ? "Checking…" : "Create project"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionPreviewModal({
+  action,
+  onCancel,
+  onRun,
+}: {
+  action: PendingAction;
+  onCancel: () => void;
+  onRun: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") onRun();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, onRun]);
+
+  return (
+    <div className="overlay" onMouseDown={onCancel}>
+      <div className="modal actionPreview" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modalHead">
+          <h3>Review before running</h3>
+          <p>This task may change the selected folder. Check the target before continuing.</p>
+        </div>
+        <div className="modalBody">
+          <div className="previewWarning">
+            <Plugs size={16} weight="bold" />
+            <span>{action.reason}</span>
+          </div>
+          <div className="previewGrid">
+            <div>
+              <span>Project</span>
+              <b>{action.project.name}</b>
+            </div>
+            <div>
+              <span>Mode</span>
+              <b>{action.mode === "codex" ? "Codex direct" : "Agent"}</b>
+            </div>
+            <div className="wide">
+              <span>Working folder</span>
+              <code>{action.project.path}</code>
+            </div>
+          </div>
+          <div className="previewTask">
+            <span>Task</span>
+            <p>{action.text}</p>
+          </div>
+        </div>
+        <div className="modalFoot">
+          <button className="btnGhost" type="button" onClick={onCancel}>Cancel</button>
+          <button className="btnPrimary dangerRun" type="button" onClick={onRun}>
+            Run in this folder
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- App */
+
 function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [projects, setProjects] = useState<Project[]>(() => loadJSON<Project[]>(LS_PROJECTS, []));
+  const [activeId, setActiveId] = useState<string>(() => loadJSON<string>(LS_ACTIVE, ""));
+  const [threads, setThreads] = useState<Record<string, Message[]>>(() => loadJSON(LS_THREADS, {}));
+  const [theme, setTheme] = useState<"dark" | "light">(() => loadJSON<"dark" | "light">(LS_THEME, "dark"));
+
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -622,49 +683,160 @@ function App() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
   const [pendingAudioUrl, setPendingAudioUrl] = useState("");
-  const [debugOpen, setDebugOpen] = useState(true);
   const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
-  const historyRef = useRef<HTMLDivElement | null>(null);
-  const responseAudioRef = useRef<HTMLAudioElement | null>(null);
-  const hasMessages = messages.length > 0;
+  const [handoffs, setHandoffs] = useState<Handoff[]>([]);
+  const [actions, setActions] = useState<ActionEntry[]>([]);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [railOpen, setRailOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
 
+  const streamRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const responseAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const active = useMemo(() => projects.find((p) => p.id === activeId) || null, [projects, activeId]);
+  const messages = active ? threads[active.id] || [] : [];
+
+  /* persistence */
+  useEffect(() => saveJSON(LS_PROJECTS, projects), [projects]);
+  useEffect(() => saveJSON(LS_ACTIVE, activeId), [activeId]);
+  useEffect(() => saveJSON(LS_THREADS, threads), [threads]);
+  useEffect(() => {
+    saveJSON(LS_THEME, theme);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  /* voices */
   useEffect(() => {
     if (!("speechSynthesis" in window)) return;
-
     const loadVoices = () => {
       const browserVoices = window.speechSynthesis.getVoices();
       setVoices(browserVoices);
       setSelectedVoiceURI((current) => {
         if (current || browserVoices.length === 0) return current;
-        const preferredVoice =
-          PREFERRED_VOICE_NAMES.map((name) =>
-            browserVoices.find((voice) => voice.name.toLowerCase().includes(name.toLowerCase())),
-          ).find(Boolean) ||
-          browserVoices.find((voice) => voice.lang.toLowerCase().startsWith("en") && voice.name.toLowerCase().includes("female")) ||
-          browserVoices.find((voice) => voice.lang.toLowerCase().startsWith("en")) ||
+        const preferred =
+          PREFERRED_VOICE_NAMES.map((n) => browserVoices.find((v) => v.name.toLowerCase().includes(n.toLowerCase()))).find(Boolean) ||
+          browserVoices.find((v) => v.lang.toLowerCase().startsWith("en")) ||
           browserVoices[0];
-        return preferredVoice?.voiceURI || "";
+        return preferred?.voiceURI || "";
       });
     };
-
     loadVoices();
     window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
     return () => window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
   }, []);
 
-  const scrollToBottom = () => {
-    requestAnimationFrame(() => {
-      historyRef.current?.scrollTo({ top: historyRef.current.scrollHeight, behavior: "smooth" });
-    });
-  };
+  /* health */
+  useEffect(() => {
+    fetch(`${API}/api/health`)
+      .then((r) => r.json())
+      .then((data) => {
+        setStatus(data.has_google_api_key ? "Ready" : "Missing Google API key");
+        setModel(data.gemini_model || "Gemini Live");
+      })
+      .catch(() => setStatus("Backend offline"));
+  }, []);
 
-  const blobToBase64 = (blob: Blob) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(String(reader.result).split(",")[1] || "");
-      reader.onerror = () => reject(new Error("Could not read recorded audio"));
-      reader.readAsDataURL(blob);
+  /* server-backed projects */
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API}/api/projects`)
+      .then((r) => (r.ok ? (r.json() as Promise<Project[]>) : Promise.reject()))
+      .then((serverProjects) => {
+        if (cancelled || serverProjects.length === 0) return;
+        setProjects((current) => {
+          const byId = new Map(current.map((project) => [project.id, project]));
+          for (const project of serverProjects) byId.set(project.id, project);
+          return Array.from(byId.values()).sort((a, b) => b.createdAt - a.createdAt);
+        });
+        setActiveId((current) => current || serverProjects[0]?.id || "");
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: "smooth" });
     });
+  }, []);
+
+  useEffect(() => scrollToBottom(), [activeId, scrollToBottom]);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    fetch(`${API}/api/history?project_id=${encodeURIComponent(active.id)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<HistoryRow[]>) : Promise.reject()))
+      .then((rows) => {
+        if (cancelled || rows.length === 0) return;
+        setThreads((current) => ({ ...current, [active.id]: historyRowsToMessages(rows) }));
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [active]);
+
+  // Validate the active folder and pull live git branch + file count for the panel.
+  useEffect(() => {
+    setProjectInfo(null);
+    if (!active) return;
+    let cancelled = false;
+    fetch(`${API}/api/project/info?path=${encodeURIComponent(active.path)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<ProjectInfo>) : Promise.reject()))
+      .then((info) => { if (!cancelled) setProjectInfo(info); })
+      .catch(() => { if (!cancelled) setProjectInfo({ path: active.path, name: active.name, exists: false, is_git: false, branch: null, file_count: null }); });
+    return () => { cancelled = true; };
+  }, [active]);
+
+  const addDebug = useCallback((message: string) => {
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setDebugEntries((current) => [{ id: crypto.randomUUID(), time, message }, ...current].slice(0, 40));
+  }, []);
+
+  const addHandoff = useCallback((name: string, summary: string) => {
+    setHandoffs((current) => [{ id: crypto.randomUUID(), name, summary }, ...current].slice(0, 12));
+  }, []);
+
+  const addAction = useCallback((action: Omit<ActionEntry, "id">) => {
+    const id = crypto.randomUUID();
+    setActions((current) => [{ id, ...action }, ...current].slice(0, 16));
+    return id;
+  }, []);
+
+  const updateAction = useCallback((id: string, patch: Partial<ActionEntry>) => {
+    setActions((current) => current.map((action) => (action.id === id ? { ...action, ...patch } : action)));
+  }, []);
+
+  const appendMessage = useCallback(
+    (projectId: string, msg: Message) => {
+      setThreads((current) => ({ ...current, [projectId]: [...(current[projectId] || []), msg] }));
+      scrollToBottom();
+    },
+    [scrollToBottom],
+  );
+
+  const updateMessage = useCallback((projectId: string, id: string, patch: (m: Message) => Message) => {
+    setThreads((current) => {
+      const thread = current[projectId] || [];
+      return { ...current, [projectId]: thread.map((m) => (m.id === id ? patch(m) : m)) };
+    });
+  }, []);
+
+  const speak = useCallback(
+    (text: string) => {
+      if (!text || !("speechSynthesis" in window)) return;
+      const utterance = new SpeechSynthesisUtterance(text.slice(0, 500));
+      const v = voices.find((x) => x.voiceURI === selectedVoiceURI);
+      if (v) utterance.voice = v;
+      utterance.rate = 0.94;
+      utterance.pitch = 1.05;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    },
+    [selectedVoiceURI, voices],
+  );
 
   const primeAudioPlayback = useCallback(() => {
     const audio = new Audio(SILENT_WAV);
@@ -682,49 +854,178 @@ function App() {
       setPendingAudioUrl("");
     } catch {
       setPendingAudioUrl(audioUrl);
-      setError("Audio is ready, but this browser blocked automatic playback. Tap Play response.");
+      setError("Audio is ready, but the browser blocked autoplay. Tap Play response.");
     }
   }, []);
 
+  const getWorkdir = useCallback(() => active?.path, [active]);
+  const getProjectId = useCallback(() => active?.id, [active]);
+
+  const liveVoice = useLiveVoice({
+    getWorkdir,
+    getProjectId,
+    onTurn: (userText, assistantText, usedCodex) => {
+      if (!active) return;
+      appendMessage(active.id, { id: crypto.randomUUID(), role: "user", text: userText, workdir: active.path });
+      appendMessage(active.id, { id: crypto.randomUUID(), role: "assistant", text: assistantText, usedCodex });
+    },
+    onAudio: playResponseAudio,
+    onDebug: addDebug,
+    onHandoff: (name, summary) => {
+      addHandoff(name, summary);
+      addAction({ title: "Voice handoff to Codex", status: "done", detail: summary, workdir: active?.path });
+    },
+  });
+  const voiceActive = liveVoice.active;
+
+  const streamCodex = useCallback(
+    async (task: string, project: Project) => {
+      const actionId = addAction({
+        title: "Codex task",
+        status: "running",
+        detail: task,
+        workdir: project.path,
+      });
+      const assistantId = crypto.randomUUID();
+      appendMessage(project.id, { id: assistantId, role: "assistant", text: "", usedCodex: true, streaming: true });
+
+      const res = await fetch(`${API}/api/codex/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task, workdir: project.path, project_id: project.id }),
+      });
+      if (!res.ok || !res.body) {
+        const payload = await res.json().catch(() => ({}));
+        updateMessage(project.id, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Codex request failed." }));
+        updateAction(actionId, { status: "failed", detail: (payload as any).detail || "Codex request failed" });
+        throw new Error((payload as any).detail || "Codex request failed");
+      }
+
+      let finalText = "";
+
+      const handle = (evt: any) => {
+        if (evt.type === "delta" && evt.text) {
+          finalText += evt.text;
+          updateMessage(project.id, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
+          scrollToBottom();
+        } else if (evt.type === "done") {
+          finalText = String(evt.text ?? finalText);
+          updateMessage(project.id, assistantId, (m) => ({ ...m, text: finalText || m.text, streaming: false, workdir: evt.workdir }));
+          updateAction(actionId, {
+            status: "done",
+            detail: finalText ? `Completed. ${finalText.slice(0, 180)}` : "Completed.",
+            workdir: evt.workdir || project.path,
+          });
+          addHandoff("run_codex_task", finalText.slice(0, 160));
+        } else if (evt.type === "error") {
+          updateMessage(project.id, assistantId, (m) => ({ ...m, streaming: false }));
+          updateAction(actionId, { status: "failed", detail: String(evt.message || "Codex failed") });
+          setError(String(evt.message || "Codex failed"));
+        }
+      };
+
+      await readSseStream(res, handle);
+
+      updateMessage(project.id, assistantId, (m) => (m.streaming ? { ...m, streaming: false } : m));
+      // TTS only once, on the complete response.
+      if (finalText) speak(finalText);
+    },
+    [addAction, addHandoff, appendMessage, scrollToBottom, speak, updateAction, updateMessage],
+  );
+
+  const streamAgent = useCallback(
+    async (message: string, project: Project) => {
+      const assistantId = crypto.randomUUID();
+      appendMessage(project.id, { id: assistantId, role: "assistant", text: "", streaming: true });
+
+      const res = await fetch(`${API}/api/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, workdir: project.path, project_id: project.id }),
+      });
+      if (!res.ok || !res.body) {
+        const payload = await res.json().catch(() => ({}));
+        updateMessage(project.id, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Agent request failed." }));
+        throw new Error((payload as any).detail || "Agent request failed");
+      }
+
+      let finalText = "";
+      let finalAudioUrl = "";
+      let usedCodex = false;
+      let activeActionId = "";
+
+      await readSseStream(res, (evt) => {
+        if (evt.type === "delta" && evt.text) {
+          finalText += evt.text;
+          updateMessage(project.id, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
+          scrollToBottom();
+        } else if (evt.type === "tool_call") {
+          usedCodex = true;
+          activeActionId = addAction({
+            title: "Agent handoff to Codex",
+            status: "running",
+            detail: String(evt.task || "Local task"),
+            workdir: String(evt.workdir || project.path),
+          });
+          updateMessage(project.id, assistantId, (m) => ({ ...m, usedCodex: true }));
+        } else if (evt.type === "tool_result") {
+          usedCodex = true;
+          const summary = String(evt.result || "").slice(0, 180);
+          addHandoff(String(evt.name || "run_codex_task"), summary);
+          if (activeActionId) {
+            updateAction(activeActionId, {
+              status: "done",
+              detail: summary ? `Completed. ${summary}` : "Codex task completed.",
+              workdir: String(evt.workdir || project.path),
+            });
+          }
+        } else if (evt.type === "done") {
+          finalText = String(evt.text ?? finalText);
+          finalAudioUrl = String(evt.audio_data_url || "");
+          usedCodex = usedCodex || (Array.isArray(evt.tool_calls) && evt.tool_calls.length > 0);
+          updateMessage(project.id, assistantId, (m) => ({
+            ...m,
+            text: finalText || m.text || "Done.",
+            streaming: false,
+            usedCodex,
+            workdir: evt.workdir || project.path,
+          }));
+        } else if (evt.type === "error") {
+          updateMessage(project.id, assistantId, (m) => ({ ...m, streaming: false, text: m.text || "Agent failed." }));
+          if (activeActionId) updateAction(activeActionId, { status: "failed", detail: String(evt.message || "Agent failed") });
+          setError(String(evt.message || "Agent failed"));
+        }
+      });
+
+      updateMessage(project.id, assistantId, (m) => (m.streaming ? { ...m, streaming: false } : m));
+      if (finalAudioUrl) await playResponseAudio(finalAudioUrl);
+      else if (finalText) speak(finalText);
+    },
+    [addAction, addHandoff, appendMessage, playResponseAudio, scrollToBottom, speak, updateAction, updateMessage],
+  );
+
   const send = useCallback(
-    async (text = input) => {
-      const clean = text.trim();
-      if (!clean || busy) return;
+    async (raw?: string, skipPreview = false, projectOverride?: Project) => {
+      const text = (raw ?? input).trim();
+      const project = projectOverride || active;
+      if (!text || busy || !project) return;
+      const risk = riskyActionReason(text);
+      if (risk && !skipPreview) {
+        setPendingAction({ text, project, mode, reason: risk });
+        return;
+      }
       setInput("");
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
       setError("");
       setBusy(true);
-      const userMsg: Message = { id: crypto.randomUUID(), role: "user", text: clean };
-      setMessages((prev) => [...prev, userMsg]);
-      scrollToBottom();
+      appendMessage(project.id, { id: crypto.randomUUID(), role: "user", text, workdir: project.path });
+
       try {
-        const res = await fetch(`${API}/api/${mode === "codex" ? "codex" : "chat"}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(mode === "codex" ? { task: clean } : { message: clean }),
-        });
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
-          throw new Error(payload.detail || "Request failed");
-        }
-        const data = (await res.json()) as AgentResponse;
-        const assistantMsg: Message = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          text: data.reply || "Done.",
-          meta: { tool_calls: data.tool_calls || [], workdir: data.workdir },
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-        scrollToBottom();
-        if (data.audio_data_url) {
-          await playResponseAudio(data.audio_data_url);
-        } else if ("speechSynthesis" in window) {
-          const utterance = new SpeechSynthesisUtterance(assistantMsg.text.slice(0, 500));
-          const selectedVoice = voices.find((voice) => voice.voiceURI === selectedVoiceURI);
-          if (selectedVoice) utterance.voice = selectedVoice;
-          utterance.rate = 0.94;
-          utterance.pitch = 1.08;
-          window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(utterance);
+        if (mode === "codex") {
+          // Stream Codex output token-by-token into the bubble; speak only at the end.
+          await streamCodex(text, project);
+        } else {
+          await streamAgent(text, project);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
@@ -732,339 +1033,506 @@ function App() {
         setBusy(false);
       }
     },
-    [busy, input, mode, playResponseAudio, selectedVoiceURI, voices],
+    // streamCodex is stable (defined below with useCallback)
+    [active, appendMessage, busy, input, mode, primeAudioPlayback, streamAgent, streamCodex],
   );
-
-  const transcribeAndSend = useCallback(
-    async (audio: Blob) => {
-      setError("");
-      try {
-        const audioBase64 = await blobToBase64(audio);
-        const res = await fetch(`${API}/api/transcribe`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio_base64: audioBase64, mime_type: audio.type || "audio/webm" }),
-        });
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
-          throw new Error(payload.detail || "Could not transcribe recorded audio");
-        }
-        const data = (await res.json()) as TranscribeResponse;
-        const text = data.text?.trim();
-        if (!text) throw new Error("No speech was found in the recording");
-        send(text);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not transcribe recorded audio");
-      }
-    },
-    [send],
-  );
-
-  const addDebug = useCallback((message: string) => {
-    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    setDebugEntries((current) => [{ id: crypto.randomUUID(), time, message }, ...current].slice(0, 18));
-  }, []);
-
-  const liveVoice = useLiveVoice({
-    onTurn: (userText, assistantText) => {
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "user", text: userText },
-        { id: crypto.randomUUID(), role: "assistant", text: assistantText },
-      ]);
-      scrollToBottom();
-    },
-    onAudio: playResponseAudio,
-    onDebug: addDebug,
-  });
-  const voiceActive = liveVoice.active;
 
   const toggleVoice = () => {
     primeAudioPlayback();
-    if (voiceActive) {
-      liveVoice.stop();
-    } else {
-      liveVoice.start();
-    }
+    if (voiceActive) liveVoice.stop();
+    else liveVoice.start();
   };
 
-  const refreshHistory = useCallback(() => {
-    fetch(`${API}/api/health`)
-      .then((r) => r.json())
-      .then((data) => {
-        setStatus(data.has_google_api_key ? "Ready" : "Missing Google API key");
-        setModel(data.gemini_model || "Gemini Live");
-      })
-      .catch(() => setStatus("Backend offline"));
-    fetch(`${API}/api/history`)
-      .then((r) => r.json())
-      .then((rows) => {
-        setMessages(rows);
-        scrollToBottom();
-      })
-      .catch(() => undefined);
-  }, []);
+  const createProject = (p: Omit<Project, "id" | "createdAt">) => {
+    const project: Project = { ...p, id: crypto.randomUUID(), createdAt: Date.now() };
+    setProjects((current) => [project, ...current]);
+    setActiveId(project.id);
+    setThreads((current) => ({ ...current, [project.id]: current[project.id] || [] }));
+    setShowAdd(false);
+    fetch(`${API}/api/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(project),
+    }).catch(() => undefined);
+  };
 
-  useEffect(() => {
-    refreshHistory();
-  }, [refreshHistory]);
+  const removeProject = (id: string) => {
+    setProjects((current) => current.filter((p) => p.id !== id));
+    setThreads((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setActiveId((current) => (current === id ? "" : current));
+    fetch(`${API}/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
+  };
 
-  const startNewChat = async () => {
-    setError("");
+  const clearThread = () => {
+    if (!active) return;
     window.speechSynthesis?.cancel();
-    setMessages([]);
-    setInput("");
-    try {
-      await fetch(`${API}/api/history`, { method: "DELETE" });
-    } catch {
-      setError("Could not clear saved history. The current screen was reset.");
-    }
+    setThreads((current) => ({ ...current, [active.id]: [] }));
+    setHandoffs([]);
+    setActions([]);
+    setError("");
+    fetch(`${API}/api/history?project_id=${encodeURIComponent(active.id)}`, { method: "DELETE" }).catch(() => undefined);
   };
 
-  const toolSummary = useMemo(() => {
-    const toolRuns = messages.filter((m) => Array.isArray((m.meta as any)?.tool_calls) && (m.meta as any).tool_calls.length);
-    if (toolRuns.length) return `${toolRuns.length} Codex handoff${toolRuns.length === 1 ? "" : "s"}`;
-    return "Codex ready";
-  }, [messages]);
+  const onComposerInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    e.target.style.height = "auto";
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 168)}px`;
+  };
 
   const statusClass = status === "Ready" ? "ready" : status === "Backend offline" ? "offline" : "warn";
-  const voiceHeading =
-    liveVoice.state === "connecting"
-      ? "Connecting live voice"
-      : liveVoice.state === "live"
-        ? "Live conversation"
-        : liveVoice.state === "thinking"
-          ? "Gemini is responding"
-          : liveVoice.state === "error"
-            ? "Voice needs attention"
-            : busy
-              ? "Agent running"
-              : "Ready for the next task";
+
+  const liveTitle =
+    liveVoice.state === "connecting" ? "Connecting…" :
+    liveVoice.state === "live" ? "Live conversation" :
+    liveVoice.state === "thinking" ? "Gemini is responding" :
+    liveVoice.state === "error" ? "Voice needs attention" : "Live voice";
+
+  const suggestions =
+    mode === "codex"
+      ? ["List the files in this directory", "Show the git status", "Run the test suite", "Summarize this codebase"]
+      : ["How many files are in this project?", "What changed in the last commit?", "Pull the latest from git", "Explain the project structure"];
 
   return (
-    <main className="appShell">
-      <aside className="rail">
-        <div className="brandLockup">
-          <div className="brandMark"><TerminalWindow size={22} weight="duotone" /></div>
-          <div>
-            <p className="eyebrow">Local operator</p>
-            <h1>Codex Voice Agent</h1>
+    <div className="app" data-rail={railOpen ? "open" : "closed"} data-panel={panelOpen ? "open" : "closed"}>
+      {/* ---------------- Projects rail ---------------- */}
+      {railOpen && (
+        <aside className="rail">
+          <div className="railHead">
+            <div className="brandMark"><TerminalWindow size={20} weight="fill" /></div>
+            <div className="brandText">
+              <p className="eyebrow">Local operator</p>
+              <h1>Codex Voice</h1>
+            </div>
           </div>
-        </div>
 
-        <div className="modeSwitch" aria-label="Mode">
-          <button className={mode === "agent" ? "active" : ""} onClick={() => setMode("agent")} type="button">
-            <Sparkle size={16} weight="bold" />
-            Agent
+          <button className="newProject" type="button" onClick={() => setShowAdd(true)}>
+            <FolderPlus size={17} weight="bold" /> New project
           </button>
-          <button className={mode === "codex" ? "active" : ""} onClick={() => setMode("codex")} type="button">
-            <BracketsCurly size={16} weight="bold" />
-            Codex
-          </button>
-        </div>
 
-        <div className="railStats">
-          <div>
-            <span className={`statusDot ${statusClass}`} />
-            <p>{status}</p>
+          <div className="railLabel">
+            <span>Projects</span>
+            <em>{projects.length}</em>
           </div>
-          <div>
-            <Cpu size={16} weight="duotone" />
-            <p>{model}</p>
-          </div>
-          <div>
-            <PlugsConnected size={16} weight="duotone" />
-            <p>{toolSummary}</p>
-          </div>
-        </div>
-      </aside>
 
-      <section className="workspace" aria-label="Voice workspace">
+          {projects.length === 0 ? (
+            <div className="railEmpty">
+              <strong>No projects yet</strong>
+              <span>Add a folder to start a workspace scoped to that directory.</span>
+            </div>
+          ) : (
+            <div className="projectList">
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`projectCard ${p.id === activeId ? "active" : ""}`}
+                  style={{ ["--projColor" as string]: p.color }}
+                  onClick={() => setActiveId(p.id)}
+                >
+                  <span className="projectGlyph" style={{ background: p.color }}>{glyphFor(p.name)}</span>
+                  <span className="projectMeta">
+                    <span className="projectName">{p.name}</span>
+                    <span className="projectPath">{p.path}</span>
+                  </span>
+                  <span
+                    className="projectKebab"
+                    role="button"
+                    tabIndex={-1}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`Remove project “${p.name}”? This clears its local chat history.`)) removeProject(p.id);
+                    }}
+                    aria-label="Remove project"
+                  >
+                    <DotsThreeVertical size={16} weight="bold" />
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="railFoot">
+            <div className="railStatus">
+              <span className={`statusDot ${statusClass}`} />
+              <p>{status}</p>
+            </div>
+            <button
+              className="ghostBtn"
+              type="button"
+              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+              aria-label="Toggle theme"
+            >
+              {theme === "dark" ? <Sun size={16} weight="bold" /> : <Moon size={16} weight="bold" />}
+            </button>
+          </div>
+        </aside>
+      )}
+
+      {!railOpen && (
+        <button className="reopen left" type="button" onClick={() => setRailOpen(true)} aria-label="Show projects">
+          <CaretRight size={15} weight="bold" />
+        </button>
+      )}
+
+      {/* ---------------- Chat column ---------------- */}
+      <section className="chat">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">Agent canvas</p>
-            <h2>{mode === "agent" ? "Ask once, then let the agent work." : "Send a direct Codex task."}</h2>
+          <div className="topbarLeft">
+            <button className="collapseBtn" type="button" onClick={() => setRailOpen((v) => !v)} aria-label="Toggle projects">
+              <CaretLeft size={16} weight="bold" style={{ transform: railOpen ? "none" : "rotate(180deg)" }} />
+            </button>
+            <div className="projTitle">
+              <h2>{active ? active.name : "Codex Voice Agent"}</h2>
+              <div className="crumbs">
+                {active ? (
+                  <>
+                    <span className="pill cwd"><Terminal size={13} weight="bold" />{active.path}</span>
+                    {projectInfo?.branch && (
+                      <span className="pill git"><GitBranch size={13} weight="bold" />{projectInfo.branch}</span>
+                    )}
+                    {projectInfo && !projectInfo.exists && (
+                      <span className="pill danger"><Plugs size={13} weight="bold" />folder missing</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="pill">Select or create a project to begin</span>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="runState">
-            <Pulse size={17} weight="fill" />
-            {busy ? "Working" : "Idle"}
+          <div className="topbarRight">
+            <div className="modeToggle" role="tablist" aria-label="Mode">
+              <button className={mode === "agent" ? "active" : ""} onClick={() => setMode("agent")} type="button">
+                <Lightning size={14} weight="fill" /> Agent
+              </button>
+              <button className={`codex ${mode === "codex" ? "active" : ""}`} onClick={() => setMode("codex")} type="button">
+                <BracketsCurly size={14} weight="bold" /> Codex
+              </button>
+            </div>
+            <div className={`runState ${busy || voiceActive ? "busy" : ""}`}>
+              <span className="dot" />
+              {voiceActive ? "Live" : busy ? "Working" : "Idle"}
+            </div>
+            <button className="collapseBtn" type="button" onClick={() => setPanelOpen((v) => !v)} aria-label="Toggle context panel">
+              <TreeStructure size={17} weight="bold" />
+            </button>
           </div>
         </header>
 
-        <div className="operatorBoard">
-          <div className="startPanel">
-            <div className={`voiceDisc ${voiceActive ? "isListening" : ""}`}>
-              <Waveform size={68} weight="duotone" />
-              <span />
+        <div className="stream" ref={streamRef}>
+          {!active ? (
+            <div className="empty">
+              <div className="emptyMark"><FolderPlus size={26} weight="duotone" /></div>
+              <h3>Create your first project</h3>
+              <p>
+                A project pins the agent to a folder on this machine. Ask it to read files, run git, or hand work to
+                Codex — everything runs with that directory as the present working directory.
+              </p>
+              <div className="suggestRow">
+                <button className="suggest" type="button" onClick={() => setShowAdd(true)}>
+                  <FolderPlus size={15} weight="bold" /> Add a project
+                </button>
+              </div>
             </div>
-            <div className="startCopy">
-              <p className="panelLabel">Start</p>
-              <h3>{voiceHeading}</h3>
-              <p>{liveVoice.message}</p>
-              {liveVoice.transcriptPreview && <p className="voiceFeedback">{liveVoice.transcriptPreview}</p>}
+          ) : messages.length === 0 ? (
+            <div className="empty">
+              <div className="emptyMark"><Terminal size={24} weight="duotone" /></div>
+              <h3>{active.name}</h3>
+              <p>Working in <span style={{ fontFamily: "var(--font-mono)", color: "var(--lime)" }}>{active.path}</span>. Ask a question, run a task, or go live with voice.</p>
+              <div className="suggestRow">
+                {suggestions.map((s) => (
+                  <button key={s} className="suggest" type="button" onClick={() => send(s)}>
+                    <Lightning size={14} weight="fill" /> {s}
+                  </button>
+                ))}
+              </div>
             </div>
-            <button
-              className="voiceButton"
-              onClick={toggleVoice}
-              disabled={!liveVoice.supported || busy}
-              type="button"
-            >
-              {voiceActive ? <MicrophoneSlash size={18} weight="bold" /> : <Microphone size={18} weight="bold" />}
-              {voiceActive ? "End live" : "Start live"}
-            </button>
-            {!liveVoice.supported && <p className="inlineHint">This browser does not expose live microphone audio here.</p>}
-          </div>
-
-          <div className="systemGrid">
-            <div className="systemMetric">
-              <Gauge size={20} weight="duotone" />
-              <span>State</span>
-              <strong>{busy ? "Working" : status}</strong>
-            </div>
-            <div className="systemMetric">
-              <Cpu size={20} weight="duotone" />
-              <span>Model</span>
-              <strong>{model}</strong>
-            </div>
-            <div className="systemMetric wide">
-              <PlugsConnected size={20} weight="duotone" />
-              <span>Handoffs</span>
-              <strong>{toolSummary}</strong>
-            </div>
-          </div>
-
-          <div className="voiceSelect">
-            <label htmlFor="responseVoice">
-              <SpeakerHigh size={17} weight="duotone" />
-              Browser fallback voice
-            </label>
-            <select
-              id="responseVoice"
-              value={selectedVoiceURI}
-              onChange={(event) => setSelectedVoiceURI(event.target.value)}
-              disabled={voices.length === 0}
-            >
-              {voices.length === 0 && <option value="">Browser default</option>}
-              {voices.map((voice) => (
-                <option value={voice.voiceURI} key={voice.voiceURI}>
-                  {voice.name} ({voice.lang})
-                </option>
+          ) : (
+            <div className="streamInner">
+              {messages.map((m, i) => (
+                <article key={m.id} className={`msg ${m.role}`} style={{ ["--i" as string]: i % 12 }}>
+                  <div className="msgHead">
+                    <span className="who">{m.role === "user" ? "You" : "Agent"}</span>
+                    {m.usedCodex && <span className="tag"><BracketsCurly size={10} weight="bold" /> Codex</span>}
+                    {m.streaming && <span className="tag live"><span className="streamDot" /> streaming</span>}
+                  </div>
+                  <div className="bubble">
+                    {m.text || (m.streaming ? "" : "")}
+                    {m.streaming && !m.text && <span className="skeletonLine"><span /><span /><span /></span>}
+                    {m.streaming && m.text && <span className="caret" />}
+                  </div>
+                </article>
               ))}
-            </select>
-          </div>
+              {busy && mode === "agent" && !messages.some((m) => m.streaming) && (
+                <article className="msg assistant">
+                  <div className="msgHead"><span className="who">Agent</span></div>
+                  <div className="bubble">
+                    <span className="skeletonLine"><span /><span /><span /></span>
+                  </div>
+                </article>
+              )}
+            </div>
+          )}
+        </div>
 
-          <div className="debugPanel">
-            <button className="debugToggle" type="button" onClick={() => setDebugOpen((current) => !current)}>
-              Live debug
-              <span>{debugOpen ? "Hide" : "Show"}</span>
-            </button>
-            {debugOpen && (
-              <div className="debugLog" aria-live="polite">
-                {debugEntries.length === 0 ? (
-                  <p>No live voice events yet.</p>
-                ) : (
-                  debugEntries.map((entry) => (
-                    <p key={entry.id}>
-                      <span>{entry.time}</span>
-                      {entry.message}
-                    </p>
-                  ))
-                )}
+        <div className="composerWrap">
+          {voiceActive && (
+            <div className="liveBanner">
+              <div className={`liveCard ${liveVoice.state === "error" ? "error" : ""}`}>
+                <div className="equalizer">
+                  <span className="bars"><i /><i /><i /><i /></span>
+                </div>
+                <div className="liveBody">
+                  <p className="liveTitle">{liveTitle}</p>
+                  <p className="liveMsg">{liveVoice.message}</p>
+                  {liveVoice.transcriptPreview && <p className="livePreview">{liveVoice.transcriptPreview}</p>}
+                </div>
+                <button className="endLive" type="button" onClick={toggleVoice}>
+                  <MicrophoneSlash size={16} weight="bold" /> End
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="composer">
+            {error && (
+              <div className="errorStrip">
+                <Plugs size={15} weight="bold" /> {error}
               </div>
             )}
-          </div>
 
-          <div className="activityPanel">
-            <div>
-              <p className="panelLabel">Current session</p>
-              <h3>{hasMessages ? `${messages.length} message${messages.length === 1 ? "" : "s"}` : "No active conversation"}</h3>
+            <div className="composerBox">
+              <button
+                className={`micBtn ${voiceActive ? "live" : ""}`}
+                type="button"
+                onClick={toggleVoice}
+                disabled={!liveVoice.supported || busy || !active}
+                aria-label={voiceActive ? "End live voice" : "Start live voice"}
+                title={!liveVoice.supported ? "Live microphone audio is not available in this browser" : "Live voice"}
+              >
+                {voiceActive ? <MicrophoneSlash size={19} weight="bold" /> : <Microphone size={19} weight="bold" />}
+              </button>
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={onComposerInput}
+                disabled={!active}
+                placeholder={
+                  !active
+                    ? "Create a project to start chatting…"
+                    : mode === "codex"
+                      ? "Tell Codex exactly what to do in this directory…"
+                      : "Ask the agent about this project…"
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    primeAudioPlayback();
+                    send();
+                  }
+                }}
+              />
+              <button
+                className="sendBtn"
+                type="button"
+                onClick={() => { primeAudioPlayback(); send(); }}
+                disabled={busy || !input.trim() || !active}
+                aria-label="Send"
+              >
+                <ArrowUp size={20} weight="bold" />
+              </button>
             </div>
-            <p>
-              {hasMessages
-                ? "Conversation stays in the side panel so the main surface remains focused."
-                : "Start from chat or voice. The layout is ready before the backend answers."}
-            </p>
+
+            <div className="composerFoot">
+              <span className="composerHint">
+                <kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> newline
+              </span>
+              {active && (
+                <span className="composerCwd">
+                  <Terminal size={12} weight="bold" /> {active.path}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </section>
 
-      <aside className="chatPanel" aria-label="Chat">
-        <div className="chatHeader">
-          <div>
-            <p className="eyebrow">Chat</p>
-            <h2>{mode === "codex" ? "Codex" : "Agent"}</h2>
-          </div>
-          <button className="iconButton" onClick={startNewChat} aria-label="New chat" type="button">
-            <Broom size={18} weight="bold" />
-          </button>
-        </div>
-
-        <div className="transcript" ref={historyRef}>
-          {messages.length === 0 && (
-            <div className="emptyState compact">
-              <div className="emptyIcon"><TerminalWindow size={24} weight="duotone" /></div>
-              <h3>Start with a task</h3>
-              <p>Ask for a repo change, review, script, or local fix.</p>
-            </div>
-          )}
-
-          {messages.map((message, index) => (
-            <article className={`message ${message.role}`} key={message.id} style={{ "--i": index } as React.CSSProperties}>
-              <div className="messageMeta">
-                <span>{message.role === "user" ? "You" : "Agent"}</span>
-                {Array.isArray((message.meta as any)?.tool_calls) && (message.meta as any).tool_calls.length > 0 && <em>Codex used</em>}
-              </div>
-              <p>{message.text}</p>
-            </article>
-          ))}
-
-          {busy && (
-            <article className="message assistant skeleton">
-              <div className="messageMeta"><span>Agent</span></div>
-              <p>Working on the task</p>
-            </article>
-          )}
-        </div>
-
-        {error && <div className="errorStrip">{error}</div>}
-        {pendingAudioUrl && (
-          <button className="playResponse" onClick={() => playResponseAudio(pendingAudioUrl)} type="button">
-            <SpeakerHigh size={18} weight="bold" />
-            Play response
-          </button>
-        )}
-
-        <form
-          className="composer"
-          onSubmit={(event) => {
-            event.preventDefault();
-            primeAudioPlayback();
-            send();
-          }}
-        >
-          <label htmlFor="prompt">Command</label>
-          <div className="composerBox">
-            <textarea
-              id="prompt"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  primeAudioPlayback();
-                  send();
-                }
-              }}
-              placeholder={mode === "codex" ? "Tell Codex exactly what to do" : "Ask the agent what to do next"}
-            />
-            <button disabled={busy || !input.trim()} aria-label="Send message" type="submit">
-              <ArrowUp size={21} weight="bold" />
+      {/* ---------------- Context panel ---------------- */}
+      {panelOpen && (
+        <aside className="panel">
+          <div className="panelHead">
+            <h3>Context</h3>
+            <button className="ghostBtn" type="button" onClick={clearThread} aria-label="Clear conversation" disabled={!active}>
+              <Broom size={15} weight="bold" />
             </button>
           </div>
-          <p className="composerHint">Enter sends. Shift Enter adds a new line.</p>
-        </form>
-      </aside>
-    </main>
+          <div className="panelScroll">
+            <section className="card">
+              <div className="cardHead">
+                <FolderOpen size={15} weight="bold" />
+                <span className="t">Workspace</span>
+              </div>
+              <div className="cardBody">
+                <div className="kv">
+                  <div className="row"><span className="k">Project</span><span className="v">{active?.name || "—"}</span></div>
+                  <div className="row"><span className="k">Working dir</span><span className="v accent">{active?.path || "—"}</span></div>
+                  <div className="row"><span className="k">Branch</span><span className="v amber">{active ? (projectInfo?.branch || (projectInfo?.is_git ? "detached" : "no git")) : "—"}</span></div>
+                  <div className="row"><span className="k">Files</span><span className="v">{active ? (projectInfo?.file_count ?? "—") : "—"}</span></div>
+                  <div className="row"><span className="k">Model</span><span className="v">{model}</span></div>
+                  <div className="row"><span className="k">Messages</span><span className="v">{messages.length}</span></div>
+                </div>
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="cardHead">
+                <Lightning size={15} weight="fill" />
+                <span className="t">Quick actions</span>
+              </div>
+              <div className="cardBody">
+                <div className="quickGrid">
+                  <button className="quickAct" type="button" disabled={!active || busy} onClick={() => send("List the files in this directory")}>
+                    <FileMagnifyingGlass size={15} weight="bold" /> List files
+                  </button>
+                  <button className="quickAct amber" type="button" disabled={!active || busy} onClick={() => send("Show the current git status")}>
+                    <GitBranch size={15} weight="bold" /> Git status
+                  </button>
+                  <button className="quickAct amber" type="button" disabled={!active || busy} onClick={() => send("Pull the latest changes from git")}>
+                    <GitBranch size={15} weight="bold" /> Git pull
+                  </button>
+                  <button className="quickAct" type="button" disabled={!active || busy} onClick={() => send("Summarize what this project does")}>
+                    <Cpu size={15} weight="bold" /> Summarize
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="cardHead">
+                <BracketsCurly size={15} weight="bold" />
+                <span className="t">Codex handoffs</span>
+                <span className="x">{handoffs.length}</span>
+              </div>
+              <div className="cardBody">
+                {handoffs.length === 0 ? (
+                  <p style={{ fontSize: 12, color: "var(--text-faint)" }}>No Codex handoffs yet. Tasks that touch files run here.</p>
+                ) : (
+                  handoffs.map((h) => (
+                    <div className="handoff" key={h.id}>
+                      <span className="ic"><Terminal size={14} weight="bold" /></span>
+                      <span className="txt">
+                        <b>{h.name}</b>
+                        <p>{h.summary}</p>
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="cardHead">
+                <Terminal size={15} weight="bold" />
+                <span className="t">Action log</span>
+                <span className="x">{actions.length}</span>
+              </div>
+              <div className="cardBody">
+                {actions.length === 0 ? (
+                  <p style={{ fontSize: 12, color: "var(--text-faint)" }}>No local actions yet.</p>
+                ) : (
+                  <div className="actionList">
+                    {actions.map((action) => (
+                      <div className={`actionItem ${action.status}`} key={action.id}>
+                        <span className="actionStatus">{action.status}</span>
+                        <div className="actionText">
+                          <b>{action.title}</b>
+                          <p>{action.detail}</p>
+                          {action.workdir && <code>{action.workdir}</code>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="cardHead">
+                <Plugs size={15} weight="bold" />
+                <span className="t">Live debug</span>
+              </div>
+              <div className="cardBody">
+                <div className="debugLog">
+                  {debugEntries.length === 0 ? (
+                    <p className="empty2">No live voice events yet.</p>
+                  ) : (
+                    debugEntries.map((e) => (
+                      <div className="line" key={e.id}>
+                        <time>{e.time}</time>
+                        <span>{e.message}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="cardHead">
+                <SpeakerHigh size={15} weight="bold" />
+                <span className="t">Voice output</span>
+              </div>
+              <div className="cardBody">
+                <p className="fieldLabel"><SpeakerHigh size={13} weight="bold" /> Browser fallback voice</p>
+                <select className="select" value={selectedVoiceURI} onChange={(e) => setSelectedVoiceURI(e.target.value)} disabled={voices.length === 0}>
+                  {voices.length === 0 && <option value="">Browser default</option>}
+                  {voices.map((v) => (
+                    <option value={v.voiceURI} key={v.voiceURI}>{v.name} ({v.lang})</option>
+                  ))}
+                </select>
+                {pendingAudioUrl && (
+                  <button className="playResponse" type="button" onClick={() => playResponseAudio(pendingAudioUrl)}>
+                    <SpeakerHigh size={16} weight="bold" /> Play response
+                  </button>
+                )}
+              </div>
+            </section>
+          </div>
+        </aside>
+      )}
+
+      {!panelOpen && (
+        <button className="reopen right" type="button" onClick={() => setPanelOpen(true)} aria-label="Show context">
+          <CaretLeft size={15} weight="bold" />
+        </button>
+      )}
+
+      {showAdd && (
+        <AddProjectModal
+          onClose={() => setShowAdd(false)}
+          onCreate={createProject}
+          usedColors={projects.map((p) => p.color)}
+          existingPaths={projects.map((p) => p.path)}
+        />
+      )}
+
+      {pendingAction && (
+        <ActionPreviewModal
+          action={pendingAction}
+          onCancel={() => setPendingAction(null)}
+          onRun={() => {
+            const action = pendingAction;
+            setPendingAction(null);
+            primeAudioPlayback();
+            void send(action.text, true, action.project);
+          }}
+        />
+      )}
+    </div>
   );
 }
 

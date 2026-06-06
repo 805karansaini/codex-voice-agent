@@ -1,20 +1,27 @@
 import base64
 import asyncio
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
-from .codex_runner import run_codex
-from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, live_connect_config, transcribe_audio
-from .history import HistoryStore
+from .codex_runner import resolve_workdir, run_codex, run_codex_stream
+from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, ask_gemini_stream, live_connect_config, transcribe_audio
+from .history import HistoryStore, ProjectStore
 from .settings import get_settings
 
 
 settings = get_settings()
 history = HistoryStore(settings.history_path)
+projects = ProjectStore(settings.history_path.with_name("projects.json"))
 
 app = FastAPI(title="Codex Voice Agent")
 app.add_middleware(
@@ -29,11 +36,22 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str
+    workdir: str | None = None
+    project_id: str | None = None
 
 
 class CodexRequest(BaseModel):
     task: str
     workdir: str | None = None
+    project_id: str | None = None
+
+
+class ProjectRequest(BaseModel):
+    id: str
+    name: str
+    path: str
+    color: str
+    createdAt: int
 
 
 class TranscribeRequest(BaseModel):
@@ -54,13 +72,43 @@ async def health() -> dict[str, object]:
 
 
 @app.get("/api/history")
-async def list_history() -> list[dict[str, object]]:
-    return history.list()
+async def list_history(project_id: str | None = None, workdir: str | None = None) -> list[dict[str, object]]:
+    return history.list(project_id=project_id, workdir=workdir)
 
 
 @app.delete("/api/history")
-async def clear_history() -> dict[str, object]:
-    history.clear()
+async def clear_history(project_id: str | None = None, workdir: str | None = None) -> dict[str, object]:
+    history.clear(project_id=project_id, workdir=workdir)
+    return {"ok": True}
+
+
+@app.get("/api/projects")
+async def list_projects() -> list[dict[str, object]]:
+    return projects.list()
+
+
+@app.post("/api/projects")
+async def save_project(req: ProjectRequest) -> dict[str, object]:
+    if not req.id.strip() or not req.name.strip():
+        raise HTTPException(status_code=400, detail="Project id and name are required")
+    try:
+        root = resolve_workdir(req.path)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    project = {
+        "id": req.id.strip(),
+        "name": req.name.strip(),
+        "path": str(root),
+        "color": req.color,
+        "createdAt": req.createdAt,
+    }
+    return projects.upsert(project)
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str) -> dict[str, object]:
+    projects.delete(project_id)
+    history.clear(project_id=project_id)
     return {"ok": True}
 
 
@@ -69,13 +117,54 @@ async def chat(req: ChatRequest) -> dict[str, object]:
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Message is required")
-    history.append("user", text)
+    history_meta = {"workdir": req.workdir or settings.codex_default_workdir, "project_id": req.project_id}
+    history.append("user", text, history_meta)
     try:
-        result = await ask_gemini(text, settings)
+        result = await ask_gemini(text, settings, workdir=req.workdir)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    history.append("assistant", result["reply"], {"tool_calls": result["tool_calls"]})
+    history.append(
+        "assistant",
+        result["reply"],
+        {"tool_calls": result["tool_calls"], "workdir": result.get("workdir"), "project_id": req.project_id},
+    )
     return result
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest) -> StreamingResponse:
+    text = req.message.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message is required")
+    workdir = req.workdir or settings.codex_default_workdir
+    history.append("user", text, {"workdir": workdir, "project_id": req.project_id})
+
+    async def event_source():
+        final_text = ""
+        final_workdir = workdir
+        final_tool_calls = []
+        try:
+            async for event in ask_gemini_stream(text, settings, workdir=req.workdir):
+                if event.get("type") == "done":
+                    final_text = str(event.get("text") or "")
+                    final_workdir = str(event.get("workdir") or workdir)
+                    final_tool_calls = list(event.get("tool_calls") or [])
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+        finally:
+            if final_text:
+                history.append(
+                    "assistant",
+                    final_text,
+                    {"tool_calls": final_tool_calls, "workdir": final_workdir, "project_id": req.project_id},
+                )
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/transcribe")
@@ -100,12 +189,21 @@ async def live_voice(websocket: WebSocket) -> None:
     audio_chunks: list[bytes] = []
     input_text_chunks: list[str] = []
     output_text_chunks: list[str] = []
+    session_workdir = settings.codex_default_workdir
+    session_project_id: str | None = None
 
-    async def send_client_audio(session: object) -> None:
+    async def send_client_audio(session: object, initial: dict | None = None) -> None:
+        nonlocal session_workdir, session_project_id
+        pending = initial
         while True:
-            payload = await websocket.receive_json()
+            payload = pending if pending is not None else await websocket.receive_json()
+            pending = None
             event_type = payload.get("type")
-            if event_type == "audio":
+            if event_type == "config":
+                session_workdir = str(payload.get("workdir") or "").strip() or session_workdir
+                session_project_id = str(payload.get("project_id") or "").strip() or session_project_id
+                await websocket.send_json({"type": "debug", "message": f"Active workdir: {session_workdir}"})
+            elif event_type == "audio":
                 audio_base64 = str(payload.get("data") or "")
                 if not audio_base64:
                     continue
@@ -133,7 +231,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     for call in server_message.tool_call.function_calls:
                         args = dict(call.args or {})
                         task = str(args.get("task") or user_text or "Run the requested local task.")
-                        workdir = str(args.get("workdir") or settings.codex_default_workdir)
+                        workdir = str(args.get("workdir") or session_workdir or settings.codex_default_workdir)
                         codex_result = await run_codex(task, workdir, settings)
                         responses.append(
                             types.FunctionResponse(
@@ -183,13 +281,14 @@ async def live_voice(websocket: WebSocket) -> None:
                     user_text = "".join(input_text_chunks).strip()
                     assistant_text = "".join(output_text_chunks).strip() or "Done."
                     if user_text:
-                        history.append("user", user_text)
-                    history.append("assistant", assistant_text)
+                        history.append("user", user_text, {"workdir": session_workdir, "project_id": session_project_id})
+                    history.append("assistant", assistant_text, {"workdir": session_workdir, "project_id": session_project_id})
                     await websocket.send_json(
                         {
                             "type": "turn_complete",
                             "user_text": user_text,
                             "assistant_text": assistant_text,
+                            "workdir": session_workdir,
                             "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
                         }
                     )
@@ -201,9 +300,20 @@ async def live_voice(websocket: WebSocket) -> None:
             await asyncio.sleep(0.05)
 
     try:
-        async with client.aio.live.connect(model=settings.gemini_model, config=live_connect_config(settings)) as session:
+        # Read the opening frame first: the client sends {type:"config", workdir}
+        # on connect, so we can bake the working directory into the system prompt.
+        first_payload: dict | None = await websocket.receive_json()
+        if first_payload.get("type") == "config":
+            session_workdir = str(first_payload.get("workdir") or "").strip() or session_workdir
+            session_project_id = str(first_payload.get("project_id") or "").strip() or session_project_id
+            await websocket.send_json({"type": "debug", "message": f"Active workdir: {session_workdir}"})
+            first_payload = None
+
+        async with client.aio.live.connect(
+            model=settings.gemini_model, config=live_connect_config(settings, session_workdir)
+        ) as session:
             await websocket.send_json({"type": "debug", "message": "Connected to Gemini Live."})
-            send_task = asyncio.create_task(send_client_audio(session))
+            send_task = asyncio.create_task(send_client_audio(session, first_payload))
             receive_task = asyncio.create_task(receive_gemini(session))
             done, pending = await asyncio.wait({send_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
@@ -226,10 +336,137 @@ async def codex(req: CodexRequest) -> dict[str, object]:
     if not task:
         raise HTTPException(status_code=400, detail="Task is required")
     workdir = req.workdir or settings.codex_default_workdir
-    history.append("user", task, {"direct_codex": True, "workdir": workdir})
+    history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id})
     try:
         result = await run_codex(task, workdir, settings)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    history.append("assistant", result.final_response, {"direct_codex": True, "workdir": result.workdir})
+    history.append("assistant", result.final_response, {"direct_codex": True, "workdir": result.workdir, "project_id": req.project_id})
     return {"reply": result.final_response, "workdir": result.workdir}
+
+
+def _git_branch(root: Path) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        branch = out.stdout.strip()
+        return branch or None
+    except Exception:
+        return None
+
+
+def _file_count(root: Path) -> int | None:
+    """Count tracked files when it's a git repo, else a shallow file count."""
+    try:
+        tracked = subprocess.run(
+            ["git", "-C", str(root), "ls-files"], capture_output=True, text=True, timeout=3,
+        )
+        if tracked.returncode == 0 and tracked.stdout.strip():
+            return len([line for line in tracked.stdout.splitlines() if line.strip()])
+    except Exception:
+        pass
+    try:
+        return sum(1 for entry in root.iterdir() if entry.is_file())
+    except Exception:
+        return None
+
+
+def _pick_directory_sync() -> str | None:
+    """Open a real native folder dialog on the host and return the absolute path.
+
+    Browsers cannot expose absolute paths from their directory picker, but this
+    backend runs locally, so it can use the OS picker (macOS osascript, or
+    zenity/kdialog on Linux). Returns None if the user cancels.
+    """
+    if sys.platform == "darwin":
+        script = (
+            'try\n'
+            '  POSIX path of (choose folder with prompt "Select a project folder")\n'
+            'on error number -128\n'
+            '  return ""\n'
+            'end try'
+        )
+        proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+        return (proc.stdout.strip() or None) if proc.returncode == 0 else None
+    if shutil.which("zenity"):
+        proc = subprocess.run(
+            ["zenity", "--file-selection", "--directory", "--title=Select a project folder"],
+            capture_output=True, text=True,
+        )
+        return proc.stdout.strip() or None
+    if shutil.which("kdialog"):
+        proc = subprocess.run(
+            ["kdialog", "--getexistingdirectory", str(Path.home())], capture_output=True, text=True
+        )
+        return proc.stdout.strip() or None
+    raise RuntimeError("No native folder picker is available on this host. Paste the path instead.")
+
+
+@app.post("/api/fs/pick")
+async def fs_pick() -> dict[str, object]:
+    try:
+        path = await asyncio.to_thread(_pick_directory_sync)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if not path:
+        return {"path": None, "cancelled": True}
+    cleaned = path.rstrip("/") or "/"
+    return {"path": cleaned, "cancelled": False}
+
+
+@app.get("/api/project/info")
+async def project_info(path: str) -> dict[str, object]:
+    """Validate a directory and report git branch + file count.
+
+    Used both to confirm a folder exists before adding it (no copies, no
+    auto-created folders) and to populate the workspace panel.
+    """
+    try:
+        root = resolve_workdir(path)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    is_git = (root / ".git").exists()
+    return {
+        "path": str(root),
+        "name": root.name,
+        "exists": True,
+        "is_git": is_git,
+        "branch": _git_branch(root) if is_git else None,
+        "file_count": _file_count(root),
+    }
+
+
+@app.post("/api/codex/stream")
+async def codex_stream(req: CodexRequest) -> StreamingResponse:
+    task = req.task.strip()
+    if not task:
+        raise HTTPException(status_code=400, detail="Task is required")
+    workdir = req.workdir or settings.codex_default_workdir
+    history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id})
+
+    async def event_source():
+        final_text = ""
+        final_workdir = workdir
+        try:
+            async for event in run_codex_stream(task, workdir, settings):
+                if event.get("type") == "done":
+                    final_text = str(event.get("text") or "")
+                    final_workdir = str(event.get("workdir") or workdir)
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+        finally:
+            if final_text:
+                history.append(
+                    "assistant",
+                    final_text,
+                    {"direct_codex": True, "workdir": final_workdir, "project_id": req.project_id},
+                )
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
