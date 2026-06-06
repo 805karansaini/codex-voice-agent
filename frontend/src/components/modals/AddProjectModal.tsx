@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { FolderOpen, Plugs } from "@phosphor-icons/react";
+import { FolderOpen, AlertCircle, X } from "lucide-react";
 import { Project } from "../../types";
 import * as api from "../../services/api";
 
@@ -77,7 +77,6 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
       }
       onCreate({ name: cleanName, path: resolved, color });
     } catch (err) {
-      // Handle directory does not exist or backend offline
       if (err instanceof Error && err.message.includes("404")) {
         setError("That directory does not exist. Paste the full absolute path to an existing folder.");
       } else {
@@ -89,83 +88,129 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
   };
 
   return (
-    <div className="overlay" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="modalHead">
-          <h3>Add a project</h3>
-          <p>
-            Point the agent at an existing folder on this machine. It works in that folder <strong>in place</strong> —
-            nothing is copied, so your original files are the only files.
+    <div
+      onMouseDown={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface-0/60 backdrop-blur-sm p-4"
+    >
+      <div
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        className="relative w-full max-w-lg rounded-xl border border-line bg-surface-1 p-6 shadow-xl flex flex-col gap-5 animate-in fade-in duration-200"
+      >
+        {/* Close Button */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-fg-dim hover:text-fg hover:bg-surface-2 p-1 rounded-md transition-colors"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        {/* Header */}
+        <div className="flex flex-col gap-1.5 pr-6">
+          <h3 className="text-base font-semibold tracking-tight text-fg">Add a Project Workspace</h3>
+          <p className="text-[12.5px] text-fg-muted leading-relaxed">
+            Scope the operator to an existing directory on your disk.
+            Nothing is copied or duplicated — changes are made <strong>directly in place</strong>.
           </p>
         </div>
-        <div className="modalBody">
-          <div className="field">
-            <label htmlFor="pName">Project name</label>
+
+        {/* Form Body */}
+        <div className="flex flex-col gap-4 py-1">
+          {/* Project Name */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="pName" className="font-mono text-[10.5px] uppercase tracking-wider text-fg-dim font-bold">
+              Project Name
+            </label>
             <input
               id="pName"
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Codex Voice Agent"
+              placeholder="e.g. My Awesome App"
               onKeyDown={(e) => e.key === "Enter" && (document.getElementById("pPath") as HTMLInputElement)?.focus()}
+              className="w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-[13.5px] text-fg focus:border-accent focus:outline-none placeholder:text-fg-dim"
             />
           </div>
-          <div className="field">
-            <label htmlFor="pPath">Directory (absolute path)</label>
-            <div className="pathRow">
+
+          {/* Absolute Directory Path */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="pPath" className="font-mono text-[10.5px] uppercase tracking-wider text-fg-dim font-bold">
+              Absolute Directory Path
+            </label>
+            <div className="flex gap-2">
               <input
                 id="pPath"
-                ref={pathRef}
-                className="mono"
+                className="flex-1 rounded-md border border-line bg-surface-2 px-3 py-2 text-[13.5px] font-mono text-fg focus:border-accent focus:outline-none placeholder:text-fg-dim"
                 value={path}
                 onChange={(e) => {
                   setPath(e.target.value);
                   if (error) setError("");
                 }}
-                placeholder="/Users/you/Projects/my-app"
+                placeholder="/Users/username/Projects/my-app"
                 onKeyDown={(e) => e.key === "Enter" && submit()}
               />
-              <button className="browseBtn" type="button" onClick={browse} disabled={picking}>
-                <FolderOpen size={16} weight="bold" /> {picking ? "Opening…" : "Browse"}
+              <button
+                type="button"
+                onClick={browse}
+                disabled={picking}
+                className="flex items-center gap-1.5 shrink-0 rounded-md border border-line bg-surface-2 px-3 py-2 text-[12px] font-medium text-fg hover:bg-surface-3 transition-colors disabled:opacity-50"
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+                <span>{picking ? "Opening…" : "Browse"}</span>
               </button>
             </div>
-            <p className="hint">
-              Click <strong>Browse</strong> to pick a folder with the native dialog (fills the real absolute path), or
-              paste a full path like <span className="mono">/Users/karansaini/Projects/app</span>.
+            <p className="text-[11px] text-fg-dim leading-normal mt-0.5">
+              Paste the full absolute path, or click <strong>Browse</strong> to select via your operating system directory dialog.
             </p>
           </div>
-          <div className="field">
-            <label>Accent</label>
-            <div className="swatches">
+
+          {/* Accent Color picker */}
+          <div className="flex flex-col gap-2">
+            <span className="font-mono text-[10.5px] uppercase tracking-wider text-fg-dim font-bold">
+              Workspace Accent Color
+            </span>
+            <div className="flex items-center gap-2">
               {PROJECT_COLORS.map((c) => (
                 <button
                   key={c}
                   type="button"
-                  className={`swatch ${c === color ? "on" : ""}`}
-                  style={{ background: c }}
                   onClick={() => setColor(c)}
-                  aria-label={`Accent ${c}`}
+                  className={`w-6 h-6 rounded-full transition-all border-2 ${
+                    c === color ? "border-fg scale-110 shadow-sm" : "border-transparent opacity-85 hover:opacity-100 hover:scale-105"
+                  }`}
+                  style={{ background: c }}
+                  aria-label={`Color swatch ${c}`}
                 />
               ))}
             </div>
           </div>
+
+          {/* Error display */}
           {error && (
-            <div className="modalError">
-              <Plugs size={15} weight="bold" /> {error}
+            <div className="flex items-start gap-2 rounded-md border border-danger/20 bg-danger/5 p-3 text-xs text-danger font-mono mt-1">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span className="leading-relaxed">{error}</span>
             </div>
           )}
         </div>
-        <div className="modalFoot">
-          <button className="btnGhost" type="button" onClick={onClose}>
+
+        {/* Footer Buttons */}
+        <div className="flex justify-end gap-2.5 mt-2 pt-2 border-t border-line-soft">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-fg-muted hover:bg-surface-2 hover:text-fg transition-colors"
+          >
             Cancel
           </button>
           <button
-            className="btnPrimary"
             type="button"
             onClick={submit}
             disabled={!name.trim() || !path.trim() || checking}
+            className="rounded-md bg-accent px-4 py-2 text-[12.5px] font-semibold text-accent-foreground hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm glow-accent"
           >
-            {checking ? "Checking…" : "Create project"}
+            {checking ? "Checking…" : "Link Directory"}
           </button>
         </div>
       </div>
