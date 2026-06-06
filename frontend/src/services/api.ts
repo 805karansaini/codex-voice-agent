@@ -1,4 +1,4 @@
-import { Project, Chat, HistoryRow, ProjectInfo } from "../types";
+import { Project, Chat, ConsoleState, HistoryRow, ProjectInfo } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -58,6 +58,28 @@ export async function deleteChat(chatId: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete chat");
+}
+
+export async function fetchConsoleState(chatId: string): Promise<ConsoleState> {
+  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`);
+  if (!res.ok) throw new Error("Failed to fetch console state");
+  return res.json();
+}
+
+export async function saveConsoleState(chatId: string, state: ConsoleState): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state),
+  });
+  if (!res.ok) throw new Error("Failed to save console state");
+}
+
+export async function deleteConsoleState(chatId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to clear console state");
 }
 
 export async function fetchHistory(chatId: string): Promise<HistoryRow[]> {

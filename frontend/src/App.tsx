@@ -99,6 +99,8 @@ export function App() {
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
 
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
+  const consoleLoadedChatRef = useRef("");
+  const consoleSaveTimerRef = useRef<number | null>(null);
 
   // Resize drags
   const startRailDrag = useCallback((e: React.MouseEvent) => {
@@ -167,6 +169,42 @@ export function App() {
       })
       .catch(() => setStatus("Backend offline"));
   }, []);
+
+  useEffect(() => {
+    const chatId = store.activeChatId;
+    consoleLoadedChatRef.current = "";
+    setActions([]);
+    setHandoffs([]);
+    setDebugEntries([]);
+    if (!chatId) return;
+    let cancelled = false;
+    api.fetchConsoleState(chatId)
+      .then((state) => {
+        if (cancelled) return;
+        setActions(state.actions || []);
+        setHandoffs(state.handoffs || []);
+        setDebugEntries(state.debugEntries || []);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) consoleLoadedChatRef.current = chatId;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [store.activeChatId]);
+
+  useEffect(() => {
+    const chatId = store.activeChatId;
+    if (!chatId || consoleLoadedChatRef.current !== chatId) return;
+    if (consoleSaveTimerRef.current) window.clearTimeout(consoleSaveTimerRef.current);
+    consoleSaveTimerRef.current = window.setTimeout(() => {
+      void api.saveConsoleState(chatId, { actions, handoffs, debugEntries }).catch(() => {});
+    }, 250);
+    return () => {
+      if (consoleSaveTimerRef.current) window.clearTimeout(consoleSaveTimerRef.current);
+    };
+  }, [actions, handoffs, debugEntries, store.activeChatId]);
 
   // Validate path and check git statistics
   useEffect(() => {
@@ -450,6 +488,7 @@ export function App() {
       activeAbortControllerRef.current = controller;
 
       let finalText = "";
+      let cancelled = false;
 
       try {
         const res = await api.postCodexStream({
@@ -499,6 +538,21 @@ export function App() {
         };
 
         await readSseStream(res, handle);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          cancelled = true;
+          store.updateMessage(chatId, assistantId, (m) => ({
+            ...m,
+            streaming: false,
+            text: m.text || "Cancelled.",
+          }));
+          updateAction(actionId, {
+            status: "failed",
+            detail: "Cancelled by user.",
+          });
+          return;
+        }
+        throw err;
       } finally {
         activeAbortControllerRef.current = null;
       }
@@ -506,7 +560,7 @@ export function App() {
       store.updateMessage(chatId, assistantId, (m) =>
         m.streaming ? { ...m, streaming: false } : m
       );
-      if (finalText) speak(finalText);
+      if (!cancelled && finalText) speak(finalText);
     },
     [addAction, addHandoff, speak, store.appendMessage, store.updateMessage, updateAction]
   );
@@ -518,30 +572,31 @@ export function App() {
 
       const controller = new AbortController();
       activeAbortControllerRef.current = controller;
-
-      const res = await api.postChatStream({
-        message,
-        workdir: project.path,
-        projectId: project.id,
-        chatId,
-      }, controller.signal);
-
-      if (!res.ok || !res.body) {
-        const payload = await res.json().catch(() => ({}));
-        store.updateMessage(chatId, assistantId, (m) => ({
-          ...m,
-          streaming: false,
-          text: m.text || "Agent request failed.",
-        }));
-        throw new Error(payload.detail || "Agent request failed");
-      }
-
+      let cancelled = false;
       let finalText = "";
       let finalAudioUrl = "";
       let usedCodex = false;
       let activeActionId = "";
 
-      await readSseStream(res, (evt) => {
+      try {
+        const res = await api.postChatStream({
+          message,
+          workdir: project.path,
+          projectId: project.id,
+          chatId,
+        }, controller.signal);
+
+        if (!res.ok || !res.body) {
+          const payload = await res.json().catch(() => ({}));
+          store.updateMessage(chatId, assistantId, (m) => ({
+            ...m,
+            streaming: false,
+            text: m.text || "Agent request failed.",
+          }));
+          throw new Error(payload.detail || "Agent request failed");
+        }
+
+        await readSseStream(res, (evt) => {
         if (evt.type === "delta" && evt.text) {
           finalText += evt.text;
           store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
@@ -602,13 +657,33 @@ export function App() {
           }
           setError(String(evt.message || "Agent failed"));
         }
-      });
+        });
 
-      store.updateMessage(chatId, assistantId, (m) =>
-        m.streaming ? { ...m, streaming: false } : m
-      );
-      if (finalAudioUrl) await playResponseAudio(finalAudioUrl);
-      else if (finalText) speak(finalText);
+        store.updateMessage(chatId, assistantId, (m) =>
+          m.streaming ? { ...m, streaming: false } : m
+        );
+        if (!cancelled && finalAudioUrl) await playResponseAudio(finalAudioUrl);
+        else if (!cancelled && finalText) speak(finalText);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          cancelled = true;
+          store.updateMessage(chatId, assistantId, (m) => ({
+            ...m,
+            streaming: false,
+            text: m.text || "Cancelled.",
+          }));
+          if (activeActionId) {
+            updateAction(activeActionId, {
+              status: "failed",
+              detail: "Cancelled by user.",
+            });
+          }
+          return;
+        }
+        throw err;
+      } finally {
+        activeAbortControllerRef.current = null;
+      }
     },
     [addAction, addHandoff, playResponseAudio, speak, store.appendMessage, store.updateMessage, updateAction]
   );
@@ -684,10 +759,13 @@ export function App() {
 
   const clearThread = () => {
     if (!store.activeProject || !store.activeChatId) return;
+    const chatId = store.activeChatId;
     store.clearChatThread(store.activeChatId);
     setHandoffs([]);
     setActions([]);
+    setDebugEntries([]);
     setError("");
+    api.deleteConsoleState(chatId).catch(() => {});
   };
 
   const onComposerInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {

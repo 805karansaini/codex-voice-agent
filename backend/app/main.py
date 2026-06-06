@@ -15,7 +15,7 @@ from google.genai import types
 
 from .codex_runner import resolve_workdir, run_codex, run_codex_stream, run_codex_stream_with_timer, CancellationToken
 from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, ask_gemini_stream, live_connect_config, transcribe_audio
-from .history import ChatStore, HistoryStore, ProjectStore
+from .history import ChatStore, ConsoleStore, HistoryStore, ProjectStore
 from .settings import get_settings
 
 
@@ -23,6 +23,7 @@ settings = get_settings()
 history = HistoryStore(settings.history_path)
 projects = ProjectStore(settings.history_path.with_name("projects.json"))
 chats = ChatStore(settings.history_path.with_name("chats.json"))
+console = ConsoleStore(settings.history_path.with_name("console.json"))
 
 app = FastAPI(title="Codex Voice Agent")
 app.add_middleware(
@@ -62,6 +63,12 @@ class ChatMetaRequest(BaseModel):
     projectId: str
     title: str
     createdAt: int
+
+
+class ConsoleStateRequest(BaseModel):
+    actions: list[dict[str, object]] = []
+    handoffs: list[dict[str, object]] = []
+    debugEntries: list[dict[str, object]] = []
 
 
 class TranscribeRequest(BaseModel):
@@ -121,9 +128,11 @@ async def save_project(req: ProjectRequest) -> dict[str, object]:
 
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str) -> dict[str, object]:
+    chat_ids = [str(chat.get("id")) for chat in chats.list(project_id=project_id) if chat.get("id")]
     projects.delete(project_id)
     chats.delete_for_project(project_id)
     history.clear(project_id=project_id)
+    console.clear_for_project(chat_ids)
     return {"ok": True}
 
 
@@ -149,6 +158,30 @@ async def save_chat(req: ChatMetaRequest) -> dict[str, object]:
 async def delete_chat(chat_id: str) -> dict[str, object]:
     chats.delete(chat_id)
     history.clear(chat_id=chat_id)
+    console.clear(chat_id)
+    return {"ok": True}
+
+
+@app.get("/api/chats/{chat_id}/console")
+async def get_console_state(chat_id: str) -> dict[str, object]:
+    return console.get(chat_id)
+
+
+@app.put("/api/chats/{chat_id}/console")
+async def save_console_state(chat_id: str, req: ConsoleStateRequest) -> dict[str, object]:
+    return console.put(
+        chat_id,
+        {
+            "actions": req.actions,
+            "handoffs": req.handoffs,
+            "debugEntries": req.debugEntries,
+        },
+    )
+
+
+@app.delete("/api/chats/{chat_id}/console")
+async def clear_console_state(chat_id: str) -> dict[str, object]:
+    console.clear(chat_id)
     return {"ok": True}
 
 
@@ -246,8 +279,11 @@ async def live_voice(websocket: WebSocket) -> None:
     audio_chunks: list[bytes] = []
     input_text_chunks: list[str] = []
     output_text_chunks: list[str] = []
+    session_workdir = settings.codex_default_workdir
+    session_project_id: str | None = None
     session_chat_id: str | None = None
     current_task_cancel_token: CancellationToken | None = None
+    streamed_audio_this_turn = False
 
     async def send_client_audio(session: object, initial: dict | None = None) -> None:
         nonlocal session_workdir, session_project_id, session_chat_id, current_task_cancel_token
@@ -279,7 +315,7 @@ async def live_voice(websocket: WebSocket) -> None:
                 return
 
     async def receive_gemini(session: object) -> None:
-        nonlocal audio_chunks, input_text_chunks, output_text_chunks, current_task_cancel_token
+        nonlocal audio_chunks, input_text_chunks, output_text_chunks, current_task_cancel_token, streamed_audio_this_turn
         while True:
             received_message = False
             async for server_message in session.receive():
@@ -370,6 +406,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     audio_chunks = []
                     input_text_chunks = []
                     output_text_chunks = []
+                    streamed_audio_this_turn = False
                     await websocket.send_json({"type": "interrupted"})
 
                 if content.input_transcription and content.input_transcription.text:
@@ -386,6 +423,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     for part in content.model_turn.parts or []:
                         if part.inline_data and part.inline_data.data:
                             audio_chunks.append(part.inline_data.data)
+                            streamed_audio_this_turn = True
                             audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
                             await websocket.send_json(
                                 {
@@ -409,12 +447,13 @@ async def live_voice(websocket: WebSocket) -> None:
                             "user_text": user_text,
                             "assistant_text": assistant_text,
                             "workdir": session_workdir,
-                            "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
+                            "audio_data_url": None if streamed_audio_this_turn else _pcm_to_wav_data_url(audio_chunks),
                         }
                     )
                     audio_chunks = []
                     input_text_chunks = []
                     output_text_chunks = []
+                    streamed_audio_this_turn = False
             if received_message:
                 await websocket.send_json({"type": "debug", "message": "Gemini receive loop is waiting for the next turn."})
             await asyncio.sleep(0.05)

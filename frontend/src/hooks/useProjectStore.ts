@@ -190,14 +190,16 @@ export function useProjectStore() {
   const renameChat = useCallback((projectId: string, chatId: string, title: string) => {
     const clean = title.trim();
     if (!clean) return;
-    let updated: Chat | undefined;
     setChats((current) => {
-      const next = (current[projectId] || []).map((c) =>
-        c.id === chatId ? (updated = { ...c, title: clean }) : c
-      );
+      let updated: Chat | undefined;
+      const next = (current[projectId] || []).map((c) => {
+        if (c.id !== chatId) return c;
+        updated = { ...c, title: clean };
+        return updated;
+      });
+      if (updated) api.saveChat(updated).catch(() => {});
       return { ...current, [projectId]: next };
     });
-    if (updated) api.saveChat(updated).catch(() => {});
   }, []);
 
   const removeChat = useCallback((projectId: string, chatId: string) => {

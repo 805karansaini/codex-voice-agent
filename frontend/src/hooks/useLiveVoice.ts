@@ -50,8 +50,6 @@ class AudioStreamPlayer {
   private nextPlayTime: number = 0;
   private activeSources: AudioBufferSourceNode[] = [];
   private sampleRate: number = 24000;
-  private workletNode: AudioWorkletNode | null = null;
-  private useWorklet: boolean = false;
 
   constructor() {}
 
@@ -64,77 +62,6 @@ class AudioStreamPlayer {
         this.ctx = new AudioCtx();
       }
       this.nextPlayTime = 0;
-
-      if (this.ctx.audioWorklet) {
-        const code = `
-          class PlaybackProcessor extends AudioWorkletProcessor {
-            constructor() {
-              super();
-              this.buffer = new Float32Array(24000 * 4);
-              this.writePtr = 0;
-              this.readPtr = 0;
-              this.bufferedCount = 0;
-              this.prebuffering = true;
-              this.prebufferThreshold = 2400 * 2; // ~200ms prebuffer
-
-              this.port.onmessage = (e) => {
-                if (e.data === "clear") {
-                  this.writePtr = 0;
-                  this.readPtr = 0;
-                  this.bufferedCount = 0;
-                  this.prebuffering = true;
-                  return;
-                }
-                const data = e.data;
-                for (let i = 0; i < data.length; i++) {
-                  this.buffer[this.writePtr] = data[i];
-                  this.writePtr = (this.writePtr + 1) % this.buffer.length;
-                }
-                this.bufferedCount += data.length;
-                if (this.prebuffering && this.bufferedCount >= this.prebufferThreshold) {
-                  this.prebuffering = false;
-                }
-              };
-            }
-
-            process(inputs, outputs, parameters) {
-              const output = outputs[0];
-              const channel = output[0];
-              const length = channel.length;
-
-              if (this.prebuffering || this.bufferedCount < length) {
-                for (let i = 0; i < length; i++) {
-                  channel[i] = 0;
-                }
-                if (this.bufferedCount < length && !this.prebuffering) {
-                  this.prebuffering = true;
-                }
-              } else {
-                for (let i = 0; i < length; i++) {
-                  channel[i] = this.buffer[this.readPtr];
-                  this.readPtr = (this.readPtr + 1) % this.buffer.length;
-                }
-                this.bufferedCount -= length;
-              }
-              return true;
-            }
-          }
-          registerProcessor('playback-processor', PlaybackProcessor);
-        `;
-        const blob = new Blob([code], { type: "application/javascript" });
-        const url = URL.createObjectURL(blob);
-        this.ctx.audioWorklet.addModule(url).then(() => {
-          URL.revokeObjectURL(url);
-          if (this.ctx) {
-            this.workletNode = new AudioWorkletNode(this.ctx, 'playback-processor');
-            this.workletNode.connect(this.ctx.destination);
-            this.useWorklet = true;
-          }
-        }).catch((err) => {
-          console.warn("Could not load playback audio worklet, falling back", err);
-          this.useWorklet = false;
-        });
-      }
     }
     if (this.ctx.state === "suspended") {
       this.ctx.resume();
@@ -145,37 +72,30 @@ class AudioStreamPlayer {
     this.init();
     if (!this.ctx) return;
 
-    if (this.useWorklet && this.workletNode) {
-      this.workletNode.port.postMessage(float32Data);
-    } else {
-      const audioBuffer = this.ctx.createBuffer(1, float32Data.length, this.sampleRate);
-      audioBuffer.getChannelData(0).set(float32Data);
+    const audioBuffer = this.ctx.createBuffer(1, float32Data.length, this.sampleRate);
+    audioBuffer.getChannelData(0).set(float32Data);
 
-      const source = this.ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.ctx.destination);
+    const source = this.ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.ctx.destination);
 
-      const currentTime = this.ctx.currentTime;
-      if (this.nextPlayTime < currentTime) {
-        this.nextPlayTime = currentTime + 0.03;
-      }
-
-      source.start(this.nextPlayTime);
-      this.activeSources.push(source);
-
-      const duration = audioBuffer.duration;
-      source.onended = () => {
-        this.activeSources = this.activeSources.filter((s) => s !== source);
-      };
-
-      this.nextPlayTime += duration;
+    const currentTime = this.ctx.currentTime;
+    if (this.nextPlayTime < currentTime) {
+      this.nextPlayTime = currentTime + 0.03;
     }
+
+    source.start(this.nextPlayTime);
+    this.activeSources.push(source);
+
+    const duration = audioBuffer.duration;
+    source.onended = () => {
+      this.activeSources = this.activeSources.filter((s) => s !== source);
+    };
+
+    this.nextPlayTime += duration;
   }
 
   stop() {
-    if (this.workletNode) {
-      this.workletNode.port.postMessage("clear");
-    }
     this.activeSources.forEach((source) => {
       try {
         source.stop();
@@ -501,7 +421,7 @@ export function useLiveVoice({
   }, [stopMicrophone]);
 
   const start = useCallback(async () => {
-    if (state === "connecting" || state === "live" || state === "thinking") return;
+    if (state === "connecting" || state === "live" || state === "thinking" || state === "working") return;
     if (!navigator.mediaDevices?.getUserMedia || typeof window.AudioContext === "undefined") {
       setState("error");
       setMessage("This browser cannot open live microphone audio.");

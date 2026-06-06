@@ -75,6 +75,12 @@ export type ActionEntry = {
   workdir?: string;
 };
 
+export type ConsoleState = {
+  actions: ActionEntry[];
+  handoffs: Handoff[];
+  debugEntries: DebugEntry[];
+};
+
 export type PendingAction = {
   text: string;
   project: Project;

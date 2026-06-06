@@ -135,3 +135,44 @@ class ChatStore:
             rows = json.loads(self.path.read_text(encoding="utf-8"))
             rows = [row for row in rows if row.get("projectId") != project_id]
             self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+
+
+class ConsoleStore:
+    """Stores per-chat console state shown in the right panel."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.lock = Lock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.write_text("{}", encoding="utf-8")
+
+    def get(self, chat_id: str) -> dict[str, Any]:
+        with self.lock:
+            rows = json.loads(self.path.read_text(encoding="utf-8"))
+        return rows.get(chat_id, {"actions": [], "handoffs": [], "debugEntries": []})
+
+    def put(self, chat_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        clean = {
+            "actions": list(state.get("actions") or [])[:16],
+            "handoffs": list(state.get("handoffs") or [])[:12],
+            "debugEntries": list(state.get("debugEntries") or [])[:40],
+        }
+        with self.lock:
+            rows = json.loads(self.path.read_text(encoding="utf-8"))
+            rows[chat_id] = clean
+            self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        return clean
+
+    def clear(self, chat_id: str) -> None:
+        with self.lock:
+            rows = json.loads(self.path.read_text(encoding="utf-8"))
+            rows.pop(chat_id, None)
+            self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+
+    def clear_for_project(self, chat_ids: list[str]) -> None:
+        with self.lock:
+            rows = json.loads(self.path.read_text(encoding="utf-8"))
+            for chat_id in chat_ids:
+                rows.pop(chat_id, None)
+            self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")

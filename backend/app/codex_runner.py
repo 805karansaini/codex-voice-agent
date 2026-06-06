@@ -110,7 +110,10 @@ async def run_codex_stream(prompt: str, workdir: str, settings: Settings, cancel
                 break
             yield item
     finally:
-        await future
+        if cancel_token:
+            cancel_token.cancel()
+        if future.done():
+            await future
 
 
 def summarize_progress(accumulated_text: str) -> str:
@@ -202,4 +205,3 @@ async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Setti
         timer_task.cancel()
         reader_task.cancel()
         await asyncio.gather(reader_task, timer_task, return_exceptions=True)
-
