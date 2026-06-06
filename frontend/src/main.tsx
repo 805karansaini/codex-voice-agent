@@ -241,6 +241,8 @@ function useLiveVoice({
   const [message, setMessage] = useState("Gemini Live voice is ready.");
   const [userPreview, setUserPreview] = useState("");
   const [assistantPreview, setAssistantPreview] = useState("");
+  const [muted, setMuted] = useState(false);
+  const mutedRef = useRef(false);
   const websocketRef = useRef<WebSocket | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -257,6 +259,15 @@ function useLiveVoice({
   }, [onTurn, onAudio, onDebug, onHandoff, getWorkdir, getProjectId, getChatId]);
 
   const log = useCallback((text: string) => cbRef.current.onDebug(text), []);
+
+  const toggleMute = useCallback(() => {
+    setMuted((m) => {
+      const next = !m;
+      mutedRef.current = next;
+      log(next ? "Microphone muted — Gemini will not be interrupted by background audio." : "Microphone unmuted.");
+      return next;
+    });
+  }, [log]);
 
   const stopMicrophone = useCallback(async () => {
     processorRef.current?.disconnect();
@@ -360,6 +371,8 @@ function useLiveVoice({
 
   const stop = useCallback(async () => {
     manuallyStoppedRef.current = true;
+    setMuted(false);
+    mutedRef.current = false;
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -386,6 +399,8 @@ function useLiveVoice({
     setAssistantPreview("");
     manuallyStoppedRef.current = false;
     usedCodexRef.current = false;
+    setMuted(false);
+    mutedRef.current = false;
     bufferedAudioRef.current = [];
 
     try {
@@ -403,6 +418,7 @@ function useLiveVoice({
       connectSocket();
 
       processor.onaudioprocess = (event) => {
+        if (mutedRef.current) return;
         const input = event.inputBuffer.getChannelData(0);
         const payload = JSON.stringify({
           type: "audio",
@@ -443,6 +459,8 @@ function useLiveVoice({
     state,
     message,
     transcriptPreview: userPreview || assistantPreview,
+    muted,
+    toggleMute,
     start,
     stop,
   };
@@ -751,7 +769,43 @@ function App() {
   const [showAdd, setShowAdd] = useState(false);
   const [railOpen, setRailOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [panelTab, setPanelTab] = useState<"actions" | "handoffs" | "debug" | "voice">("actions");
+  const [railWidth, setRailWidth] = useState(() => loadJSON<number>("cva.railWidth.v1", 288));
+  const [panelWidth, setPanelWidth] = useState(() => loadJSON<number>("cva.panelWidth.v1", 420));
+  const [isDragging, setIsDragging] = useState(false);
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
+
+  const startRailDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(200, Math.min(450, moveEvent.clientX));
+      setRailWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  const startPanelDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(300, Math.min(650, window.innerWidth - moveEvent.clientX));
+      setPanelWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }, []);
 
   const streamRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -773,6 +827,8 @@ function App() {
     saveJSON(LS_THEME, theme);
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+  useEffect(() => saveJSON("cva.railWidth.v1", railWidth), [railWidth]);
+  useEffect(() => saveJSON("cva.panelWidth.v1", panelWidth), [panelWidth]);
 
   /* chats (conversations inside a project) */
   const persistChat = useCallback((chat: Chat) => {
@@ -1284,7 +1340,15 @@ function App() {
       : ["How many files are in this project?", "What changed in the last commit?", "Pull the latest from git", "Explain the project structure"];
 
   return (
-    <div className="app" data-rail={railOpen ? "open" : "closed"} data-panel={panelOpen ? "open" : "closed"}>
+    <div 
+      className={`app ${isDragging ? "dragging" : ""}`} 
+      data-rail={railOpen ? "open" : "closed"} 
+      data-panel={panelOpen ? "open" : "closed"}
+      style={{
+        ["--rail-w" as any]: railOpen ? `${railWidth}px` : "0px",
+        ["--panel-w" as any]: panelOpen ? `${panelWidth}px` : "0px",
+      }}
+    >
       {/* ---------------- Projects rail ---------------- */}
       {railOpen && (
         <aside className="rail">
@@ -1415,6 +1479,14 @@ function App() {
         </button>
       )}
 
+      {/* Left Resizer handle */}
+      {railOpen && (
+        <div 
+          className="resizer left-resizer" 
+          onMouseDown={startRailDrag}
+        />
+      )}
+
       {/* ---------------- Chat column ---------------- */}
       <section className="chat">
         <header className="topbar">
@@ -1422,28 +1494,46 @@ function App() {
             <button className="collapseBtn" type="button" onClick={() => setRailOpen((v) => !v)} aria-label="Toggle projects">
               <CaretLeft size={16} weight="bold" style={{ transform: railOpen ? "none" : "rotate(180deg)" }} />
             </button>
-            <div className="projTitle">
-              <h2>{active ? active.name : "Codex Voice Agent"}</h2>
-              <div className="crumbs">
-                {active ? (
-                  <>
-                    {activeChat && (
-                      <span className="pill chat"><ChatText size={13} weight="bold" />{activeChat.title}</span>
-                    )}
-                    <span className="pill cwd"><Terminal size={13} weight="bold" />{active.path}</span>
-                    {projectInfo?.branch && (
-                      <span className="pill git"><GitBranch size={13} weight="bold" />{projectInfo.branch}</span>
-                    )}
-                    {projectInfo && !projectInfo.exists && (
-                      <span className="pill danger"><Plugs size={13} weight="bold" />folder missing</span>
-                    )}
-                  </>
-                ) : (
-                  <span className="pill">Select or create a project to begin</span>
-                )}
+            {activeChat && (
+              <div className="topbarChatGroup">
+                <span className="topbarChatLabel" title={`Current Chat: ${activeChat.title}`}>
+                  <ChatText size={14} weight="bold" />
+                  <span className="chatTitleText">{activeChat.title}</span>
+                </span>
               </div>
-            </div>
+            )}
           </div>
+
+          <div className="topbarCenter">
+            {active ? (
+              <div className="workspaceDashboard">
+                <span className="dbProject">
+                  <span className="dbProjectGlyph" style={{ background: active.color }}>{glyphFor(active.name)}</span>
+                  <span className="dbProjectName">{active.name}</span>
+                </span>
+                <span className="dbDivider">/</span>
+                <span className="dbPill dbBranch" title={`Git Branch: ${projectInfo?.branch || "No branch"}`}>
+                  <GitBranch size={13} weight="bold" />
+                  <span>{projectInfo?.branch || (projectInfo?.is_git ? "detached" : "no git")}</span>
+                </span>
+                {projectInfo && !projectInfo.exists && (
+                  <span className="dbPill dbDanger" title="Directory is missing from filesystem!">
+                    <Plugs size={13} weight="bold" />
+                    <span>Missing</span>
+                  </span>
+                )}
+                <span className="dbPill dbMessages" title={`${messages.length} messages in chat`}>
+                  <ChatText size={13} weight="bold" />
+                  <span>{messages.length} msgs</span>
+                </span>
+              </div>
+            ) : (
+              <div className="workspaceDashboard empty">
+                <span>Select or create a project to begin</span>
+              </div>
+            )}
+          </div>
+
           <div className="topbarRight">
             <div className="modeToggle" role="tablist" aria-label="Mode">
               <button className={mode === "agent" ? "active" : ""} onClick={() => setMode("agent")} type="button">
@@ -1523,7 +1613,7 @@ function App() {
           {voiceActive && (
             <div className="liveBanner">
               <div className={`liveCard ${liveVoice.state === "error" ? "error" : ""}`}>
-                <div className="equalizer">
+                <div className={`equalizer ${liveVoice.muted ? "paused" : ""}`}>
                   <span className="bars"><i /><i /><i /><i /></span>
                 </div>
                 <div className="liveBody">
@@ -1531,6 +1621,15 @@ function App() {
                   <p className="liveMsg">{liveVoice.message}</p>
                   {liveVoice.transcriptPreview && <p className="livePreview">{liveVoice.transcriptPreview}</p>}
                 </div>
+                <button 
+                  className={`muteLive ${liveVoice.muted ? "muted" : ""}`} 
+                  type="button" 
+                  onClick={liveVoice.toggleMute}
+                  title={liveVoice.muted ? "Unmute microphone" : "Mute microphone"}
+                >
+                  {liveVoice.muted ? <MicrophoneSlash size={16} weight="bold" /> : <Microphone size={16} weight="bold" />}
+                  <span>{liveVoice.muted ? "Unmute" : "Mute"}</span>
+                </button>
                 <button className="endLive" type="button" onClick={toggleVoice}>
                   <MicrophoneSlash size={16} weight="bold" /> End
                 </button>
@@ -1601,152 +1700,199 @@ function App() {
         </div>
       </section>
 
-      {/* ---------------- Context panel ---------------- */}
+      {/* Right Resizer handle */}
+      {panelOpen && (
+        <div 
+          className="resizer right-resizer" 
+          onMouseDown={startPanelDrag}
+        />
+      )}
+
+      {/* ---------------- Console panel ---------------- */}
       {panelOpen && (
         <aside className="panel">
           <div className="panelHead">
-            <h3>Context</h3>
-            <button className="ghostBtn" type="button" onClick={clearThread} aria-label="Clear conversation" disabled={!active}>
+            <h3>Console</h3>
+            <button className="ghostBtn" type="button" onClick={clearThread} aria-label="Clear conversation" disabled={!active} title="Clear history & logs">
               <Broom size={15} weight="bold" />
             </button>
           </div>
-          <div className="panelScroll">
-            <section className="card">
-              <div className="cardHead">
-                <FolderOpen size={15} weight="bold" />
-                <span className="t">Workspace</span>
-              </div>
-              <div className="cardBody">
-                <div className="kv">
-                  <div className="row"><span className="k">Project</span><span className="v">{active?.name || "—"}</span></div>
-                  <div className="row"><span className="k">Working dir</span><span className="v accent">{active?.path || "—"}</span></div>
-                  <div className="row"><span className="k">Branch</span><span className="v amber">{active ? (projectInfo?.branch || (projectInfo?.is_git ? "detached" : "no git")) : "—"}</span></div>
-                  <div className="row"><span className="k">Files</span><span className="v">{active ? (projectInfo?.file_count ?? "—") : "—"}</span></div>
-                  <div className="row"><span className="k">Model</span><span className="v">{model}</span></div>
-                  <div className="row"><span className="k">Messages</span><span className="v">{messages.length}</span></div>
+
+          {/* Tabs Navigation */}
+          <div className="panelTabs">
+            <button 
+              className={`panelTabBtn ${panelTab === "actions" ? "active" : ""}`}
+              onClick={() => setPanelTab("actions")}
+            >
+              <Cpu size={14} weight="bold" />
+              <span>Actions</span>
+              {actions.length > 0 && <span className="tabBadge">{actions.length}</span>}
+            </button>
+            <button 
+              className={`panelTabBtn ${panelTab === "handoffs" ? "active" : ""}`}
+              onClick={() => setPanelTab("handoffs")}
+            >
+              <BracketsCurly size={14} weight="bold" />
+              <span>Handoffs</span>
+              {handoffs.length > 0 && <span className="tabBadge">{handoffs.length}</span>}
+            </button>
+            <button 
+              className={`panelTabBtn ${panelTab === "debug" ? "active" : ""}`}
+              onClick={() => setPanelTab("debug")}
+            >
+              <Terminal size={14} weight="bold" />
+              <span>Debug</span>
+            </button>
+            <button 
+              className={`panelTabBtn ${panelTab === "voice" ? "active" : ""}`}
+              onClick={() => setPanelTab("voice")}
+            >
+              <SpeakerHigh size={14} weight="bold" />
+              <span>Voice</span>
+            </button>
+          </div>
+
+          <div className="panelContent">
+            {panelTab === "actions" && (
+              <div className="tabContentScroll">
+                <div className="contentSectionHeader">
+                  <h4>Action Log</h4>
+                  <p>Real-time status of local tasks executed by Codex</p>
                 </div>
-              </div>
-            </section>
-
-            <section className="card">
-              <div className="cardHead">
-                <Lightning size={15} weight="fill" />
-                <span className="t">Quick actions</span>
-              </div>
-              <div className="cardBody">
-                <div className="quickGrid">
-                  <button className="quickAct" type="button" disabled={!active || busy} onClick={() => send("List the files in this directory")}>
-                    <FileMagnifyingGlass size={15} weight="bold" /> List files
-                  </button>
-                  <button className="quickAct amber" type="button" disabled={!active || busy} onClick={() => send("Show the current git status")}>
-                    <GitBranch size={15} weight="bold" /> Git status
-                  </button>
-                  <button className="quickAct amber" type="button" disabled={!active || busy} onClick={() => send("Pull the latest changes from git")}>
-                    <GitBranch size={15} weight="bold" /> Git pull
-                  </button>
-                  <button className="quickAct" type="button" disabled={!active || busy} onClick={() => send("Summarize what this project does")}>
-                    <Cpu size={15} weight="bold" /> Summarize
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <section className="card">
-              <div className="cardHead">
-                <BracketsCurly size={15} weight="bold" />
-                <span className="t">Codex handoffs</span>
-                <span className="x">{handoffs.length}</span>
-              </div>
-              <div className="cardBody">
-                {handoffs.length === 0 ? (
-                  <p style={{ fontSize: 12, color: "var(--text-faint)" }}>No Codex handoffs yet. Tasks that touch files run here.</p>
-                ) : (
-                  handoffs.map((h) => (
-                    <div className="handoff" key={h.id}>
-                      <span className="ic"><Terminal size={14} weight="bold" /></span>
-                      <span className="txt">
-                        <b>{h.name}</b>
-                        <p>{h.summary}</p>
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-
-            <section className="card">
-              <div className="cardHead">
-                <Terminal size={15} weight="bold" />
-                <span className="t">Action log</span>
-                <span className="x">{actions.length}</span>
-              </div>
-              <div className="cardBody">
                 {actions.length === 0 ? (
-                  <p style={{ fontSize: 12, color: "var(--text-faint)" }}>No local actions yet.</p>
+                  <div className="emptyPanelState">
+                    <Cpu size={24} weight="duotone" />
+                    <p>No actions logged yet</p>
+                    <span>When Codex runs command-line operations, they will appear here.</span>
+                  </div>
                 ) : (
                   <div className="actionList">
                     {actions.map((action) => (
                       <div className={`actionItem ${action.status}`} key={action.id}>
-                        <span className="actionStatus">{action.status}</span>
+                        <div className="actionItemHeader">
+                          <span className={`actionStatusBadge ${action.status}`}>{action.status}</span>
+                          <span className="actionItemTime">Active</span>
+                        </div>
                         <div className="actionText">
                           <b>{action.title}</b>
                           <p>{action.detail}</p>
-                          {action.workdir && <code>{action.workdir}</code>}
+                          {action.workdir && (
+                            <div className="actionWorkdir">
+                              <Terminal size={10} />
+                              <code>{action.workdir}</code>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-            </section>
+            )}
 
-            <section className="card">
-              <div className="cardHead">
-                <Plugs size={15} weight="bold" />
-                <span className="t">Live debug</span>
-              </div>
-              <div className="cardBody">
-                <div className="debugLog">
-                  {debugEntries.length === 0 ? (
-                    <p className="empty2">No live voice events yet.</p>
-                  ) : (
-                    debugEntries.map((e) => (
-                      <div className="line" key={e.id}>
-                        <time>{e.time}</time>
-                        <span>{e.message}</span>
-                      </div>
-                    ))
-                  )}
+            {panelTab === "handoffs" && (
+              <div className="tabContentScroll">
+                <div className="contentSectionHeader">
+                  <h4>Codex Handoffs</h4>
+                  <p>Tasks handed over to Codex by the Gemini Agent</p>
                 </div>
-              </div>
-            </section>
-
-            <section className="card">
-              <div className="cardHead">
-                <SpeakerHigh size={15} weight="bold" />
-                <span className="t">Voice output</span>
-              </div>
-              <div className="cardBody">
-                <p className="fieldLabel"><SpeakerHigh size={13} weight="bold" /> Browser fallback voice</p>
-                <select className="select" value={selectedVoiceURI} onChange={(e) => setSelectedVoiceURI(e.target.value)} disabled={voices.length === 0}>
-                  {voices.length === 0 && <option value="">Browser default</option>}
-                  {voices.map((v) => (
-                    <option value={v.voiceURI} key={v.voiceURI}>{v.name} ({v.lang})</option>
-                  ))}
-                </select>
-                {pendingAudioUrl && (
-                  <button className="playResponse" type="button" onClick={() => playResponseAudio(pendingAudioUrl)}>
-                    <SpeakerHigh size={16} weight="bold" /> Play response
-                  </button>
+                {handoffs.length === 0 ? (
+                  <div className="emptyPanelState">
+                    <BracketsCurly size={24} weight="duotone" />
+                    <p>No handoffs yet</p>
+                    <span>Tasks that require reading or writing files are delegated to Codex.</span>
+                  </div>
+                ) : (
+                  <div className="handoffList">
+                    {handoffs.map((h) => (
+                      <div className="handoffItem" key={h.id}>
+                        <div className="handoffIcon">
+                          <Terminal size={14} weight="bold" />
+                        </div>
+                        <div className="handoffText">
+                          <b>{h.name}</b>
+                          <p>{h.summary}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-            </section>
+            )}
+
+            {panelTab === "debug" && (
+              <div className="tabContentScroll debugTab">
+                <div className="contentSectionHeader">
+                  <h4>Live Debug Stream</h4>
+                  <p>Low-level websocket events and session logs</p>
+                </div>
+                {debugEntries.length === 0 ? (
+                  <div className="emptyPanelState">
+                    <Terminal size={24} weight="duotone" />
+                    <p>No debug events</p>
+                    <span>Go live with voice or send messages to see events.</span>
+                  </div>
+                ) : (
+                  <div className="terminalLog">
+                    {debugEntries.map((e) => (
+                      <div className="logLine" key={e.id}>
+                        <span className="logTime">[{e.time}]</span>
+                        <span className="logMessage">{e.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {panelTab === "voice" && (
+              <div className="tabContentScroll voiceTab">
+                <div className="contentSectionHeader">
+                  <h4>Voice Output Settings</h4>
+                  <p>Configure text-to-speech fallback and audio controls</p>
+                </div>
+                <div className="voiceSettingsCard">
+                  <label className="settingsLabel">
+                    <SpeakerHigh size={14} /> Fallback Voice Synthesis
+                  </label>
+                  <select 
+                    className="select" 
+                    value={selectedVoiceURI} 
+                    onChange={(e) => setSelectedVoiceURI(e.target.value)} 
+                    disabled={voices.length === 0}
+                  >
+                    {voices.length === 0 && <option value="">Browser default</option>}
+                    {voices.map((v) => (
+                      <option value={v.voiceURI} key={v.voiceURI}>{v.name} ({v.lang})</option>
+                    ))}
+                  </select>
+                  <p className="settingsHint">
+                    When Gemini doesn't output live audio stream, the browser will use this text-to-speech engine.
+                  </p>
+                </div>
+
+                {pendingAudioUrl && (
+                  <div className="audioReadyBanner">
+                    <div className="audioReadyIcon">
+                      <SpeakerHigh size={20} weight="fill" />
+                    </div>
+                    <div className="audioReadyBody">
+                      <h5>Audio Response Ready</h5>
+                      <p>Your browser blocked autoplay. Tap below to play the response.</p>
+                      <button className="playResponseBtn" type="button" onClick={() => playResponseAudio(pendingAudioUrl)}>
+                        Play Response
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </aside>
       )}
 
       {!panelOpen && (
-        <button className="reopen right" type="button" onClick={() => setPanelOpen(true)} aria-label="Show context">
+        <button className="reopen right" type="button" onClick={() => setPanelOpen(true)} aria-label="Show console">
           <CaretLeft size={15} weight="bold" />
         </button>
       )}
