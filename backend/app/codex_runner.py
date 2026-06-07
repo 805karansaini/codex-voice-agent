@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
+from threading import Lock
 
 from .settings import Settings
 
@@ -49,8 +50,108 @@ def _codex_modes(settings: Settings):
     return approval_mode, sandbox
 
 
-def _run_codex_sync(prompt: str, workdir: str, settings: Settings) -> CodexRun:
+@dataclass
+class _ThreadSession:
+    codex: object
+    thread: object
+    workdir: str
+    approval_mode: object
+    sandbox: object
+    lock: Lock
+
+
+_sessions: dict[str, _ThreadSession] = {}
+_sessions_lock = Lock()
+
+
+def _session_key(conversation_id: str) -> str:
+    return f"chat:{conversation_id}"
+
+
+def _close_session(session: _ThreadSession) -> None:
+    with session.lock:
+        try:
+            session.codex.__exit__(None, None, None)
+        except Exception:
+            pass
+
+
+def _get_thread_session(workdir: str, settings: Settings, conversation_id: str | None = None) -> _ThreadSession:
     from openai_codex import Codex, CodexConfig
+
+    if not conversation_id:
+        raise ValueError("conversation_id is required for reusable Codex sessions")
+
+    root = resolve_workdir(workdir)
+    approval_mode, sandbox = _codex_modes(settings)
+    key = _session_key(conversation_id)
+    old_session = None
+    with _sessions_lock:
+        session = _sessions.get(key)
+        if (
+            session
+            and session.workdir == str(root)
+            and session.approval_mode == approval_mode
+            and session.sandbox == sandbox
+        ):
+            return session
+
+        if session:
+            old_session = _sessions.pop(key, None)
+
+    if old_session:
+        _close_session(old_session)
+
+    codex = Codex(CodexConfig(cwd=str(root)))
+    codex.__enter__()
+    thread = codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root))
+    session = _ThreadSession(
+        codex=codex,
+        thread=thread,
+        workdir=str(root),
+        approval_mode=approval_mode,
+        sandbox=sandbox,
+        lock=Lock(),
+    )
+    with _sessions_lock:
+        current = _sessions.get(key)
+        if current is not None:
+            _close_session(session)
+            return current
+        _sessions[key] = session
+        return session
+
+
+def close_codex_thread_session(conversation_id: str | None) -> None:
+    if not conversation_id:
+        return
+    with _sessions_lock:
+        session = _sessions.pop(_session_key(conversation_id), None)
+    if session:
+        _close_session(session)
+
+
+def close_codex_thread_sessions_for(conversation_ids: list[str]) -> None:
+    for conversation_id in conversation_ids:
+        close_codex_thread_session(conversation_id)
+
+
+def close_codex_thread_sessions() -> None:
+    with _sessions_lock:
+        sessions = list(_sessions.values())
+        _sessions.clear()
+    for session in sessions:
+        _close_session(session)
+
+
+def _run_codex_sync(prompt: str, workdir: str, settings: Settings, conversation_id: str | None = None) -> CodexRun:
+    from openai_codex import Codex, CodexConfig
+
+    if conversation_id:
+        session = _get_thread_session(workdir, settings, conversation_id)
+        with session.lock:
+            result = session.thread.run(prompt)
+            return CodexRun(final_response=result.final_response or "", workdir=session.workdir)
 
     root = resolve_workdir(workdir)
     approval_mode, sandbox = _codex_modes(settings)
@@ -60,18 +161,23 @@ def _run_codex_sync(prompt: str, workdir: str, settings: Settings) -> CodexRun:
         return CodexRun(final_response=result.final_response or "", workdir=str(root))
 
 
-async def run_codex(prompt: str, workdir: str, settings: Settings) -> CodexRun:
-    return await asyncio.to_thread(_run_codex_sync, prompt, workdir, settings)
+async def run_codex(prompt: str, workdir: str, settings: Settings, conversation_id: str | None = None) -> CodexRun:
+    return await asyncio.to_thread(_run_codex_sync, prompt, workdir, settings, conversation_id)
 
 
-async def run_codex_stream(prompt: str, workdir: str, settings: Settings, cancel_token: CancellationToken = None) -> AsyncIterator[dict]:
+async def run_codex_stream(
+    prompt: str,
+    workdir: str,
+    settings: Settings,
+    cancel_token: CancellationToken = None,
+    conversation_id: str | None = None,
+) -> AsyncIterator[dict]:
     """Stream a Codex turn, yielding incremental events.
 
     Events: {"type":"delta","text":str}, then {"type":"done","text":str,"workdir":str},
     or {"type":"error","message":str}. The blocking SDK stream is pumped from a worker
     thread into an asyncio queue so the response text reaches the client as it is produced.
     """
-    from openai_codex import Codex, CodexConfig
     from openai_codex.generated.v2_all import AgentMessageDeltaNotification
 
     loop = asyncio.get_running_loop()
@@ -79,12 +185,28 @@ async def run_codex_stream(prompt: str, workdir: str, settings: Settings, cancel
     sentinel = object()
 
     def worker() -> None:
+        codex_context = None
         try:
-            root = resolve_workdir(workdir)
-            approval_mode, sandbox = _codex_modes(settings)
             parts: list[str] = []
-            with Codex(CodexConfig(cwd=str(root))) as codex:
+            if conversation_id:
+                session = _get_thread_session(workdir, settings, conversation_id)
+                workdir_for_result = session.workdir
+                lock = session.lock
+                thread = session.thread
+            else:
+                from contextlib import ExitStack
+                from openai_codex import Codex, CodexConfig
+
+                stack = ExitStack()
+                root = resolve_workdir(workdir)
+                approval_mode, sandbox = _codex_modes(settings)
+                codex = stack.enter_context(Codex(CodexConfig(cwd=str(root))))
+                workdir_for_result = str(root)
+                lock = Lock()
                 thread = codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root))
+                codex_context = stack
+
+            with lock:
                 turn = thread.turn(prompt)
                 for event in turn.stream():
                     if cancel_token and cancel_token.is_cancelled:
@@ -96,10 +218,12 @@ async def run_codex_stream(prompt: str, workdir: str, settings: Settings, cancel
                         loop.call_soon_threadsafe(queue.put_nowait, {"type": "delta", "text": payload.delta})
             final = "".join(parts).strip() or "Done."
             if not (cancel_token and cancel_token.is_cancelled):
-                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "text": final, "workdir": str(root)})
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "text": final, "workdir": workdir_for_result})
         except Exception as exc:  # surfaced to the client as an error event
             loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(exc)})
         finally:
+            if codex_context:
+                codex_context.close()
             loop.call_soon_threadsafe(queue.put_nowait, sentinel)
 
     future = loop.run_in_executor(None, worker)
@@ -133,7 +257,13 @@ def summarize_progress(accumulated_text: str) -> str:
     return "Codex is still working on the task"
 
 
-async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Settings, cancel_token: CancellationToken = None) -> AsyncIterator[dict]:
+async def run_codex_stream_with_timer(
+    prompt: str,
+    workdir: str,
+    settings: Settings,
+    cancel_token: CancellationToken = None,
+    conversation_id: str | None = None,
+) -> AsyncIterator[dict]:
     """Stream a Codex turn with a background timer that emits status events for long-running tasks.
 
     Yields incremental events:
@@ -150,7 +280,7 @@ async def run_codex_stream_with_timer(prompt: str, workdir: str, settings: Setti
     async def stream_reader():
         nonlocal done
         try:
-            async for event in run_codex_stream(prompt, workdir, settings, cancel_token):
+            async for event in run_codex_stream(prompt, workdir, settings, cancel_token, conversation_id):
                 if event.get("type") == "delta":
                     accumulated_parts.append(event.get("text", ""))
                 await queue.put(event)

@@ -13,9 +13,18 @@ from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
-from .codex_runner import resolve_workdir, run_codex, run_codex_stream, run_codex_stream_with_timer, CancellationToken
+from .codex_runner import (
+    CancellationToken,
+    close_codex_thread_session,
+    close_codex_thread_sessions,
+    close_codex_thread_sessions_for,
+    resolve_workdir,
+    run_codex,
+    run_codex_stream_with_timer,
+)
 from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, ask_gemini_stream, live_connect_config, transcribe_audio
 from .history import ChatStore, ConsoleStore, HistoryStore, ProjectStore
+from .prompting import build_recent_conversation_context, improve_codex_task_prompt
 from .settings import get_settings
 
 
@@ -34,6 +43,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("shutdown")
+async def shutdown_codex_sessions() -> None:
+    close_codex_thread_sessions()
+
+
+def _chat_context(chat_id: str | None) -> str:
+    if not chat_id:
+        return ""
+    return build_recent_conversation_context(history.list(chat_id=chat_id))
 
 
 class ChatRequest(BaseModel):
@@ -99,6 +119,11 @@ async def list_history(
 async def clear_history(
     project_id: str | None = None, workdir: str | None = None, chat_id: str | None = None
 ) -> dict[str, object]:
+    if project_id is not None:
+        chat_ids = [str(chat.get("id")) for chat in chats.list(project_id=project_id) if chat.get("id")]
+        close_codex_thread_sessions_for(chat_ids)
+    elif chat_id is not None:
+        close_codex_thread_session(chat_id)
     history.clear(project_id=project_id, workdir=workdir, chat_id=chat_id)
     return {"ok": True}
 
@@ -129,6 +154,7 @@ async def save_project(req: ProjectRequest) -> dict[str, object]:
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str) -> dict[str, object]:
     chat_ids = [str(chat.get("id")) for chat in chats.list(project_id=project_id) if chat.get("id")]
+    close_codex_thread_sessions_for(chat_ids)
     projects.delete(project_id)
     chats.delete_for_project(project_id)
     history.clear(project_id=project_id)
@@ -156,6 +182,7 @@ async def save_chat(req: ChatMetaRequest) -> dict[str, object]:
 
 @app.delete("/api/chats/{chat_id}")
 async def delete_chat(chat_id: str) -> dict[str, object]:
+    close_codex_thread_session(chat_id)
     chats.delete(chat_id)
     history.clear(chat_id=chat_id)
     console.clear(chat_id)
@@ -195,9 +222,16 @@ async def chat(req: ChatRequest) -> dict[str, object]:
         "project_id": req.project_id,
         "chat_id": req.chat_id,
     }
+    conversation_context = _chat_context(req.chat_id)
     history.append("user", text, history_meta)
     try:
-        result = await ask_gemini(text, settings, workdir=req.workdir)
+        result = await ask_gemini(
+            text,
+            settings,
+            workdir=req.workdir,
+            conversation_id=req.chat_id,
+            conversation_context=conversation_context,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     history.append(
@@ -219,6 +253,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     if not text:
         raise HTTPException(status_code=400, detail="Message is required")
     workdir = req.workdir or settings.codex_default_workdir
+    conversation_context = _chat_context(req.chat_id)
     history.append("user", text, {"workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
 
     cancel_token = CancellationToken()
@@ -228,7 +263,14 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         final_workdir = workdir
         final_tool_calls = []
         try:
-            async for event in ask_gemini_stream(text, settings, workdir=req.workdir, cancel_token=cancel_token):
+            async for event in ask_gemini_stream(
+                text,
+                settings,
+                workdir=req.workdir,
+                cancel_token=cancel_token,
+                conversation_id=req.chat_id,
+                conversation_context=conversation_context,
+            ):
                 if event.get("type") == "done":
                     final_text = str(event.get("text") or "")
                     final_workdir = str(event.get("workdir") or workdir)
@@ -282,11 +324,12 @@ async def live_voice(websocket: WebSocket) -> None:
     session_workdir = settings.codex_default_workdir
     session_project_id: str | None = None
     session_chat_id: str | None = None
+    session_conversation_context = ""
     current_task_cancel_token: CancellationToken | None = None
     streamed_audio_this_turn = False
 
     async def send_client_audio(session: object, initial: dict | None = None) -> None:
-        nonlocal session_workdir, session_project_id, session_chat_id, current_task_cancel_token
+        nonlocal session_workdir, session_project_id, session_chat_id, session_conversation_context, current_task_cancel_token
         pending = initial
         while True:
             payload = pending if pending is not None else await websocket.receive_json()
@@ -296,6 +339,7 @@ async def live_voice(websocket: WebSocket) -> None:
                 session_workdir = str(payload.get("workdir") or "").strip() or session_workdir
                 session_project_id = str(payload.get("project_id") or "").strip() or session_project_id
                 session_chat_id = str(payload.get("chat_id") or "").strip() or session_chat_id
+                session_conversation_context = _chat_context(session_chat_id)
                 await websocket.send_json({"type": "debug", "message": f"Active workdir: {session_workdir}"})
             elif event_type == "audio":
                 audio_base64 = str(payload.get("data") or "")
@@ -315,7 +359,7 @@ async def live_voice(websocket: WebSocket) -> None:
                 return
 
     async def receive_gemini(session: object) -> None:
-        nonlocal audio_chunks, input_text_chunks, output_text_chunks, current_task_cancel_token, streamed_audio_this_turn
+        nonlocal audio_chunks, input_text_chunks, output_text_chunks, session_conversation_context, current_task_cancel_token, streamed_audio_this_turn
         while True:
             received_message = False
             async for server_message in session.receive():
@@ -329,13 +373,15 @@ async def live_voice(websocket: WebSocket) -> None:
                     for call in server_message.tool_call.function_calls:
                         args = dict(call.args or {})
                         task = str(args.get("task") or user_text or "Run the requested local task.")
+                        enhanced_task = improve_codex_task_prompt(task)
                         workdir = session_workdir or settings.codex_default_workdir
                         
                         await websocket.send_json(
                             {
                                 "type": "tool_call_started",
                                 "name": call.name,
-                                "task": task,
+                                "task": enhanced_task,
+                                "original_task": task,
                                 "workdir": workdir,
                             }
                         )
@@ -345,7 +391,13 @@ async def live_voice(websocket: WebSocket) -> None:
 
                         final_response = ""
                         resolved_workdir = workdir
-                        async for event in run_codex_stream_with_timer(task, workdir, settings, cancel_token):
+                        async for event in run_codex_stream_with_timer(
+                            enhanced_task,
+                            workdir,
+                            settings,
+                            cancel_token,
+                            session_chat_id,
+                        ):
                             if event.get("type") == "delta":
                                 text_delta = event.get("text", "")
                                 final_response += text_delta
@@ -441,6 +493,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     if user_text:
                         history.append("user", user_text, {"workdir": session_workdir, "project_id": session_project_id, "chat_id": session_chat_id})
                     history.append("assistant", assistant_text, {"workdir": session_workdir, "project_id": session_project_id, "chat_id": session_chat_id})
+                    session_conversation_context = _chat_context(session_chat_id)
                     await websocket.send_json(
                         {
                             "type": "turn_complete",
@@ -466,11 +519,13 @@ async def live_voice(websocket: WebSocket) -> None:
             session_workdir = str(first_payload.get("workdir") or "").strip() or session_workdir
             session_project_id = str(first_payload.get("project_id") or "").strip() or session_project_id
             session_chat_id = str(first_payload.get("chat_id") or "").strip() or session_chat_id
+            session_conversation_context = _chat_context(session_chat_id)
             await websocket.send_json({"type": "debug", "message": f"Active workdir: {session_workdir}"})
             first_payload = None
 
         async with client.aio.live.connect(
-            model=settings.gemini_model, config=live_connect_config(settings, session_workdir)
+            model=settings.gemini_model,
+            config=live_connect_config(settings, session_workdir, session_conversation_context),
         ) as session:
             await websocket.send_json({"type": "debug", "message": "Connected to Gemini Live."})
             send_task = asyncio.create_task(send_client_audio(session, first_payload))
@@ -496,9 +551,10 @@ async def codex(req: CodexRequest) -> dict[str, object]:
     if not task:
         raise HTTPException(status_code=400, detail="Task is required")
     workdir = req.workdir or settings.codex_default_workdir
+    enhanced_task = improve_codex_task_prompt(task)
     history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
     try:
-        result = await run_codex(task, workdir, settings)
+        result = await run_codex(enhanced_task, workdir, settings, req.chat_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     history.append("assistant", result.final_response, {"direct_codex": True, "workdir": result.workdir, "project_id": req.project_id, "chat_id": req.chat_id})
@@ -604,6 +660,7 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
     if not task:
         raise HTTPException(status_code=400, detail="Task is required")
     workdir = req.workdir or settings.codex_default_workdir
+    enhanced_task = improve_codex_task_prompt(task)
     history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
 
     cancel_token = CancellationToken()
@@ -612,7 +669,7 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
         final_text = ""
         final_workdir = workdir
         try:
-            async for event in run_codex_stream_with_timer(task, workdir, settings, cancel_token):
+            async for event in run_codex_stream_with_timer(enhanced_task, workdir, settings, cancel_token, req.chat_id):
                 if event.get("type") == "done":
                     final_text = str(event.get("text") or "")
                     final_workdir = str(event.get("workdir") or workdir)

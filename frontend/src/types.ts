@@ -80,11 +80,3 @@ export type ConsoleState = {
   handoffs: Handoff[];
   debugEntries: DebugEntry[];
 };
-
-export type PendingAction = {
-  text: string;
-  project: Project;
-  chatId: string;
-  mode: "agent" | "codex";
-  reason: string;
-};

@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 
 from .codex_runner import run_codex, run_codex_stream_with_timer, CancellationToken
+from .prompting import improve_codex_task_prompt
 from .settings import Settings
 
 
@@ -25,19 +26,32 @@ Use run_codex_task whenever the user asks you to do work on the local computer o
 For those local-work requests:
 1. Say at most one short acknowledgment before the tool call.
 2. Then immediately call run_codex_task in the same turn.
-3. Put the user's actual request in the task argument.
+3. Put a lightly clarified version of the user's latest request in the task argument. Improve grammar and clarity, but do not add new requirements.
 4. Use the current working directory in the workdir argument when it is available.
 5. Do not claim that you called, will call, are calling, or attempted to call the tool unless you actually emit the run_codex_task tool call.
 6. Do not answer local file, repo, git, build, test, or debug questions from memory or guesswork. Use the tool.
+7. If the user asks for an update, status, follow-up, or says "make those changes", use the recent conversation context to identify what they mean before asking them to repeat it.
+8. Do not paste recent chat history into the run_codex_task task. Codex uses the same session for this chat and already has its own prior Codex turns.
 
 Only answer directly without a tool when the user is making conversation, asking a general conceptual question, or asking for a plan that does not require looking at local files or running anything.
 """
 
 
-def _system_instruction(workdir: str | None = None) -> str:
-    if not workdir:
-        return SYSTEM_INSTRUCTION
-    return f"{SYSTEM_INSTRUCTION}\nThe current working directory for local work is: {workdir}\n"
+def _system_instruction(workdir: str | None = None, conversation_context: str | None = None) -> str:
+    parts = [SYSTEM_INSTRUCTION.strip()]
+    if workdir:
+        parts.append(f"The current working directory for local work is: {workdir}")
+    if conversation_context:
+        parts.append(
+            "\n".join(
+                [
+                    "Recent conversation in this chat:",
+                    conversation_context.strip(),
+                    "Use this chat history to resolve follow-up requests. Do not treat it as file-system truth; use the tool for local work.",
+                ]
+            )
+        )
+    return "\n\n".join(parts) + "\n"
 
 
 def _codex_tool() -> types.Tool:
@@ -49,7 +63,13 @@ def _codex_tool() -> types.Tool:
                 parameters={
                     "type": "object",
                     "properties": {
-                        "task": {"type": "string", "description": "The exact task Codex should perform."},
+                        "task": {
+                            "type": "string",
+                            "description": (
+                                "A lightly rewritten version of the user's latest request for Codex. "
+                                "Fix grammar and clarity only. Do not include chat history or tool-result transcripts."
+                            ),
+                        },
                         "workdir": {
                             "type": "string",
                             "description": "Local folder to work in. Use the configured default if not supplied.",
@@ -77,9 +97,13 @@ def _pcm_to_wav_data_url(audio_chunks: list[bytes], sample_rate: int = 24000) ->
     return f"data:audio/wav;base64,{encoded}"
 
 
-def live_connect_config(settings: Settings, workdir: str | None = None) -> types.LiveConnectConfig:
+def live_connect_config(
+    settings: Settings,
+    workdir: str | None = None,
+    conversation_context: str | None = None,
+) -> types.LiveConnectConfig:
     return types.LiveConnectConfig(
-        system_instruction=_system_instruction(workdir),
+        system_instruction=_system_instruction(workdir, conversation_context),
         response_modalities=[types.Modality.AUDIO],
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -93,13 +117,19 @@ def live_connect_config(settings: Settings, workdir: str | None = None) -> types
     )
 
 
-async def ask_gemini(message: str, settings: Settings, workdir: str | None = None) -> dict[str, Any]:
+async def ask_gemini(
+    message: str,
+    settings: Settings,
+    workdir: str | None = None,
+    conversation_id: str | None = None,
+    conversation_context: str | None = None,
+) -> dict[str, Any]:
     if not settings.google_api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set")
 
     client = genai.Client(api_key=settings.google_api_key)
     session_workdir = workdir or settings.codex_default_workdir
-    config = live_connect_config(settings, session_workdir)
+    config = live_connect_config(settings, session_workdir, conversation_context)
 
     tool_calls = []
     text_chunks: list[str] = []
@@ -118,12 +148,13 @@ async def ask_gemini(message: str, settings: Settings, workdir: str | None = Non
                     for call in server_message.tool_call.function_calls:
                         args = dict(call.args or {})
                         task = str(args.get("task") or message)
+                        enhanced_task = improve_codex_task_prompt(task)
                         chosen_workdir = session_workdir or settings.codex_default_workdir
-                        codex_result = await run_codex(task, chosen_workdir, settings)
+                        codex_result = await run_codex(enhanced_task, chosen_workdir, settings, conversation_id)
                         tool_calls.append(
                             {
                                 "name": call.name,
-                                "args": args,
+                                "args": {**args, "enhanced_task": enhanced_task},
                                 "result": codex_result.final_response,
                                 "workdir": codex_result.workdir,
                             }
@@ -173,14 +204,21 @@ async def ask_gemini(message: str, settings: Settings, workdir: str | None = Non
     }
 
 
-async def ask_gemini_stream(message: str, settings: Settings, workdir: str | None = None, cancel_token: CancellationToken = None) -> AsyncIterator[dict[str, Any]]:
+async def ask_gemini_stream(
+    message: str,
+    settings: Settings,
+    workdir: str | None = None,
+    cancel_token: CancellationToken = None,
+    conversation_id: str | None = None,
+    conversation_context: str | None = None,
+) -> AsyncIterator[dict[str, Any]]:
     if not settings.google_api_key:
         yield {"type": "error", "message": "GOOGLE_API_KEY is not set"}
         return
 
     client = genai.Client(api_key=settings.google_api_key)
     session_workdir = workdir or settings.codex_default_workdir
-    config = live_connect_config(settings, session_workdir)
+    config = live_connect_config(settings, session_workdir, conversation_context)
 
     tool_calls = []
     text_chunks: list[str] = []
@@ -203,16 +241,24 @@ async def ask_gemini_stream(message: str, settings: Settings, workdir: str | Non
                         for call in server_message.tool_call.function_calls:
                             args = dict(call.args or {})
                             task = str(args.get("task") or message)
+                            enhanced_task = improve_codex_task_prompt(task)
                             chosen_workdir = session_workdir or settings.codex_default_workdir
                             yield {
                                 "type": "tool_call",
                                 "name": call.name,
-                                "task": task,
+                                "task": enhanced_task,
+                                "original_task": task,
                                 "workdir": chosen_workdir,
                             }
                             final_response = ""
                             resolved_workdir = chosen_workdir
-                            async for event in run_codex_stream_with_timer(task, chosen_workdir, settings, cancel_token):
+                            async for event in run_codex_stream_with_timer(
+                                enhanced_task,
+                                chosen_workdir,
+                                settings,
+                                cancel_token,
+                                conversation_id,
+                            ):
                                 if event.get("type") == "delta":
                                     text_delta = event.get("text", "")
                                     final_response += text_delta
@@ -239,7 +285,7 @@ async def ask_gemini_stream(message: str, settings: Settings, workdir: str | Non
 
                             tool_call = {
                                 "name": call.name,
-                                "args": args,
+                                "args": {**args, "enhanced_task": enhanced_task},
                                 "result": final_response,
                                 "workdir": resolved_workdir,
                             }

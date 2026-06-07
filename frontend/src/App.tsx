@@ -34,11 +34,10 @@ import {
 import { useProjectStore } from "./hooks/useProjectStore";
 import { useLiveVoice } from "./hooks/useLiveVoice";
 import * as api from "./services/api";
-import { Project, ActionEntry, Handoff, DebugEntry, PendingAction, ProjectInfo } from "./types";
+import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 
 import AddProjectModal from "./components/modals/AddProjectModal";
-import ActionPreviewModal from "./components/modals/ActionPreviewModal";
 import MarkdownRenderer from "./components/common/MarkdownRenderer";
 
 const SILENT_WAV =
@@ -56,19 +55,6 @@ const PREFERRED_VOICE_NAMES = [
   "Zira",
 ];
 
-function riskyActionReason(text: string): string {
-  const lower = text.toLowerCase();
-  if (
-    /\b(git\s+pull|git\s+push|git\s+merge|git\s+rebase|git\s+reset|git\s+checkout|commit|delete|remove|rm\s+-|install|npm\s+i|npm\s+install|pip\s+install|uv\s+add|write|edit|modify)\b/.test(
-      lower
-    ) ||
-    /\b(pull|push|merge|rebase|reset|checkout)\b.*\bgit\b/.test(lower) ||
-    /\bgit\b.*\b(pull|push|merge|rebase|reset|checkout)\b/.test(lower)
-  ) {
-    return "This may change files, dependencies, or git state in the selected folder.";
-  }
-  return "";
-}
 
 async function readSseStream(res: Response, onEvent: (evt: any) => void) {
   if (!res.body) return;
@@ -109,7 +95,6 @@ export function App() {
   const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
   const [handoffs, setHandoffs] = useState<Handoff[]>([]);
   const [actions, setActions] = useState<ActionEntry[]>([]);
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
   const [showAdd, setShowAdd] = useState(false);
   const [railOpen, setRailOpen] = useState(true);
@@ -132,6 +117,7 @@ export function App() {
   const consoleLoadedChatRef = useRef("");
   const consoleSaveTimerRef = useRef<number | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Resize drags
   const startRailDrag = useCallback((e: React.MouseEvent) => {
@@ -801,7 +787,7 @@ export function App() {
   );
 
   const send = useCallback(
-    async (raw?: string, skipPreview = false, projectOverride?: Project, chatOverride?: string) => {
+    async (raw?: string, projectOverride?: Project, chatOverride?: string) => {
       const text = (raw ?? input).trim();
       const project = projectOverride || store.activeProject;
       if (!text || busy || !project) return;
@@ -813,13 +799,10 @@ export function App() {
         createdChatForSend = true;
       }
 
-      const risk = riskyActionReason(text);
-      if (risk && !skipPreview) {
-        setPendingAction({ text, project, chatId, mode, reason: risk });
-        return;
-      }
-
       setInput("");
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+      }
       setError("");
       setBusy(true);
 
@@ -1562,6 +1545,7 @@ export function App() {
 
               <div className="rounded-lg border border-line bg-surface-1 ring-accent-focus transition-all overflow-hidden">
                 <textarea
+                  ref={textareaRef}
                   value={input}
                   onChange={onComposerInput}
                   onKeyDown={(e) => {
@@ -1864,18 +1848,6 @@ export function App() {
         />
       )}
 
-      {pendingAction && (
-        <ActionPreviewModal
-          action={pendingAction}
-          onCancel={() => setPendingAction(null)}
-          onRun={() => {
-            const action = pendingAction;
-            setPendingAction(null);
-            primeAudioPlayback();
-            void send(action.text, true, action.project, action.chatId);
-          }}
-        />
-      )}
     </div>
   );
 }
