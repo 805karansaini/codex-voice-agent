@@ -532,6 +532,7 @@ async def live_voice(websocket: WebSocket) -> None:
     last_codex_turn_id: str | None = None
     last_codex_thread_id: str | None = None
     last_codex_status: str | None = None
+    last_artifacts: list[dict[str, object]] = []
     active_turn_gen = None
 
     async def send_client_audio(session: object, initial: dict | None = None) -> None:
@@ -577,7 +578,7 @@ async def live_voice(websocket: WebSocket) -> None:
 
     async def receive_gemini(session: object) -> None:
         nonlocal audio_chunks, input_text_chunks, output_text_chunks, session_conversation_context, current_task_cancel_token, streamed_audio_this_turn
-        nonlocal last_codex_events, last_codex_turn_id, last_codex_thread_id, last_codex_status
+        nonlocal last_codex_events, last_codex_turn_id, last_codex_thread_id, last_codex_status, last_artifacts
         nonlocal active_turn_gen
 
         # One Langfuse generation per voice turn. Created lazily when the turn
@@ -721,6 +722,16 @@ async def live_voice(websocket: WebSocket) -> None:
                         last_codex_turn_id = codex_turn_id
                         last_codex_thread_id = codex_thread_id
                         last_codex_status = codex_status
+                        artifact = _create_tool_artifact(
+                            chat_id=session_chat_id,
+                            message_id=None,
+                            title=f"{call.name or 'Codex'} output",
+                            content=final_response,
+                            source=str(call.name or "run_codex_task"),
+                            workdir=resolved_workdir,
+                        )
+                        if artifact:
+                            last_artifacts.append(artifact)
 
                         responses.append(
                             types.FunctionResponse(
@@ -735,14 +746,7 @@ async def live_voice(websocket: WebSocket) -> None:
                                 "name": call.name,
                                 "result": final_response,
                                 "workdir": resolved_workdir,
-                                "artifact": _create_tool_artifact(
-                                    chat_id=session_chat_id,
-                                    message_id=None,
-                                    title=f"{call.name or 'Codex'} output",
-                                    content=final_response,
-                                    source=str(call.name or "run_codex_task"),
-                                    workdir=resolved_workdir,
-                                ),
+                                "artifact": artifact,
                                 "codex_events": codex_events[-200:],
                                 "codex_turn_id": codex_turn_id,
                                 "codex_thread_id": codex_thread_id,
@@ -789,6 +793,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     input_text_chunks = []
                     output_text_chunks = []
                     streamed_audio_this_turn = False
+                    last_artifacts = []
                     await websocket.send_json({"type": "interrupted"})
 
                 if content.input_transcription and content.input_transcription.text:
@@ -857,6 +862,7 @@ async def live_voice(websocket: WebSocket) -> None:
                             "codex_turn_id": last_codex_turn_id,
                             "codex_thread_id": last_codex_thread_id,
                             "codex_status": last_codex_status,
+                            "artifacts": last_artifacts,
                         },
                     )
                     session_conversation_context = _chat_context(session_chat_id)
@@ -877,6 +883,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     last_codex_turn_id = None
                     last_codex_thread_id = None
                     last_codex_status = None
+                    last_artifacts = []
             if received_message:
                 live_log.write("gemini.receive_waiting", chat_id=session_chat_id)
                 await websocket.send_json({"type": "debug", "message": "Gemini receive loop is waiting for the next turn."})
