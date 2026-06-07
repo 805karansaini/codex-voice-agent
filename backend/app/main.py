@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -24,7 +25,8 @@ from .codex_runner import (
     run_codex_stream_with_timer,
 )
 from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, ask_gemini_stream, live_connect_config, transcribe_audio
-from .history import ChatStore, ConsoleStore, HistoryStore, ProjectStore
+from .history import ArtifactStore, ChatStore, ConsoleStore, HistoryStore, ProjectStore
+from .live_logging import JsonlEventLogger, LiveSessionLogger, clip_text
 from .prompting import build_recent_conversation_context, improve_codex_task_prompt
 from .settings import get_settings
 from . import tracing
@@ -32,9 +34,11 @@ from . import tracing
 
 settings = get_settings()
 history = HistoryStore(settings.history_path)
+artifacts = ArtifactStore(settings.history_path)
 projects = ProjectStore(settings.history_path.with_name("projects.json"))
 chats = ChatStore(settings.history_path.with_name("chats.json"))
 console = ConsoleStore(settings.history_path.with_name("console.json"))
+app_log = JsonlEventLogger(settings.history_path.with_name("app_events.jsonl"))
 
 app = FastAPI(title="Codex Voice Agent")
 app.add_middleware(
@@ -62,6 +66,53 @@ def _chat_context(chat_id: str | None) -> str:
     if not chat_id:
         return ""
     return build_recent_conversation_context(history.list(chat_id=chat_id))
+
+
+def _artifact_summary(text: object, limit: int = 220) -> str:
+    value = " ".join(str(text or "").split())
+    if not value:
+        return "Codex completed without a textual result."
+    return value if len(value) <= limit else value[:limit].rstrip() + "..."
+
+
+def _artifact_content_type(text: object) -> str:
+    value = str(text or "")
+    markdown_markers = ("```", "##", "- ", "* ", "|", "`")
+    return "markdown" if any(marker in value for marker in markdown_markers) else "text"
+
+
+def _create_tool_artifact(
+    *,
+    chat_id: str | None,
+    message_id: str | None,
+    title: str,
+    content: object,
+    source: str,
+    workdir: str | None,
+) -> dict[str, object] | None:
+    text = str(content or "").strip()
+    if not text:
+        return None
+    item = artifacts.create(
+        chat_id=chat_id,
+        message_id=message_id,
+        title=title,
+        summary=_artifact_summary(text),
+        content=text,
+        content_type=_artifact_content_type(text),
+        source=source,
+        workdir=workdir,
+    )
+    app_log.write(
+        "artifact.created",
+        chat_id=chat_id,
+        message_id=message_id,
+        artifact_id=item["id"],
+        title=title,
+        source=source,
+        content_chars=len(text),
+    )
+    return item
 
 
 class ChatRequest(BaseModel):
@@ -120,7 +171,17 @@ async def health() -> dict[str, object]:
 async def list_history(
     project_id: str | None = None, workdir: str | None = None, chat_id: str | None = None
 ) -> list[dict[str, object]]:
-    return history.list(project_id=project_id, workdir=workdir, chat_id=chat_id)
+    rows = history.list(project_id=project_id, workdir=workdir, chat_id=chat_id)
+    if not rows:
+        return rows
+    for row in rows:
+        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+        message_id = str(row.get("id") or "")
+        row_artifacts = artifacts.list(message_id=message_id)
+        if row_artifacts:
+            meta["artifacts"] = row_artifacts
+            row["meta"] = meta
+    return rows
 
 
 @app.delete("/api/history")
@@ -130,9 +191,13 @@ async def clear_history(
     if project_id is not None:
         chat_ids = [str(chat.get("id")) for chat in chats.list(project_id=project_id) if chat.get("id")]
         await close_codex_thread_sessions_for(chat_ids)
+        for cid in chat_ids:
+            artifacts.clear(cid)
     elif chat_id is not None:
         await close_codex_thread_session(chat_id)
     history.clear(project_id=project_id, workdir=workdir, chat_id=chat_id)
+    if chat_id is not None:
+        artifacts.clear(chat_id)
     return {"ok": True}
 
 
@@ -204,6 +269,15 @@ async def get_console_state(chat_id: str) -> dict[str, object]:
 
 @app.put("/api/chats/{chat_id}/console")
 async def save_console_state(chat_id: str, req: ConsoleStateRequest) -> dict[str, object]:
+    app_log.write(
+        "console.save",
+        chat_id=chat_id,
+        action_count=len(req.actions),
+        handoff_count=len(req.handoffs),
+        debug_count=len(req.debugEntries),
+        running_actions=sum(1 for action in req.actions if action.get("status") == "running"),
+        failed_actions=sum(1 for action in req.actions if action.get("status") == "failed"),
+    )
     return console.put(
         chat_id,
         {
@@ -216,6 +290,7 @@ async def save_console_state(chat_id: str, req: ConsoleStateRequest) -> dict[str
 
 @app.delete("/api/chats/{chat_id}/console")
 async def clear_console_state(chat_id: str) -> dict[str, object]:
+    app_log.write("console.clear", chat_id=chat_id)
     console.clear(chat_id)
     return {"ok": True}
 
@@ -232,6 +307,14 @@ async def chat(req: ChatRequest) -> dict[str, object]:
     }
     conversation_context = _chat_context(req.chat_id)
     history.append("user", text, history_meta)
+    app_log.write(
+        "chat.start",
+        chat_id=req.chat_id,
+        project_id=req.project_id,
+        workdir=history_meta["workdir"],
+        message_chars=len(text),
+        context_chars=len(conversation_context),
+    )
     try:
         result = await ask_gemini(
             text,
@@ -241,12 +324,37 @@ async def chat(req: ChatRequest) -> dict[str, object]:
             conversation_context=conversation_context,
         )
     except Exception as exc:
+        app_log.write("chat.error", chat_id=req.chat_id, message=clip_text(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    result_artifacts = []
+    for idx, tool_call in enumerate(result.get("tool_calls") or [], start=1):
+        if not isinstance(tool_call, dict):
+            continue
+        artifact = _create_tool_artifact(
+            chat_id=req.chat_id,
+            message_id=None,
+            title=f"{tool_call.get('name') or 'Codex'} output {idx}",
+            content=tool_call.get("result"),
+            source=str(tool_call.get("name") or "run_codex_task"),
+            workdir=str(tool_call.get("workdir") or history_meta["workdir"]),
+        )
+        if artifact:
+            result_artifacts.append(artifact)
+    if result_artifacts:
+        result["artifacts"] = result_artifacts
+    app_log.write(
+        "chat.done",
+        chat_id=req.chat_id,
+        reply_chars=len(str(result.get("reply") or "")),
+        tool_call_count=len(result.get("tool_calls") or []),
+        workdir=result.get("workdir"),
+    )
     history.append(
         "assistant",
         result["reply"],
         {
             "tool_calls": result["tool_calls"],
+            "artifacts": result_artifacts,
             "workdir": result.get("workdir"),
             "project_id": req.project_id,
             "chat_id": req.chat_id,
@@ -263,6 +371,14 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     workdir = req.workdir or settings.codex_default_workdir
     conversation_context = _chat_context(req.chat_id)
     history.append("user", text, {"workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
+    app_log.write(
+        "chat_stream.start",
+        chat_id=req.chat_id,
+        project_id=req.project_id,
+        workdir=workdir,
+        message_chars=len(text),
+        context_chars=len(conversation_context),
+    )
 
     cancel_token = CancellationToken()
 
@@ -271,6 +387,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         final_workdir = workdir
         final_tool_calls = []
         final_codex_events = []
+        final_artifacts = []
         final_codex_turn_id = None
         final_codex_thread_id = None
         final_codex_status = None
@@ -291,17 +408,62 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                     final_codex_turn_id = event.get("codex_turn_id")
                     final_codex_thread_id = event.get("codex_thread_id")
                     final_codex_status = event.get("codex_status")
+                    app_log.write(
+                        "chat_stream.done_event",
+                        chat_id=req.chat_id,
+                        reply_chars=len(final_text),
+                        tool_call_count=len(final_tool_calls),
+                        codex_status=final_codex_status,
+                    )
+                elif event.get("type") == "tool_call":
+                    app_log.write(
+                        "chat_stream.tool_call",
+                        chat_id=req.chat_id,
+                        name=event.get("name"),
+                        task=clip_text(event.get("task")),
+                        workdir=event.get("workdir"),
+                    )
+                elif event.get("type") == "tool_result":
+                    artifact = _create_tool_artifact(
+                        chat_id=req.chat_id,
+                        message_id=None,
+                        title=f"{event.get('name') or 'Codex'} output",
+                        content=event.get("result"),
+                        source=str(event.get("name") or "run_codex_task"),
+                        workdir=str(event.get("workdir") or workdir),
+                    )
+                    if artifact:
+                        final_artifacts.append(artifact)
+                        event["artifact"] = artifact
+                    app_log.write(
+                        "chat_stream.tool_result",
+                        chat_id=req.chat_id,
+                        name=event.get("name"),
+                        result_chars=len(str(event.get("result") or "")),
+                        codex_status=event.get("codex_status"),
+                    )
+                elif event.get("type") == "error":
+                    app_log.write("chat_stream.error_event", chat_id=req.chat_id, message=clip_text(event.get("message")))
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:
+            app_log.write("chat_stream.exception", chat_id=req.chat_id, message=clip_text(exc))
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:
             cancel_token.cancel()
+            app_log.write(
+                "chat_stream.finally",
+                chat_id=req.chat_id,
+                final_text_chars=len(final_text),
+                codex_status=final_codex_status,
+                persisted=bool(final_text),
+            )
             if final_text:
                 history.append(
                     "assistant",
                     final_text,
                     {
                         "tool_calls": final_tool_calls,
+                        "artifacts": final_artifacts,
                         "codex_events": final_codex_events,
                         "codex_turn_id": final_codex_turn_id,
                         "codex_thread_id": final_codex_thread_id,
@@ -332,7 +494,10 @@ async def transcribe(req: TranscribeRequest) -> dict[str, object]:
 @app.websocket("/api/live")
 async def live_voice(websocket: WebSocket) -> None:
     await websocket.accept()
+    live_log = LiveSessionLogger(settings.history_path.with_name("live_sessions.jsonl"), str(uuid.uuid4()))
+    live_log.write("websocket.accepted")
     if not settings.google_api_key:
+        live_log.write("websocket.error", message="GOOGLE_API_KEY is not set")
         await websocket.send_json({"type": "error", "message": "GOOGLE_API_KEY is not set"})
         await websocket.close()
         return
@@ -365,6 +530,13 @@ async def live_voice(websocket: WebSocket) -> None:
                 session_project_id = str(payload.get("project_id") or "").strip() or session_project_id
                 session_chat_id = str(payload.get("chat_id") or "").strip() or session_chat_id
                 session_conversation_context = _chat_context(session_chat_id)
+                live_log.write(
+                    "client.config",
+                    chat_id=session_chat_id,
+                    project_id=session_project_id,
+                    workdir=session_workdir,
+                    context_chars=len(session_conversation_context),
+                )
                 await websocket.send_json({"type": "debug", "message": f"Active workdir: {session_workdir}"})
             elif event_type == "audio":
                 audio_base64 = str(payload.get("data") or "")
@@ -374,14 +546,17 @@ async def live_voice(websocket: WebSocket) -> None:
                 mime_type = str(payload.get("mime_type") or "audio/pcm;rate=16000")
                 await session.send_realtime_input(audio=types.Blob(data=audio_bytes, mime_type=mime_type))
             elif event_type == "stop":
+                live_log.write("client.audio_stop", chat_id=session_chat_id)
                 await session.send_realtime_input(audio_stream_end=True)
                 await websocket.send_json({"type": "debug", "message": "Sent audio stream end to Gemini."})
             elif event_type == "cancel_task":
                 if current_task_cancel_token:
                     current_task_cancel_token.cancel()
                     await interrupt_codex_thread_session(session_chat_id)
+                    live_log.write("client.cancel_task", chat_id=session_chat_id)
                     await websocket.send_json({"type": "debug", "message": "Codex task cancelled."})
             elif event_type == "close":
+                live_log.write("client.close", chat_id=session_chat_id)
                 return
 
     async def receive_gemini(session: object) -> None:
@@ -408,6 +583,7 @@ async def live_voice(websocket: WebSocket) -> None:
             async for server_message in session.receive():
                 received_message = True
                 if server_message.setup_complete:
+                    live_log.write("gemini.setup_complete", chat_id=session_chat_id)
                     await websocket.send_json({"type": "ready", "message": "Gemini Live session ready."})
 
                 if server_message.tool_call and server_message.tool_call.function_calls:
@@ -419,6 +595,14 @@ async def live_voice(websocket: WebSocket) -> None:
                         task = str(args.get("task") or user_text or "Run the requested local task.")
                         enhanced_task = improve_codex_task_prompt(task)
                         workdir = session_workdir or settings.codex_default_workdir
+                        live_log.write(
+                            "gemini.tool_call_started",
+                            chat_id=session_chat_id,
+                            name=call.name,
+                            task=clip_text(enhanced_task),
+                            original_task=clip_text(task),
+                            workdir=workdir,
+                        )
                         
                         await websocket.send_json(
                             {
@@ -486,8 +670,23 @@ async def live_voice(websocket: WebSocket) -> None:
                                     codex_turn_id = event.get("turn_id") or codex_turn_id
                                     codex_thread_id = event.get("thread_id") or codex_thread_id
                                     codex_status = event.get("status") or codex_status
+                                    live_log.write(
+                                        "codex.done",
+                                        chat_id=session_chat_id,
+                                        status=codex_status,
+                                        turn_id=codex_turn_id,
+                                        thread_id=codex_thread_id,
+                                        result_chars=len(str(final_response or "")),
+                                        result_preview=clip_text(final_response),
+                                        event_count=len(codex_events),
+                                    )
                                 elif event.get("type") == "error":
                                     final_response = f"Error: {event.get('message')}"
+                                    live_log.write(
+                                        "codex.error",
+                                        chat_id=session_chat_id,
+                                        message=clip_text(event.get("message")),
+                                    )
                                     await websocket.send_json(
                                         {
                                             "type": "tool_call_failed",
@@ -520,19 +719,45 @@ async def live_voice(websocket: WebSocket) -> None:
                                 "name": call.name,
                                 "result": final_response,
                                 "workdir": resolved_workdir,
+                                "artifact": _create_tool_artifact(
+                                    chat_id=session_chat_id,
+                                    message_id=None,
+                                    title=f"{call.name or 'Codex'} output",
+                                    content=final_response,
+                                    source=str(call.name or "run_codex_task"),
+                                    workdir=resolved_workdir,
+                                ),
                                 "codex_events": codex_events[-200:],
                                 "codex_turn_id": codex_turn_id,
                                 "codex_thread_id": codex_thread_id,
                                 "codex_status": codex_status,
                             }
                         )
+                        live_log.write(
+                            "client.tool_result_sent",
+                            chat_id=session_chat_id,
+                            name=call.name,
+                            result_chars=len(str(final_response or "")),
+                            codex_status=codex_status,
+                        )
+                    live_log.write(
+                        "gemini.tool_response_send_start",
+                        chat_id=session_chat_id,
+                        response_count=len(responses),
+                    )
                     await session.send_tool_response(function_responses=responses)
+                    live_log.write(
+                        "gemini.tool_response_send_done",
+                        chat_id=session_chat_id,
+                        response_count=len(responses),
+                    )
 
                 content = server_message.server_content
                 if not content:
                     continue
 
                 if content.interrupted:
+                    live_log.write("gemini.interrupted", chat_id=session_chat_id)
                     if current_task_cancel_token:
                         current_task_cancel_token.cancel()
                         await interrupt_codex_thread_session(session_chat_id)
@@ -554,11 +779,13 @@ async def live_voice(websocket: WebSocket) -> None:
                     text = content.input_transcription.text
                     input_text_chunks.append(text)
                     ensure_turn_gen()
+                    live_log.write("gemini.input_transcript", chat_id=session_chat_id, text=clip_text(text))
                     await websocket.send_json({"type": "user_transcript", "text": text})
 
                 if content.output_transcription and content.output_transcription.text:
                     text = content.output_transcription.text
                     output_text_chunks.append(text)
+                    live_log.write("gemini.output_transcript", chat_id=session_chat_id, text=clip_text(text))
                     await websocket.send_json({"type": "assistant_delta", "text": text})
 
                 if content.model_turn:
@@ -575,11 +802,19 @@ async def live_voice(websocket: WebSocket) -> None:
                             )
                         if part.text:
                             output_text_chunks.append(part.text)
+                            live_log.write("gemini.text_part", chat_id=session_chat_id, text=clip_text(part.text))
                             await websocket.send_json({"type": "assistant_delta", "text": part.text})
 
                 if content.turn_complete:
                     user_text = "".join(input_text_chunks).strip()
                     assistant_text = "".join(output_text_chunks).strip() or "Done."
+                    live_log.write(
+                        "gemini.turn_complete",
+                        chat_id=session_chat_id,
+                        user_chars=len(user_text),
+                        assistant_chars=len(assistant_text),
+                        used_codex=bool(last_codex_status or last_codex_events),
+                    )
                     tracing.end_observation(
                         turn_gen,
                         input={
@@ -627,6 +862,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     last_codex_thread_id = None
                     last_codex_status = None
             if received_message:
+                live_log.write("gemini.receive_waiting", chat_id=session_chat_id)
                 await websocket.send_json({"type": "debug", "message": "Gemini receive loop is waiting for the next turn."})
             await asyncio.sleep(0.05)
 
@@ -639,6 +875,13 @@ async def live_voice(websocket: WebSocket) -> None:
             session_project_id = str(first_payload.get("project_id") or "").strip() or session_project_id
             session_chat_id = str(first_payload.get("chat_id") or "").strip() or session_chat_id
             session_conversation_context = _chat_context(session_chat_id)
+            live_log.write(
+                "client.initial_config",
+                chat_id=session_chat_id,
+                project_id=session_project_id,
+                workdir=session_workdir,
+                context_chars=len(session_conversation_context),
+            )
             await websocket.send_json({"type": "debug", "message": f"Active workdir: {session_workdir}"})
             first_payload = None
 
@@ -646,6 +889,7 @@ async def live_voice(websocket: WebSocket) -> None:
             model=settings.gemini_model,
             config=live_connect_config(settings, session_workdir, session_conversation_context),
         ) as session:
+            live_log.write("gemini.connected", chat_id=session_chat_id, model=settings.gemini_model)
             await websocket.send_json({"type": "debug", "message": "Connected to Gemini Live."})
             # Group every observation from this live connection under one session.
             # create_task copies the current context, so the spawned tasks inherit it.
@@ -657,19 +901,32 @@ async def live_voice(websocket: WebSocket) -> None:
                 send_task = asyncio.create_task(send_client_audio(session, first_payload))
                 receive_task = asyncio.create_task(receive_gemini(session))
                 done, pending = await asyncio.wait({send_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
+                live_log.write("websocket.task_completed", chat_id=session_chat_id, done=len(done), pending=len(pending))
                 for task in pending:
                     task.cancel()
                 for task in done:
                     task.result()
             await websocket.close()
     except WebSocketDisconnect:
+        live_log.write("websocket.disconnect", chat_id=session_chat_id)
         return
     except Exception as exc:
+        if "generator didn't stop after throw()" in str(exc):
+            live_log.write("websocket.disconnect_cleanup", chat_id=session_chat_id, message=clip_text(exc))
+            return
+        live_log.write("websocket.exception", chat_id=session_chat_id, message=clip_text(exc))
         try:
             await websocket.send_json({"type": "error", "message": str(exc)})
         except Exception:
             return
     finally:
+        live_log.write(
+            "websocket.finally",
+            chat_id=session_chat_id,
+            active_user_chars=len("".join(input_text_chunks).strip()),
+            active_assistant_chars=len("".join(output_text_chunks).strip()),
+            had_active_cancel_token=bool(current_task_cancel_token),
+        )
         if current_task_cancel_token:
             current_task_cancel_token.cancel()
             await interrupt_codex_thread_session(session_chat_id)
@@ -694,6 +951,13 @@ async def codex(req: CodexRequest) -> dict[str, object]:
     workdir = req.workdir or settings.codex_default_workdir
     enhanced_task = improve_codex_task_prompt(task)
     history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
+    app_log.write(
+        "codex.start",
+        chat_id=req.chat_id,
+        project_id=req.project_id,
+        workdir=workdir,
+        task_chars=len(task),
+    )
     try:
         with tracing.session_context(
             session_id=req.chat_id,
@@ -702,9 +966,36 @@ async def codex(req: CodexRequest) -> dict[str, object]:
         ):
             result = await run_codex(enhanced_task, workdir, settings, req.chat_id)
     except Exception as exc:
+        app_log.write("codex.error", chat_id=req.chat_id, message=clip_text(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    history.append("assistant", result.final_response, {"direct_codex": True, "workdir": result.workdir, "project_id": req.project_id, "chat_id": req.chat_id})
-    return {"reply": result.final_response, "workdir": result.workdir}
+    artifact = _create_tool_artifact(
+        chat_id=req.chat_id,
+        message_id=None,
+        title="Codex output",
+        content=result.final_response,
+        source="direct_codex",
+        workdir=result.workdir,
+    )
+    app_log.write(
+        "codex.done",
+        chat_id=req.chat_id,
+        reply_chars=len(result.final_response),
+        codex_status=result.status,
+        codex_turn_id=result.turn_id,
+        codex_thread_id=result.thread_id,
+    )
+    history.append(
+        "assistant",
+        result.final_response,
+        {
+            "direct_codex": True,
+            "workdir": result.workdir,
+            "project_id": req.project_id,
+            "chat_id": req.chat_id,
+            "artifacts": [artifact] if artifact else [],
+        },
+    )
+    return {"reply": result.final_response, "workdir": result.workdir, "artifacts": [artifact] if artifact else []}
 
 
 def _git_branch(root: Path) -> str | None:
@@ -808,6 +1099,13 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
     workdir = req.workdir or settings.codex_default_workdir
     enhanced_task = improve_codex_task_prompt(task)
     history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
+    app_log.write(
+        "codex_stream.start",
+        chat_id=req.chat_id,
+        project_id=req.project_id,
+        workdir=workdir,
+        task_chars=len(task),
+    )
 
     cancel_token = CancellationToken()
 
@@ -815,6 +1113,7 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
         final_text = ""
         final_workdir = workdir
         codex_events = []
+        final_artifacts = []
         codex_turn_id = None
         codex_thread_id = None
         codex_status = None
@@ -834,17 +1133,47 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
                         codex_turn_id = event.get("turn_id")
                         codex_thread_id = event.get("thread_id")
                         codex_status = event.get("status")
+                        artifact = _create_tool_artifact(
+                            chat_id=req.chat_id,
+                            message_id=None,
+                            title="Codex output",
+                            content=final_text,
+                            source="direct_codex",
+                            workdir=final_workdir,
+                        )
+                        if artifact:
+                            final_artifacts.append(artifact)
+                            event["artifact"] = artifact
+                        app_log.write(
+                            "codex_stream.done_event",
+                            chat_id=req.chat_id,
+                            reply_chars=len(final_text),
+                            codex_status=codex_status,
+                            codex_turn_id=codex_turn_id,
+                            codex_thread_id=codex_thread_id,
+                        )
+                    elif event.get("type") == "error":
+                        app_log.write("codex_stream.error_event", chat_id=req.chat_id, message=clip_text(event.get("message")))
                     yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:
+            app_log.write("codex_stream.exception", chat_id=req.chat_id, message=clip_text(exc))
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:
             cancel_token.cancel()
+            app_log.write(
+                "codex_stream.finally",
+                chat_id=req.chat_id,
+                final_text_chars=len(final_text),
+                codex_status=codex_status,
+                persisted=bool(final_text),
+            )
             if final_text:
                 history.append(
                     "assistant",
                     final_text,
                     {
                         "direct_codex": True,
+                        "artifacts": final_artifacts,
                         "workdir": final_workdir,
                         "project_id": req.project_id,
                         "chat_id": req.chat_id,

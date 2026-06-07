@@ -4,6 +4,7 @@ export type Message = {
   id: string;
   role: Role;
   text: string;
+  artifacts?: ChatArtifact[];
   usedCodex?: boolean;
   streaming?: boolean;
   workdir?: string;
@@ -11,6 +12,19 @@ export type Message = {
   codexStatus?: string;
   codexTurnId?: string;
   codexThreadId?: string;
+};
+
+export type ChatArtifact = {
+  id: string;
+  chat_id?: string;
+  message_id?: string;
+  title: string;
+  summary: string;
+  content: string;
+  content_type: "markdown" | "text" | "json";
+  source: string;
+  workdir?: string;
+  created_at?: string;
 };
 
 export type CodexTimelineEvent = {
@@ -65,6 +79,7 @@ export type HistoryRow = {
   meta?: {
     direct_codex?: boolean;
     tool_calls?: unknown[];
+    artifacts?: ChatArtifact[];
     codex_events?: CodexTimelineEvent[];
     codex_status?: string;
     codex_turn_id?: string;

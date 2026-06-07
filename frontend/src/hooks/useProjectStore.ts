@@ -53,6 +53,7 @@ function historyRowsToMessages(rows: HistoryRow[]): Message[] {
       id: row.id,
       role: row.role,
       text: row.text,
+      artifacts: row.meta?.artifacts || [],
       usedCodex: Boolean(
         row.meta?.direct_codex ||
           (Array.isArray(row.meta?.tool_calls) && row.meta.tool_calls.length > 0) ||

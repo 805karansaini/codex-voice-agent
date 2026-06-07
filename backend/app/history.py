@@ -149,6 +149,135 @@ class HistoryStore:
                 conn.execute(f"DELETE FROM history WHERE {' OR '.join(clauses)}", params)
 
 
+class ArtifactStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path.with_name("artifacts.sqlite3")
+        self.lock = Lock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    id TEXT PRIMARY KEY,
+                    chat_id TEXT,
+                    message_id TEXT,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    workdir TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_chat ON artifacts(chat_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_message ON artifacts(message_id)")
+
+    def _row_to_item(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "chat_id": row["chat_id"],
+            "message_id": row["message_id"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "content": row["content"],
+            "content_type": row["content_type"],
+            "source": row["source"],
+            "workdir": row["workdir"],
+            "created_at": row["created_at"],
+        }
+
+    def create(
+        self,
+        *,
+        chat_id: str | None,
+        message_id: str | None,
+        title: str,
+        summary: str,
+        content: str,
+        content_type: str,
+        source: str,
+        workdir: str | None,
+    ) -> dict[str, Any]:
+        import uuid
+
+        created_at = datetime.now(timezone.utc).isoformat()
+        item = {
+            "id": str(uuid.uuid4()),
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "title": title,
+            "summary": summary,
+            "content": content,
+            "content_type": content_type,
+            "source": source,
+            "workdir": workdir,
+            "created_at": created_at,
+        }
+        with self.lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO artifacts (
+                        id, chat_id, message_id, title, summary, content,
+                        content_type, source, workdir, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item["id"],
+                        item["chat_id"],
+                        item["message_id"],
+                        item["title"],
+                        item["summary"],
+                        item["content"],
+                        item["content_type"],
+                        item["source"],
+                        item["workdir"],
+                        item["created_at"],
+                    ),
+                )
+        return item
+
+    def list(self, chat_id: str | None = None, message_id: str | None = None) -> list[dict[str, Any]]:
+        with self.lock:
+            with self._connect() as conn:
+                query = "SELECT * FROM artifacts"
+                params: list[Any] = []
+                if message_id is not None:
+                    query += " WHERE message_id = ?"
+                    params.append(message_id)
+                elif chat_id is not None:
+                    query += " WHERE chat_id = ?"
+                    params.append(chat_id)
+                query += " ORDER BY created_at ASC"
+                return [self._row_to_item(row) for row in conn.execute(query, params)]
+
+    def clear(self, chat_id: str | None = None) -> None:
+        with self.lock:
+            with self._connect() as conn:
+                if chat_id is None:
+                    conn.execute("DELETE FROM artifacts")
+                else:
+                    conn.execute("DELETE FROM artifacts WHERE chat_id = ?", (chat_id,))
+
+
 class ProjectStore:
     def __init__(self, path: Path) -> None:
         self.path = path

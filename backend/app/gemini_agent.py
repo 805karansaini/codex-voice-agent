@@ -33,6 +33,8 @@ For those local-work requests:
 6. Do not answer local file, repo, git, build, test, or debug questions from memory or guesswork. Use the tool.
 7. If the user asks for an update, status, follow-up, or says "make those changes", use the recent conversation context to identify what they mean before asking them to repeat it.
 8. Do not paste recent chat history into the run_codex_task task. Codex uses the same session for this chat and already has its own prior Codex turns.
+9. After the tool returns, explain the result to the user in the chat. If Codex created, read, or summarized content and the user asks to see it here, show the useful content in the chat instead of telling the user to open a file elsewhere.
+10. Never end a tool-backed turn with only "Done" or a vague completion note. Include the answer, outcome, or next useful detail from the tool result.
 
 Only answer directly without a tool when the user is making conversation, asking a general conceptual question, or asking for a plan that does not require looking at local files or running anything.
 """
