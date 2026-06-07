@@ -48,6 +48,9 @@ TOOL-CALLING RULES (you must unmistakably follow these):
 
 Only answer directly without the tool when the user is making conversation, asking
 a general conceptual question, or asking for a plan that requires no local access.
+
+CONVERSATION ENDING RULES:
+If the user indicates they are done, wants to end the conversation, or says goodbye (e.g., "goodbye", "bye", "bye-bye", "I'm done", "that's all", "leave session", "close the connection", or multilingual equivalents like "ok bye", "main chalta hoon"), you MUST immediately call the `end_conversation` tool and say goodbye to cleanly conclude the session.
 """
 
 
@@ -78,41 +81,56 @@ def _system_instruction(workdir: str | None = None, conversation_context: str | 
     return "\n\n".join(parts) + "\n"
 
 
-def _codex_tool() -> types.Tool:
-    return types.Tool(
-        function_declarations=[
-            types.FunctionDeclaration(
-                name="run_codex_task",
-                description=(
-                    "Execute a task on the user's local computer using the Codex coding agent. "
-                    "MUST be called for ANY request involving: files, code, directories, git, "
-                    "commands, tests, builds, debugging, reviews, diffs, or project inspection. "
-                    "Call this tool instead of answering from memory for any local-work question."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description": (
-                                "The task to perform, written as a clear instruction. "
-                                "Derived from the user's request with improved grammar. "
-                                "Do not include conversation history."
-                            ),
+def _get_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            function_declarations=[
+                types.FunctionDeclaration(
+                    name="run_codex_task",
+                    description=(
+                        "Execute a task on the user's local computer using the Codex coding agent. "
+                        "MUST be called for ANY request involving: files, code, directories, git, "
+                        "commands, tests, builds, debugging, reviews, diffs, or project inspection. "
+                        "Call this tool instead of answering from memory for any local-work question."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "task": {
+                                "type": "string",
+                                "description": (
+                                    "The task to perform, written as a clear instruction. "
+                                    "Derived from the user's request with improved grammar. "
+                                    "Do not include conversation history."
+                                ),
+                            },
+                            "workdir": {
+                                "type": "string",
+                                "description": (
+                                    "Absolute path to the working directory. "
+                                    "Defaults to the session's configured directory if omitted."
+                                ),
+                            },
                         },
-                        "workdir": {
-                            "type": "string",
-                            "description": (
-                                "Absolute path to the working directory. "
-                                "Defaults to the session's configured directory if omitted."
-                            ),
-                        },
+                        "required": ["task"],
                     },
-                    "required": ["task"],
-                },
-            )
-        ]
-    )
+                ),
+                types.FunctionDeclaration(
+                    name="end_conversation",
+                    description=(
+                        "End the conversation and gracefully close/disconnect the voice session. "
+                        "MUST be called immediately when the user explicitly requests to end the conversation, "
+                        "says goodbye, or indicates they are finished/done with the voice session (e.g., \"goodbye\", "
+                        "\"bye\", \"bye-bye\", \"I'm done\", \"close session\", \"that is all\", \"theek hai bye\")."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {},
+                    },
+                ),
+            ]
+        )
+    ]
 
 
 def _pcm_to_wav_data_url(audio_chunks: list[bytes], sample_rate: int = 24000) -> str | None:
@@ -146,7 +164,7 @@ def live_connect_config(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=settings.gemini_voice_name)
             ),
         ),
-        tools=[_codex_tool()],
+        tools=_get_tools(),
     )
 
 
@@ -202,6 +220,23 @@ async def ask_gemini(
                     if server_message.tool_call and server_message.tool_call.function_calls:
                         responses = []
                         for call in server_message.tool_call.function_calls:
+                            if call.name == "end_conversation":
+                                responses.append(
+                                    types.FunctionResponse(
+                                        id=call.id,
+                                        name=call.name,
+                                        response={"result": "Session ended successfully."},
+                                    )
+                                )
+                                tool_calls.append(
+                                    {
+                                        "name": call.name,
+                                        "args": {},
+                                        "result": "Session ended successfully.",
+                                        "workdir": session_workdir,
+                                    }
+                                )
+                                continue
                             args = dict(call.args or {})
                             task = str(args.get("task") or message)
                             enhanced_task = improve_codex_task_prompt(task)
@@ -310,6 +345,23 @@ async def ask_gemini_stream(
                         if server_message.tool_call and server_message.tool_call.function_calls:
                             responses = []
                             for call in server_message.tool_call.function_calls:
+                                if call.name == "end_conversation":
+                                    responses.append(
+                                        types.FunctionResponse(
+                                            id=call.id,
+                                            name=call.name,
+                                            response={"result": "Session ended successfully."},
+                                        )
+                                    )
+                                    tool_calls.append(
+                                        {
+                                            "name": call.name,
+                                            "args": {},
+                                            "result": "Session ended successfully.",
+                                            "workdir": session_workdir,
+                                        }
+                                    )
+                                    continue
                                 args = dict(call.args or {})
                                 task = str(args.get("task") or message)
                                 enhanced_task = improve_codex_task_prompt(task)

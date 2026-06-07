@@ -534,6 +534,7 @@ async def live_voice(websocket: WebSocket) -> None:
     last_codex_status: str | None = None
     last_artifacts: list[dict[str, object]] = []
     active_turn_gen = None
+    session_ended_by_tool = False
 
     async def send_client_audio(session: object, initial: dict | None = None) -> None:
         nonlocal session_workdir, session_project_id, session_chat_id, session_conversation_context, current_task_cancel_token
@@ -579,8 +580,8 @@ async def live_voice(websocket: WebSocket) -> None:
     async def receive_gemini(session: object) -> None:
         nonlocal audio_chunks, input_text_chunks, output_text_chunks, session_conversation_context, current_task_cancel_token, streamed_audio_this_turn
         nonlocal last_codex_events, last_codex_turn_id, last_codex_thread_id, last_codex_status, last_artifacts
-        nonlocal active_turn_gen
-
+        nonlocal active_turn_gen, session_ended_by_tool
+ 
         # One Langfuse generation per voice turn. Created lazily when the turn
         # produces its first signal (user transcript or tool call) and closed at
         # turn_complete. Only transcribed text is recorded, never raw audio.
@@ -608,6 +609,17 @@ async def live_voice(websocket: WebSocket) -> None:
                     user_text = "".join(input_text_chunks).strip()
                     ensure_turn_gen()
                     for call in server_message.tool_call.function_calls:
+                        if call.name == "end_conversation":
+                            session_ended_by_tool = True
+                            live_log.write("gemini.end_conversation_tool", chat_id=session_chat_id)
+                            responses.append(
+                                types.FunctionResponse(
+                                    id=call.id,
+                                    name=call.name,
+                                    response={"result": "Session ended successfully."},
+                                )
+                            )
+                            continue
                         args = dict(call.args or {})
                         task = str(args.get("task") or user_text or "Run the requested local task.")
                         enhanced_task = improve_codex_task_prompt(task)
@@ -765,12 +777,75 @@ async def live_voice(websocket: WebSocket) -> None:
                         chat_id=session_chat_id,
                         response_count=len(responses),
                     )
-                    await session.send_tool_response(function_responses=responses)
+                    try:
+                        await session.send_tool_response(function_responses=responses)
+                    except Exception as e:
+                        live_log.write("gemini.tool_response_send_error", chat_id=session_chat_id, error=str(e))
                     live_log.write(
                         "gemini.tool_response_send_done",
                         chat_id=session_chat_id,
                         response_count=len(responses),
                     )
+                    if session_ended_by_tool:
+                        user_text = "".join(input_text_chunks).strip()
+                        assistant_text = "".join(output_text_chunks).strip() or "Done."
+                        if turn_gen:
+                            tracing.end_observation(
+                                turn_gen,
+                                input={
+                                    "user_message": user_text,
+                                    "conversation_so_far": session_conversation_context or "(start of conversation)",
+                                },
+                                output=assistant_text,
+                                metadata={"workdir": session_workdir, "project_id": session_project_id},
+                            )
+                            turn_gen = None
+                            active_turn_gen = None
+                        if user_text:
+                            history.append("user", user_text, {"workdir": session_workdir, "project_id": session_project_id, "chat_id": session_chat_id})
+                        history.append(
+                            "assistant",
+                            assistant_text,
+                            {
+                                "workdir": session_workdir,
+                                "project_id": session_project_id,
+                                "chat_id": session_chat_id,
+                                "codex_events": last_codex_events,
+                                "codex_turn_id": last_codex_turn_id,
+                                "codex_thread_id": last_codex_thread_id,
+                                "codex_status": last_codex_status,
+                                "artifacts": last_artifacts,
+                            },
+                        )
+                        session_conversation_context = _chat_context(session_chat_id)
+                        live_log.write(
+                            "session.auto_disconnect",
+                            chat_id=session_chat_id,
+                            user_text=user_text,
+                            assistant_text=assistant_text
+                        )
+                        await websocket.send_json(
+                            {
+                                "type": "turn_complete",
+                                "user_text": user_text,
+                                "assistant_text": assistant_text,
+                                "workdir": session_workdir,
+                                "audio_data_url": None if streamed_audio_this_turn else _pcm_to_wav_data_url(audio_chunks),
+                                "session_ended": True,
+                            }
+                        )
+                        session_ended_by_tool = False
+                        audio_chunks = []
+                        input_text_chunks = []
+                        output_text_chunks = []
+                        streamed_audio_this_turn = False
+                        last_codex_events = []
+                        last_codex_turn_id = None
+                        last_codex_thread_id = None
+                        last_codex_status = None
+                        last_artifacts = []
+                        while True:
+                            await asyncio.sleep(3600)
 
                 content = server_message.server_content
                 if not content:
@@ -880,6 +955,13 @@ async def live_voice(websocket: WebSocket) -> None:
                         },
                     )
                     session_conversation_context = _chat_context(session_chat_id)
+                    if session_ended_by_tool:
+                        live_log.write(
+                            "session.auto_disconnect",
+                            chat_id=session_chat_id,
+                            user_text=user_text,
+                            assistant_text=assistant_text
+                        )
                     await websocket.send_json(
                         {
                             "type": "turn_complete",
@@ -887,8 +969,10 @@ async def live_voice(websocket: WebSocket) -> None:
                             "assistant_text": assistant_text,
                             "workdir": session_workdir,
                             "audio_data_url": None if streamed_audio_this_turn else _pcm_to_wav_data_url(audio_chunks),
+                            "session_ended": session_ended_by_tool,
                         }
                     )
+                    session_ended_by_tool = False
                     audio_chunks = []
                     input_text_chunks = []
                     output_text_chunks = []

@@ -54,6 +54,10 @@ class AudioStreamPlayer {
 
   constructor() {}
 
+  isPlaying(): boolean {
+    return this.activeSources.length > 0;
+  }
+
   init() {
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -283,6 +287,7 @@ export function useLiveVoice({
     const projectId = cbRef.current.getProjectId();
     const chatId = cbRef.current.getChatId();
     if (!workdir || websocket.readyState !== WebSocket.OPEN) return;
+    log(`[Config] Sending session config: chatId=${chatId}, workdir=${workdir}`);
     websocket.send(
       JSON.stringify({
         type: "config",
@@ -291,7 +296,30 @@ export function useLiveVoice({
         chat_id: chatId,
       })
     );
-  }, []);
+  }, [log]);
+
+  const stop = useCallback(async () => {
+    log("[Stop] Stopping session and microphone...");
+    manuallyStoppedRef.current = true;
+    setMuted(false);
+    mutedRef.current = false;
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    clearToolResultFallback();
+    bufferedAudioRef.current = [];
+    audioPlayerRef.current?.stop();
+    await stopMicrophone();
+    if (websocketRef.current?.readyState === WebSocket.OPEN) {
+      websocketRef.current.send(JSON.stringify({ type: "close" }));
+    }
+    websocketRef.current?.close();
+    websocketRef.current = null;
+    setState("idle");
+    setMessage("Gemini Live voice is ready.");
+    log("[Stop] Session stopped successfully.");
+  }, [clearToolResultFallback, stopMicrophone, log]);
 
   const connectSocket = useCallback(() => {
     const websocket = new WebSocket(getWebSocketUrl("/api/live"));
@@ -309,12 +337,14 @@ export function useLiveVoice({
           log(payload.message || payload.type);
         } else if (payload.type === "user_transcript") {
           clearToolResultFallback();
+          log(`[User Transcript] ${payload.text || ""}`);
           setUserPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
           setMessage("Heard you — composing a reply.");
           cbRef.current.onUserTranscript?.(payload.text || "");
         } else if (payload.type === "assistant_delta") {
           clearToolResultFallback();
+          log(`[Assistant Delta] ${payload.text || ""}`);
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
           setMessage("Gemini is replying.");
@@ -323,6 +353,7 @@ export function useLiveVoice({
           clearToolResultFallback();
           const userText = String(payload.user_text || "").trim();
           const assistantText = String(payload.assistant_text || "").trim();
+          log(`[Turn Complete] user_chars=${userText.length}, assistant_chars=${assistantText.length}, session_ended=${payload.session_ended}`);
           cbRef.current.onTurnComplete?.(
             userText || "Voice message",
             assistantText || "Done.",
@@ -336,8 +367,23 @@ export function useLiveVoice({
           hasStreamedAudioRef.current = false;
           setUserPreview("");
           setAssistantPreview("");
-          setState("live");
-          setMessage("Live with Gemini — speak again when ready.");
+          if (payload.session_ended) {
+            log("Conversation completed. Initiating graceful disconnect...");
+            const checkAndStop = () => {
+              const player = audioPlayerRef.current;
+              if (player && player.isPlaying()) {
+                setTimeout(checkAndStop, 200);
+              } else {
+                setTimeout(() => {
+                  void stop();
+                }, 300);
+              }
+            };
+            setTimeout(checkAndStop, 500);
+          } else {
+            setState("live");
+            setMessage("Live with Gemini — speak again when ready.");
+          }
         } else if (payload.type === "interrupted") {
           setAssistantPreview("");
           audioPlayerRef.current?.stop();
@@ -349,6 +395,9 @@ export function useLiveVoice({
             try {
               const float32 = base64ToFloat32Array(audioB64);
               getAudioPlayer().playChunk(float32);
+              if (!hasStreamedAudioRef.current) {
+                log("[Assistant Audio] Started receiving audio stream.");
+              }
               hasStreamedAudioRef.current = true;
             } catch (err) {
               log(`Error playing audio chunk: ${err}`);
@@ -364,7 +413,7 @@ export function useLiveVoice({
             payload.task || "",
             payload.workdir || ""
           );
-          log(`Codex handoff started: ${payload.name || "tool"}.`);
+          log(`[Tool Call Started] ${payload.name || "tool"}. Task: "${payload.task || ""}"`);
         } else if (payload.type === "tool_progress") {
           setUserPreview("");
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
@@ -376,9 +425,11 @@ export function useLiveVoice({
           cbRef.current.onCodexEvent?.(payload.event);
           if (payload.event?.summary) {
             setMessage(payload.event.summary);
+            log(`[Codex Event] ${payload.event.summary}`);
           }
         } else if (payload.type === "status") {
           setMessage(payload.message || "Codex is working...");
+          log(`[Status] ${payload.message}`);
         } else if (payload.type === "tool_call_failed") {
           clearToolResultFallback();
           setState("thinking");
@@ -388,6 +439,7 @@ export function useLiveVoice({
             payload.name || "run_codex_task",
             payload.message || "Codex task failed."
           );
+          log(`[Tool Call Failed] ${payload.name || "tool"}: ${payload.message}`);
         } else if (payload.type === "tool_result") {
           usedCodexRef.current = true;
           setState("thinking");
@@ -407,7 +459,7 @@ export function useLiveVoice({
             log("Gemini did not finish after Codex completed; surfaced the Codex result in chat.");
             toolResultFallbackTimerRef.current = null;
           }, TOOL_RESULT_FALLBACK_MS);
-          log(`Codex handoff completed: ${payload.name || "tool"}.`);
+          log(`[Tool Call Completed] ${payload.name || "tool"}. Result length: ${payload.result?.length || 0} chars.`);
         } else if (payload.type === "error") {
           setState("error");
           setMessage(payload.message || "Live voice failed.");
@@ -441,26 +493,7 @@ export function useLiveVoice({
     };
 
     return websocket;
-  }, [clearToolResultFallback, flushBufferedAudio, log, sendSessionConfig, stopMicrophone]);
-
-  const stop = useCallback(async () => {
-    manuallyStoppedRef.current = true;
-    setMuted(false);
-    mutedRef.current = false;
-    if (reconnectTimerRef.current) {
-      window.clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-    clearToolResultFallback();
-    bufferedAudioRef.current = [];
-    audioPlayerRef.current?.stop();
-    await stopMicrophone();
-    websocketRef.current?.send(JSON.stringify({ type: "close" }));
-    websocketRef.current?.close();
-    websocketRef.current = null;
-    setState("idle");
-    setMessage("Gemini Live voice is ready.");
-  }, [clearToolResultFallback, stopMicrophone]);
+  }, [clearToolResultFallback, flushBufferedAudio, log, sendSessionConfig, stopMicrophone, stop]);
 
   const start = useCallback(async () => {
     if (state === "connecting" || state === "live" || state === "thinking" || state === "working") return;
