@@ -97,4 +97,5 @@ The long-term interaction model is:
 - 2026-06-07: Created the feature plan and started Phase 1.
 - 2026-06-07: Added durable artifact storage, attached Codex outputs to stream events, and rendered expandable artifact cards directly in the central chat. Commit: `5b6ab53`.
 - 2026-06-07: Added voice handoff fallback so Codex results become visible in chat immediately and the live voice UI recovers if Gemini does not finish final wording. Commit: `3266027`.
-- 2026-06-07: Added recent artifact references to Gemini context and prompt rules so follow-ups can reuse visible artifacts before calling tools again.
+- 2026-06-07: Added recent artifact references to Gemini context and prompt rules so follow-ups can reuse visible artifacts before calling tools again. Commit: `f1da09e`.
+- 2026-06-07: Persisted live voice artifacts into chat history so Codex outputs remain visible after refresh. Commit: `35563c6`.
