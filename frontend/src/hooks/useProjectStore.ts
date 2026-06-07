@@ -177,10 +177,12 @@ export function useProjectStore() {
   useEffect(() => {
     if (!activeProject) return;
     const list = chats[activeProject.id] || [];
-    if (!list.some((c) => c.id === activeChatByProject[activeProject.id])) {
+    const currentChatId = activeChatByProject[activeProject.id] || "";
+    const nextChatId = list[0]?.id || "";
+    if (!list.some((c) => c.id === currentChatId) && currentChatId !== nextChatId) {
       setActiveChatByProject((current) => ({
         ...current,
-        [activeProject.id]: list[0]?.id || "",
+        [activeProject.id]: nextChatId,
       }));
     }
   }, [activeProject, chats, activeChatByProject]);
