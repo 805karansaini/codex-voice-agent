@@ -669,7 +669,7 @@ export function App() {
       if (activeVoiceActionIdRef.current) {
         updateAction(activeVoiceActionIdRef.current, {
           status: "failed",
-          detail: message,
+          streamingResponse: message || "Handoff failed",
         });
         activeVoiceActionIdRef.current = null;
       }
@@ -698,9 +698,7 @@ export function App() {
           codexThreadId: String(event.thread_id || m.codexThreadId || ""),
         }));
       }
-      if (activeVoiceActionIdRef.current && event.summary) {
-        updateAction(activeVoiceActionIdRef.current, { detail: event.summary });
-      }
+      // Keep prompt detail as the original task, do not overwrite with intermediate event summaries
     },
     onHandoff: (name, summary, workdir, details) => {
       addHandoff(name, summary);
@@ -738,7 +736,6 @@ export function App() {
       if (activeVoiceActionIdRef.current) {
         updateAction(activeVoiceActionIdRef.current, {
           status: "done",
-          detail: summary,
           workdir: workdir || voiceCtxRef.current?.project.path,
         });
         activeVoiceActionIdRef.current = null;
@@ -747,6 +744,7 @@ export function App() {
           title: "Voice handoff to Codex",
           status: "done",
           detail: summary,
+          streamingResponse: summary,
           workdir: workdir || voiceCtxRef.current?.project.path,
         });
       }
@@ -810,7 +808,7 @@ export function App() {
           }));
           updateAction(actionId, {
             status: "failed",
-            detail: payload.detail || "Codex request failed",
+            streamingResponse: payload.detail || "Codex request failed",
           });
           throw new Error(payload.detail || "Codex request failed");
         }
@@ -824,14 +822,12 @@ export function App() {
               codexTurnId: String(evt.turn_id || m.codexTurnId || ""),
               codexThreadId: String(evt.thread_id || m.codexThreadId || ""),
             }));
-            if (evt.summary) {
-              updateAction(actionId, (prev) => ({
-                detail: String(evt.summary),
-              }));
-            }
           } else if (evt.type === "delta" && evt.text) {
             finalText += evt.text;
             store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
+            updateAction(actionId, (prev) => ({
+              streamingResponse: (prev.streamingResponse || "") + evt.text,
+            }));
           } else if (evt.type === "done") {
             finalText = String(evt.text ?? finalText);
             store.updateMessage(chatId, assistantId, (m) => ({
@@ -847,13 +843,13 @@ export function App() {
             }));
             updateAction(actionId, {
               status: "done",
-              detail: finalText ? `Completed. ${finalText.slice(0, 180)}` : "Completed.",
+              streamingResponse: finalText,
               workdir: evt.workdir || project.path,
             });
             addHandoff("run_codex_task", finalText.slice(0, 160));
           } else if (evt.type === "error") {
             store.updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false }));
-            updateAction(actionId, { status: "failed", detail: String(evt.message || "Codex failed") });
+            updateAction(actionId, { status: "failed", streamingResponse: String(evt.message || "Codex failed") });
             setError(String(evt.message || "Codex failed"));
           }
         };
@@ -869,7 +865,7 @@ export function App() {
           }));
           updateAction(actionId, {
             status: "failed",
-            detail: "Cancelled by user.",
+            streamingResponse: "Cancelled by user.",
           });
           return;
         }
@@ -928,9 +924,7 @@ export function App() {
               codexTurnId: String(event.turn_id || m.codexTurnId || ""),
               codexThreadId: String(event.thread_id || m.codexThreadId || ""),
             }));
-            if (activeActionId && event.summary) {
-              updateAction(activeActionId, { detail: event.summary });
-            }
+            // Keep prompt detail as the original task
           } else if (evt.type === "delta" && evt.text) {
             finalText += evt.text;
             store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
@@ -951,11 +945,7 @@ export function App() {
               }));
             }
           } else if (evt.type === "status") {
-            if (activeActionId) {
-              updateAction(activeActionId, {
-                detail: evt.message,
-              });
-            }
+            // Keep prompt detail unchanged
           } else if (evt.type === "tool_result") {
             usedCodex = true;
             const summary = String(evt.result || "").slice(0, 180);
@@ -972,7 +962,6 @@ export function App() {
             if (activeActionId) {
               updateAction(activeActionId, {
                 status: "done",
-                detail: summary ? `Completed. ${summary}` : "Codex task completed.",
                 workdir: String(evt.workdir || project.path),
               });
             }
@@ -1000,7 +989,7 @@ export function App() {
             if (activeActionId) {
               updateAction(activeActionId, {
                 status: "failed",
-                detail: String(evt.message || "Agent failed"),
+                streamingResponse: String(evt.message || "Agent failed"),
               });
             }
             setError(String(evt.message || "Agent failed"));
@@ -1023,7 +1012,7 @@ export function App() {
           if (activeActionId) {
             updateAction(activeActionId, {
               status: "failed",
-              detail: "Cancelled by user.",
+              streamingResponse: "Cancelled by user.",
             });
           }
           return;
@@ -2006,29 +1995,44 @@ export function App() {
                             {a.status}
                           </span>
                         </div>
-                        {/* Split body: response on left, task on right */}
-                        {hasResponse ? (
-                          <div className="action-split">
-                            <div className="action-split-response">
-                              <div className="action-split-label">Response</div>
-                              <div className="action-split-content">
+                        {/* Chat timeline inside the action card */}
+                        <div className="action-chat-timeline">
+                          {/* Prompt/Request — right-aligned like a user message */}
+                          <div className="action-chat-row justify-end">
+                            <div className="action-chat-bubble-user">
+                              {a.detail}
+                            </div>
+                          </div>
+
+                          {/* Response — left-aligned like an assistant message */}
+                          {hasResponse ? (
+                            <div className="action-chat-row justify-start">
+                              <div className={cn(
+                                "action-chat-response-text",
+                                a.status === "failed" && "text-danger"
+                              )}>
                                 <MarkdownRenderer content={a.streamingResponse || ""} />
                                 {a.status === "running" && <span className="caret" />}
                               </div>
                             </div>
-                            <div className="action-split-task">
-                              <div className="action-split-label">Task</div>
-                              <p className="action-split-content font-mono text-fg-dim text-[10.5px] whitespace-pre-wrap break-all">{a.detail}</p>
+                          ) : a.status === "running" ? (
+                            <div className="action-chat-row justify-start">
+                              <div className="action-chat-response-text">
+                                <div className="flex flex-col gap-1.5 py-1 w-full">
+                                  <span className="h-1.5 bg-fg-dim/15 rounded w-full animate-pulse" />
+                                  <span className="h-1.5 bg-fg-dim/15 rounded w-4/5 animate-pulse" />
+                                  <span className="h-1.5 bg-fg-dim/15 rounded w-3/5 animate-pulse" />
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="px-3 py-2">
-                            <p className="font-mono text-[10.5px] text-fg-muted whitespace-pre-wrap break-all">
-                              {a.detail}
-                              {a.status === "running" && <span className="caret" />}
-                            </p>
-                          </div>
-                        )}
+                          ) : a.status === "failed" ? (
+                            <div className="action-chat-row justify-start">
+                              <div className="action-chat-response-text text-danger font-medium">
+                                Failed to execute operator action.
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                         {a.workdir && (
                           <div className="px-3 py-1.5 text-[9px] text-fg-dim font-mono border-t border-line-soft/40 flex items-center gap-1">
                             <Folder className="h-2.5 w-2.5" />
