@@ -829,12 +829,26 @@ async def live_voice(websocket: WebSocket) -> None:
                 if content.turn_complete:
                     user_text = "".join(input_text_chunks).strip()
                     assistant_text = "".join(output_text_chunks).strip() or "Done."
+                    used_codex = bool(last_codex_status or last_codex_events)
+                    # Detect false tool-call claims: model says it called the
+                    # tool (or is calling it) but no actual tool call occurred.
+                    false_tool_claim = False
+                    if not used_codex:
+                        _lower = assistant_text.lower()
+                        false_tool_claim = any(kw in _lower for kw in (
+                            "run_codex", "calling the tool", "calling codex",
+                            "pulling those", "i'm pulling", "i'll pull",
+                            "running the tool", "running codex",
+                            "i'll get that", "let me get", "i'll fetch",
+                            "i'll check", "let me check",
+                        ))
                     live_log.write(
                         "gemini.turn_complete",
                         chat_id=session_chat_id,
                         user_chars=len(user_text),
                         assistant_chars=len(assistant_text),
-                        used_codex=bool(last_codex_status or last_codex_events),
+                        used_codex=used_codex,
+                        false_tool_claim=false_tool_claim,
                     )
                     tracing.end_observation(
                         turn_gen,

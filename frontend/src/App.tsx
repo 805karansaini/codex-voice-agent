@@ -653,6 +653,7 @@ export function App() {
         title: "Voice handoff to Codex",
         status: "running",
         detail: task,
+        streamingResponse: "",
         workdir: workdir || voiceCtxRef.current?.project.path,
       });
       activeVoiceActionIdRef.current = id;
@@ -660,7 +661,7 @@ export function App() {
     onHandoffProgress: (name, text) => {
       if (activeVoiceActionIdRef.current) {
         updateAction(activeVoiceActionIdRef.current, (prev) => ({
-          detail: prev.detail + text,
+          streamingResponse: (prev.streamingResponse || "") + text,
         }));
       }
     },
@@ -939,13 +940,14 @@ export function App() {
               title: "Agent handoff to Codex",
               status: "running",
               detail: String(evt.task || "Local task"),
+              streamingResponse: "",
               workdir: String(evt.workdir || project.path),
             });
             store.updateMessage(chatId, assistantId, (m) => ({ ...m, usedCodex: true }));
           } else if (evt.type === "tool_progress" && evt.text) {
             if (activeActionId) {
               updateAction(activeActionId, (prev) => ({
-                detail: prev.detail + evt.text,
+                streamingResponse: (prev.streamingResponse || "") + evt.text,
               }));
             }
           } else if (evt.type === "status") {
@@ -1989,27 +1991,53 @@ export function App() {
                 {actions.length === 0 ? (
                   <div className="text-center py-12 text-fg-dim italic">No operator actions logged.</div>
                 ) : (
-                  actions.map((a) => (
-                    <div key={a.id} className="panel p-2.5 text-xs bg-surface-2 border border-line">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-[11px] text-accent font-semibold">{a.title}</span>
-                        <span className={cn(
-                          "px-1.5 py-0.2 rounded font-mono text-[9px] font-bold uppercase",
-                          a.status === "running" ? "bg-accent/10 text-accent animate-pulse" :
-                          a.status === "done" ? "bg-success/15 text-success" : "bg-danger/15 text-danger"
-                        )}>
-                          {a.status}
-                        </span>
-                      </div>
-                      <p className="mt-1.5 font-mono text-[10.5px] text-fg-muted whitespace-pre-wrap break-all">{a.detail}</p>
-                      {a.workdir && (
-                        <div className="mt-1 text-[9px] text-fg-dim font-mono border-t border-line-soft/40 pt-1 flex items-center gap-1">
-                          <Folder className="h-2.5 w-2.5" />
-                          <span className="truncate">{a.workdir}</span>
+                  actions.map((a) => {
+                    const hasResponse = a.streamingResponse != null && a.streamingResponse.length > 0;
+                    return (
+                      <div key={a.id} className="panel p-0 text-xs bg-surface-2 border border-line overflow-hidden">
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-3 py-2 border-b border-line-soft/40">
+                          <span className="font-mono text-[11px] text-accent font-semibold">{a.title}</span>
+                          <span className={cn(
+                            "px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase",
+                            a.status === "running" ? "bg-accent/10 text-accent animate-pulse" :
+                            a.status === "done" ? "bg-success/15 text-success" : "bg-danger/15 text-danger"
+                          )}>
+                            {a.status}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  ))
+                        {/* Split body: response on left, task on right */}
+                        {hasResponse ? (
+                          <div className="action-split">
+                            <div className="action-split-response">
+                              <div className="action-split-label">Response</div>
+                              <div className="action-split-content">
+                                <MarkdownRenderer content={a.streamingResponse || ""} />
+                                {a.status === "running" && <span className="caret" />}
+                              </div>
+                            </div>
+                            <div className="action-split-task">
+                              <div className="action-split-label">Task</div>
+                              <p className="action-split-content font-mono text-fg-dim text-[10.5px] whitespace-pre-wrap break-all">{a.detail}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="px-3 py-2">
+                            <p className="font-mono text-[10.5px] text-fg-muted whitespace-pre-wrap break-all">
+                              {a.detail}
+                              {a.status === "running" && <span className="caret" />}
+                            </p>
+                          </div>
+                        )}
+                        {a.workdir && (
+                          <div className="px-3 py-1.5 text-[9px] text-fg-dim font-mono border-t border-line-soft/40 flex items-center gap-1">
+                            <Folder className="h-2.5 w-2.5" />
+                            <span className="truncate">{a.workdir}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             )}

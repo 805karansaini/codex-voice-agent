@@ -109,6 +109,7 @@ export type ActionEntry = {
   title: string;
   status: "running" | "done" | "failed";
   detail: string;
+  streamingResponse?: string;
   workdir?: string;
 };
 

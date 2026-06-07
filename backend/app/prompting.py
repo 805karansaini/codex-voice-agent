@@ -2,11 +2,43 @@ import re
 from typing import Any
 
 
-def build_recent_conversation_context(rows: list[dict[str, Any]], limit: int = 10) -> str:
+_TOOL_CALL_PATTERNS = [
+    # Multiline: "run_codex_task\ntask: ...\nworkdir: ..."
+    re.compile(
+        r"run_codex_task\s*\n\s*task:\s*[^\n]+(?:\n\s*workdir:\s*[^\n]+)?",
+        re.IGNORECASE,
+    ),
+    # Inline: "run_codex_task task: ..."
+    re.compile(r"run_codex_task\s+task:\s*[^\n]+", re.IGNORECASE),
+    # Dangling: "calling run_codex_task" / "calling run_codex_"
+    re.compile(r"calling\s+run_codex_\w*\.?", re.IGNORECASE),
+]
+
+
+def _sanitize_assistant_text(text: str) -> str:
+    """Strip hallucinated tool-call text from assistant messages.
+
+    The Gemini Live model sometimes outputs the tool name and parameters as
+    spoken text instead of emitting a real API tool call.  When that text is
+    fed back into the conversation context it reinforces the bad pattern.
+    """
+    for pattern in _TOOL_CALL_PATTERNS:
+        text = pattern.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def build_recent_conversation_context(
+    rows: list[dict[str, Any]], limit: int = 5
+) -> str:
     relevant = []
     for row in rows[-limit:]:
         role = str(row.get("role") or "").strip()
         text = _compact_text(str(row.get("text") or ""))
+        # Sanitize assistant messages to prevent hallucinated tool-call
+        # text from contaminating future prompts. Do this before the empty
+        # check so messages that were *only* a hallucinated call are dropped.
+        if role == "assistant":
+            text = _sanitize_assistant_text(text)
         if role and text:
             relevant.append(f"{role}: {text}")
     return "\n".join(relevant)
