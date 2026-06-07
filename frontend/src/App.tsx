@@ -673,6 +673,17 @@ export function App() {
         activeVoiceActionIdRef.current = null;
       }
     },
+    onHandoffTimeout: () => {
+      const ctx = voiceCtxRef.current;
+      if (!ctx || !activeAssistantVoiceMsgIdRef.current) return;
+      store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+        ...m,
+        streaming: false,
+        text:
+          m.text ||
+          "Codex finished the local work. The full output is available below, but Gemini did not finish a final response.",
+      }));
+    },
     onCodexEvent: (event) => {
       const ctx = voiceCtxRef.current;
       if (!ctx || !event) return;
@@ -693,16 +704,35 @@ export function App() {
     onHandoff: (name, summary, workdir, details) => {
       addHandoff(name, summary);
       const ctx = voiceCtxRef.current;
-      if (ctx && activeAssistantVoiceMsgIdRef.current) {
-        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
-          ...m,
-          usedCodex: true,
-          codexEvents: (details?.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
-          codexStatus: String(details?.codex_status || m.codexStatus || ""),
-          codexTurnId: String(details?.codex_turn_id || m.codexTurnId || ""),
-          codexThreadId: String(details?.codex_thread_id || m.codexThreadId || ""),
-          artifacts: appendArtifact(m.artifacts, details?.artifact as ChatArtifact | undefined),
-        }));
+      if (ctx) {
+        const artifact = details?.artifact as ChatArtifact | undefined;
+        if (activeAssistantVoiceMsgIdRef.current) {
+          store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+            ...m,
+            usedCodex: true,
+            codexEvents: (details?.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
+            codexStatus: String(details?.codex_status || m.codexStatus || ""),
+            codexTurnId: String(details?.codex_turn_id || m.codexTurnId || ""),
+            codexThreadId: String(details?.codex_thread_id || m.codexThreadId || ""),
+            artifacts: appendArtifact(m.artifacts, artifact),
+          }));
+        } else {
+          const id = crypto.randomUUID();
+          activeAssistantVoiceMsgIdRef.current = id;
+          store.appendMessage(ctx.chatId, {
+            id,
+            role: "assistant",
+            text: "Codex finished the local work. The full output is available below while Gemini prepares the final response.",
+            usedCodex: true,
+            streaming: true,
+            workdir,
+            artifacts: artifact ? [artifact] : [],
+            codexEvents: (details?.codex_events || []) as CodexTimelineEvent[],
+            codexStatus: String(details?.codex_status || ""),
+            codexTurnId: String(details?.codex_turn_id || ""),
+            codexThreadId: String(details?.codex_thread_id || ""),
+          });
+        }
       }
       if (activeVoiceActionIdRef.current) {
         updateAction(activeVoiceActionIdRef.current, {

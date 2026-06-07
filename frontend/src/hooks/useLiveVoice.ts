@@ -5,6 +5,7 @@ import { getWebSocketUrl } from "../services/api";
 const LIVE_AUDIO_RATE = 16000;
 const MAX_BUFFERED_AUDIO_CHUNKS = 360;
 const RECONNECT_DELAY_MS = 900;
+const TOOL_RESULT_FALLBACK_MS = 25000;
 
 function encodePcmChunk(input: Float32Array, sourceRate: number): string {
   const ratio = sourceRate / LIVE_AUDIO_RATE;
@@ -116,6 +117,7 @@ interface UseLiveVoiceProps {
   onHandoffStart?: (name: string, task: string, workdir: string) => void;
   onHandoffProgress?: (name: string, text: string) => void;
   onHandoffFailed?: (name: string, message: string) => void;
+  onHandoffTimeout?: () => void;
   onCodexEvent?: (event: any) => void;
   onUserTranscript?: (text: string) => void;
   onAssistantDelta?: (text: string) => void;
@@ -138,6 +140,7 @@ export function useLiveVoice({
   onHandoffStart,
   onHandoffProgress,
   onHandoffFailed,
+  onHandoffTimeout,
   onCodexEvent,
   onUserTranscript,
   onAssistantDelta,
@@ -171,10 +174,18 @@ export function useLiveVoice({
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const bufferedAudioRef = useRef<string[]>([]);
   const reconnectTimerRef = useRef<number | null>(null);
+  const toolResultFallbackTimerRef = useRef<number | null>(null);
   const manuallyStoppedRef = useRef(false);
   const usedCodexRef = useRef(false);
   const audioPlayerRef = useRef<AudioStreamPlayer | null>(null);
   const hasStreamedAudioRef = useRef(false);
+
+  const clearToolResultFallback = useCallback(() => {
+    if (toolResultFallbackTimerRef.current) {
+      window.clearTimeout(toolResultFallbackTimerRef.current);
+      toolResultFallbackTimerRef.current = null;
+    }
+  }, []);
 
   const getAudioPlayer = () => {
     if (!audioPlayerRef.current) {
@@ -190,6 +201,7 @@ export function useLiveVoice({
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
+    onHandoffTimeout,
     onCodexEvent,
     onUserTranscript,
     onAssistantDelta,
@@ -208,6 +220,7 @@ export function useLiveVoice({
       onHandoffStart,
       onHandoffProgress,
       onHandoffFailed,
+      onHandoffTimeout,
       onCodexEvent,
       onUserTranscript,
       onAssistantDelta,
@@ -224,6 +237,7 @@ export function useLiveVoice({
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
+    onHandoffTimeout,
     onCodexEvent,
     onUserTranscript,
     onAssistantDelta,
@@ -294,16 +308,19 @@ export function useLiveVoice({
         if (payload.type === "ready" || payload.type === "debug") {
           log(payload.message || payload.type);
         } else if (payload.type === "user_transcript") {
+          clearToolResultFallback();
           setUserPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
           setMessage("Heard you — composing a reply.");
           cbRef.current.onUserTranscript?.(payload.text || "");
         } else if (payload.type === "assistant_delta") {
+          clearToolResultFallback();
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
           setMessage("Gemini is replying.");
           cbRef.current.onAssistantDelta?.(payload.text || "");
         } else if (payload.type === "turn_complete") {
+          clearToolResultFallback();
           const userText = String(payload.user_text || "").trim();
           const assistantText = String(payload.assistant_text || "").trim();
           cbRef.current.onTurnComplete?.(
@@ -338,6 +355,7 @@ export function useLiveVoice({
             }
           }
         } else if (payload.type === "tool_call_started") {
+          clearToolResultFallback();
           usedCodexRef.current = true;
           setState("working");
           setMessage(`Codex is running: ${payload.task || ""}`);
@@ -362,6 +380,7 @@ export function useLiveVoice({
         } else if (payload.type === "status") {
           setMessage(payload.message || "Codex is working...");
         } else if (payload.type === "tool_call_failed") {
+          clearToolResultFallback();
           setState("thinking");
           setMessage("Codex task failed.");
           setAssistantPreview("");
@@ -380,6 +399,14 @@ export function useLiveVoice({
             payload.workdir || "",
             payload
           );
+          clearToolResultFallback();
+          toolResultFallbackTimerRef.current = window.setTimeout(() => {
+            setState("live");
+            setMessage("Codex result is available in chat. Gemini did not finish a final response.");
+            cbRef.current.onHandoffTimeout?.();
+            log("Gemini did not finish after Codex completed; surfaced the Codex result in chat.");
+            toolResultFallbackTimerRef.current = null;
+          }, TOOL_RESULT_FALLBACK_MS);
           log(`Codex handoff completed: ${payload.name || "tool"}.`);
         } else if (payload.type === "error") {
           setState("error");
@@ -414,7 +441,7 @@ export function useLiveVoice({
     };
 
     return websocket;
-  }, [flushBufferedAudio, log, sendSessionConfig, stopMicrophone]);
+  }, [clearToolResultFallback, flushBufferedAudio, log, sendSessionConfig, stopMicrophone]);
 
   const stop = useCallback(async () => {
     manuallyStoppedRef.current = true;
@@ -424,6 +451,7 @@ export function useLiveVoice({
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    clearToolResultFallback();
     bufferedAudioRef.current = [];
     audioPlayerRef.current?.stop();
     await stopMicrophone();
@@ -432,7 +460,7 @@ export function useLiveVoice({
     websocketRef.current = null;
     setState("idle");
     setMessage("Gemini Live voice is ready.");
-  }, [stopMicrophone]);
+  }, [clearToolResultFallback, stopMicrophone]);
 
   const start = useCallback(async () => {
     if (state === "connecting" || state === "live" || state === "thinking" || state === "working") return;
@@ -450,6 +478,7 @@ export function useLiveVoice({
     setMuted(false);
     mutedRef.current = false;
     bufferedAudioRef.current = [];
+    clearToolResultFallback();
     hasStreamedAudioRef.current = false;
     try {
       getAudioPlayer();
@@ -553,7 +582,7 @@ export function useLiveVoice({
       setState("error");
       setMessage(err instanceof Error ? err.message : "Could not start live voice.");
     }
-  }, [connectSocket, state, stopMicrophone]);
+  }, [clearToolResultFallback, connectSocket, state, stopMicrophone]);
 
   const cancelTask = useCallback(() => {
     if (websocketRef.current?.readyState === WebSocket.OPEN) {
@@ -561,7 +590,10 @@ export function useLiveVoice({
     }
   }, []);
 
-  useEffect(() => () => void stop(), [stop]);
+  useEffect(() => () => {
+    clearToolResultFallback();
+    void stop();
+  }, [clearToolResultFallback, stop]);
 
   return {
     active: state === "connecting" || state === "live" || state === "thinking" || state === "working",
