@@ -65,7 +65,23 @@ async def shutdown_codex_sessions() -> None:
 def _chat_context(chat_id: str | None) -> str:
     if not chat_id:
         return ""
-    return build_recent_conversation_context(history.list(chat_id=chat_id))
+    parts = [build_recent_conversation_context(history.list(chat_id=chat_id))]
+    recent_artifacts = artifacts.list(chat_id=chat_id)[-5:]
+    if recent_artifacts:
+        lines = ["Recent visible artifacts in this chat:"]
+        for item in recent_artifacts:
+            lines.append(
+                "- "
+                f"id={item.get('id')} "
+                f"title={item.get('title')} "
+                f"source={item.get('source')} "
+                f"summary={item.get('summary')}"
+            )
+        lines.append(
+            "If a follow-up asks about one of these generated outputs, answer from the artifact reference instead of calling Codex again unless fresh local state is required."
+        )
+        parts.append("\n".join(lines))
+    return "\n\n".join(part for part in parts if part.strip())
 
 
 def _artifact_summary(text: object, limit: int = 220) -> str:

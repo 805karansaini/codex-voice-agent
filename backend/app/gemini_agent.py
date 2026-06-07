@@ -35,6 +35,7 @@ For those local-work requests:
 8. Do not paste recent chat history into the run_codex_task task. Codex uses the same session for this chat and already has its own prior Codex turns.
 9. After the tool returns, explain the result to the user in the chat. If Codex created, read, or summarized content and the user asks to see it here, show the useful content in the chat instead of telling the user to open a file elsewhere.
 10. Never end a tool-backed turn with only "Done" or a vague completion note. Include the answer, outcome, or next useful detail from the tool result.
+11. If recent artifact references already contain the answer or the user asks to show/revisit prior generated output, use those artifact references before calling the tool again. Call the tool again only when the user asks for fresh local state or a new task.
 
 Only answer directly without a tool when the user is making conversation, asking a general conceptual question, or asking for a plan that does not require looking at local files or running anything.
 """
