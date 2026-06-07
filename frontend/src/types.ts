@@ -7,6 +7,24 @@ export type Message = {
   usedCodex?: boolean;
   streaming?: boolean;
   workdir?: string;
+  codexEvents?: CodexTimelineEvent[];
+  codexStatus?: string;
+  codexTurnId?: string;
+  codexThreadId?: string;
+};
+
+export type CodexTimelineEvent = {
+  method: string;
+  summary?: string;
+  item_type?: string;
+  item_id?: string;
+  turn_id?: string;
+  thread_id?: string;
+  command?: string;
+  status?: string;
+  output?: string;
+  exit_code?: number | null;
+  text?: string;
 };
 
 export type ProjectInfo = {
@@ -47,6 +65,10 @@ export type HistoryRow = {
   meta?: {
     direct_codex?: boolean;
     tool_calls?: unknown[];
+    codex_events?: CodexTimelineEvent[];
+    codex_status?: string;
+    codex_turn_id?: string;
+    codex_thread_id?: string;
     workdir?: string;
     project_id?: string;
     chat_id?: string;

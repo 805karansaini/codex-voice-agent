@@ -134,6 +134,10 @@ async def ask_gemini(
     tool_calls = []
     text_chunks: list[str] = []
     audio_chunks: list[bytes] = []
+    codex_events: list[dict[str, Any]] = []
+    codex_turn_id = None
+    codex_thread_id = None
+    codex_status = None
 
     async with client.aio.live.connect(model=settings.gemini_model, config=config) as session:
         await session.send_client_content(
@@ -259,7 +263,12 @@ async def ask_gemini_stream(
                                 cancel_token,
                                 conversation_id,
                             ):
-                                if event.get("type") == "delta":
+                                if event.get("type") == "codex_event":
+                                    codex_events.append(event)
+                                    codex_turn_id = event.get("turn_id") or codex_turn_id
+                                    codex_thread_id = event.get("thread_id") or codex_thread_id
+                                    yield {"type": "codex_event", "event": event}
+                                elif event.get("type") == "delta":
                                     text_delta = event.get("text", "")
                                     final_response += text_delta
                                     yield {
@@ -276,6 +285,10 @@ async def ask_gemini_stream(
                                 elif event.get("type") == "done":
                                     final_response = event.get("text", final_response)
                                     resolved_workdir = event.get("workdir", chosen_workdir)
+                                    codex_events[:] = list(event.get("events") or codex_events)
+                                    codex_turn_id = event.get("turn_id") or codex_turn_id
+                                    codex_thread_id = event.get("thread_id") or codex_thread_id
+                                    codex_status = event.get("status") or codex_status
                                 elif event.get("type") == "error":
                                     final_response = f"Error: {event.get('message')}"
                                     yield {
@@ -295,6 +308,10 @@ async def ask_gemini_stream(
                                 "name": call.name,
                                 "result": final_response,
                                 "workdir": resolved_workdir,
+                                "codex_events": codex_events[-200:],
+                                "codex_turn_id": codex_turn_id,
+                                "codex_thread_id": codex_thread_id,
+                                "codex_status": codex_status,
                             }
                             responses.append(
                                 types.FunctionResponse(
@@ -327,6 +344,10 @@ async def ask_gemini_stream(
                             "text": "".join(text_chunks).strip() or "Done.",
                             "tool_calls": tool_calls,
                             "workdir": session_workdir,
+                            "codex_events": codex_events[-200:],
+                            "codex_turn_id": codex_turn_id,
+                            "codex_thread_id": codex_thread_id,
+                            "codex_status": codex_status,
                             "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
                         }
                         return
@@ -336,6 +357,10 @@ async def ask_gemini_stream(
                         "text": "".join(text_chunks).strip() or "Done.",
                         "tool_calls": tool_calls,
                         "workdir": session_workdir,
+                        "codex_events": codex_events[-200:],
+                        "codex_turn_id": codex_turn_id,
+                        "codex_thread_id": codex_thread_id,
+                        "codex_status": codex_status,
                         "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
                     }
                     return

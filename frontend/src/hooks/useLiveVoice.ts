@@ -112,10 +112,11 @@ interface UseLiveVoiceProps {
   getChatId: () => string | undefined;
   onAudio: (audioUrl: string) => void;
   onDebug: (message: string) => void;
-  onHandoff: (name: string, summary: string, workdir?: string) => void;
+  onHandoff: (name: string, summary: string, workdir?: string, details?: any) => void;
   onHandoffStart?: (name: string, task: string, workdir: string) => void;
   onHandoffProgress?: (name: string, text: string) => void;
   onHandoffFailed?: (name: string, message: string) => void;
+  onCodexEvent?: (event: any) => void;
   onUserTranscript?: (text: string) => void;
   onAssistantDelta?: (text: string) => void;
   onInterrupted?: () => void;
@@ -137,6 +138,7 @@ export function useLiveVoice({
   onHandoffStart,
   onHandoffProgress,
   onHandoffFailed,
+  onCodexEvent,
   onUserTranscript,
   onAssistantDelta,
   onInterrupted,
@@ -188,6 +190,7 @@ export function useLiveVoice({
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
+    onCodexEvent,
     onUserTranscript,
     onAssistantDelta,
     onInterrupted,
@@ -205,6 +208,7 @@ export function useLiveVoice({
       onHandoffStart,
       onHandoffProgress,
       onHandoffFailed,
+      onCodexEvent,
       onUserTranscript,
       onAssistantDelta,
       onInterrupted,
@@ -220,6 +224,7 @@ export function useLiveVoice({
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
+    onCodexEvent,
     onUserTranscript,
     onAssistantDelta,
     onInterrupted,
@@ -349,6 +354,11 @@ export function useLiveVoice({
             payload.name || "run_codex_task",
             payload.text || ""
           );
+        } else if (payload.type === "codex_event") {
+          cbRef.current.onCodexEvent?.(payload.event);
+          if (payload.event?.summary) {
+            setMessage(payload.event.summary);
+          }
         } else if (payload.type === "status") {
           setMessage(payload.message || "Codex is working...");
         } else if (payload.type === "tool_call_failed") {
@@ -367,7 +377,8 @@ export function useLiveVoice({
           cbRef.current.onHandoff(
             payload.name || "run_codex_task",
             String(payload.result || "").trim() || "Codex task completed.",
-            payload.workdir || ""
+            payload.workdir || "",
+            payload
           );
           log(`Codex handoff completed: ${payload.name || "tool"}.`);
         } else if (payload.type === "error") {
@@ -390,7 +401,7 @@ export function useLiveVoice({
       }
       if (streamRef.current) {
         setState("connecting");
-        setMessage("Connection dropped — reconnecting microphone stream.");
+        setMessage("Gemini Live is reconnecting. Your microphone stream is being restored.");
         if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = window.setTimeout(() => {
           reconnectTimerRef.current = null;

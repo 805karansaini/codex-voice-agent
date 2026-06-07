@@ -34,7 +34,7 @@ import {
 import { useProjectStore } from "./hooks/useProjectStore";
 import { useLiveVoice } from "./hooks/useLiveVoice";
 import * as api from "./services/api";
-import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo } from "./types";
+import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo, CodexTimelineEvent } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 
 import AddProjectModal from "./components/modals/AddProjectModal";
@@ -76,6 +76,49 @@ async function readSseStream(res: Response, onEvent: (evt: any) => void) {
       } catch {}
     }
   }
+}
+
+function appendCodexEvent(events: CodexTimelineEvent[] | undefined, event: CodexTimelineEvent): CodexTimelineEvent[] {
+  const current = events || [];
+  const key = `${event.method}:${event.item_id || ""}:${event.turn_id || ""}:${event.summary || ""}`;
+  const existing = new Set(current.map((e) => `${e.method}:${e.item_id || ""}:${e.turn_id || ""}:${e.summary || ""}`));
+  if (existing.has(key)) return current;
+  return [...current, event].slice(-80);
+}
+
+function CodexTimeline({ events, status }: { events?: CodexTimelineEvent[]; status?: string }) {
+  const visible = (events || []).filter((event) =>
+    [
+      "turn/started",
+      "item/started",
+      "item/completed",
+      "turn/completed",
+      "item/fileChange/patchUpdated",
+      "item/plan/delta",
+      "item/reasoning/summaryTextDelta",
+    ].includes(event.method)
+  );
+  if (visible.length === 0 && !status) return null;
+  return (
+    <div className="codex-timeline">
+      <div className="codex-timeline-title">
+        <Zap className="h-3 w-3" />
+        <span>Codex turn</span>
+        {status && <span className="codex-timeline-status">{status}</span>}
+      </div>
+      <div className="codex-timeline-list">
+        {visible.slice(-12).map((event, index) => (
+          <div key={`${event.method}-${event.item_id || index}-${index}`} className="codex-timeline-row">
+            <span className={cn("codex-timeline-dot", event.method === "turn/completed" && "done")} />
+            <div className="min-w-0">
+              <p className="codex-timeline-summary">{event.summary || event.method}</p>
+              {event.command && <p className="codex-timeline-detail">{event.command}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function App() {
@@ -349,6 +392,15 @@ export function App() {
     []
   );
 
+  const stopActiveVoiceHandoff = useCallback((detail = "Stopped before completion.") => {
+    if (!activeVoiceActionIdRef.current) return;
+    updateAction(activeVoiceActionIdRef.current, {
+      status: "failed",
+      detail,
+    });
+    activeVoiceActionIdRef.current = null;
+  }, [updateAction]);
+
   const speak = useCallback(
     (text: string) => {
       if (!text || !("speechSynthesis" in window)) return;
@@ -450,6 +502,7 @@ export function App() {
     onInterrupted: () => {
       const ctx = voiceCtxRef.current;
       if (!ctx) return;
+      stopActiveVoiceHandoff("Interrupted before completion.");
       if (activeAssistantVoiceMsgIdRef.current) {
         store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
           ...m,
@@ -528,8 +581,36 @@ export function App() {
         activeVoiceActionIdRef.current = null;
       }
     },
-    onHandoff: (name, summary, workdir) => {
+    onCodexEvent: (event) => {
+      const ctx = voiceCtxRef.current;
+      if (!ctx || !event) return;
+      if (activeAssistantVoiceMsgIdRef.current) {
+        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          usedCodex: true,
+          codexEvents: appendCodexEvent(m.codexEvents, event as CodexTimelineEvent),
+          codexStatus: String(event.status || m.codexStatus || ""),
+          codexTurnId: String(event.turn_id || m.codexTurnId || ""),
+          codexThreadId: String(event.thread_id || m.codexThreadId || ""),
+        }));
+      }
+      if (activeVoiceActionIdRef.current && event.summary) {
+        updateAction(activeVoiceActionIdRef.current, { detail: event.summary });
+      }
+    },
+    onHandoff: (name, summary, workdir, details) => {
       addHandoff(name, summary);
+      const ctx = voiceCtxRef.current;
+      if (ctx && activeAssistantVoiceMsgIdRef.current) {
+        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          usedCodex: true,
+          codexEvents: (details?.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
+          codexStatus: String(details?.codex_status || m.codexStatus || ""),
+          codexTurnId: String(details?.codex_turn_id || m.codexTurnId || ""),
+          codexThreadId: String(details?.codex_thread_id || m.codexThreadId || ""),
+        }));
+      }
       if (activeVoiceActionIdRef.current) {
         updateAction(activeVoiceActionIdRef.current, {
           status: "done",
@@ -611,7 +692,20 @@ export function App() {
         }
 
         const handle = (evt: any) => {
-          if (evt.type === "delta" && evt.text) {
+          if (evt.type === "codex_event" && evt.method) {
+            store.updateMessage(chatId, assistantId, (m) => ({
+              ...m,
+              codexEvents: appendCodexEvent(m.codexEvents, evt as CodexTimelineEvent),
+              codexStatus: String(evt.status || m.codexStatus || ""),
+              codexTurnId: String(evt.turn_id || m.codexTurnId || ""),
+              codexThreadId: String(evt.thread_id || m.codexThreadId || ""),
+            }));
+            if (evt.summary) {
+              updateAction(actionId, (prev) => ({
+                detail: String(evt.summary),
+              }));
+            }
+          } else if (evt.type === "delta" && evt.text) {
             finalText += evt.text;
             store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
           } else if (evt.type === "done") {
@@ -621,6 +715,10 @@ export function App() {
               text: finalText || m.text,
               streaming: false,
               workdir: evt.workdir,
+              codexEvents: (evt.events || m.codexEvents || []) as CodexTimelineEvent[],
+              codexStatus: String(evt.status || m.codexStatus || ""),
+              codexTurnId: String(evt.turn_id || m.codexTurnId || ""),
+              codexThreadId: String(evt.thread_id || m.codexThreadId || ""),
             }));
             updateAction(actionId, {
               status: "done",
@@ -695,7 +793,20 @@ export function App() {
         }
 
         await readSseStream(res, (evt) => {
-          if (evt.type === "delta" && evt.text) {
+          if (evt.type === "codex_event" && evt.event) {
+            const event = evt.event as CodexTimelineEvent;
+            store.updateMessage(chatId, assistantId, (m) => ({
+              ...m,
+              usedCodex: true,
+              codexEvents: appendCodexEvent(m.codexEvents, event),
+              codexStatus: String(event.status || m.codexStatus || ""),
+              codexTurnId: String(event.turn_id || m.codexTurnId || ""),
+              codexThreadId: String(event.thread_id || m.codexThreadId || ""),
+            }));
+            if (activeActionId && event.summary) {
+              updateAction(activeActionId, { detail: event.summary });
+            }
+          } else if (evt.type === "delta" && evt.text) {
             finalText += evt.text;
             store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
           } else if (evt.type === "tool_call") {
@@ -723,6 +834,14 @@ export function App() {
             usedCodex = true;
             const summary = String(evt.result || "").slice(0, 180);
             addHandoff(String(evt.name || "run_codex_task"), summary);
+            store.updateMessage(chatId, assistantId, (m) => ({
+              ...m,
+              usedCodex: true,
+              codexEvents: (evt.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
+              codexStatus: String(evt.codex_status || m.codexStatus || ""),
+              codexTurnId: String(evt.codex_turn_id || m.codexTurnId || ""),
+              codexThreadId: String(evt.codex_thread_id || m.codexThreadId || ""),
+            }));
             if (activeActionId) {
               updateAction(activeActionId, {
                 status: "done",
@@ -740,6 +859,10 @@ export function App() {
               streaming: false,
               usedCodex,
               workdir: evt.workdir || project.path,
+              codexEvents: (evt.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
+              codexStatus: String(evt.codex_status || m.codexStatus || ""),
+              codexTurnId: String(evt.codex_turn_id || m.codexTurnId || ""),
+              codexThreadId: String(evt.codex_thread_id || m.codexThreadId || ""),
             }));
           } else if (evt.type === "error") {
             store.updateMessage(chatId, assistantId, (m) => ({
@@ -846,6 +969,7 @@ export function App() {
     activeUserVoiceMsgIdRef.current = null;
     activeAssistantVoiceMsgIdRef.current = null;
     if (voiceActive) {
+      stopActiveVoiceHandoff("Stopped before completion.");
       liveVoice.stop();
       voiceCtxRef.current = null;
     } else if (store.activeProject) {
@@ -1461,6 +1585,9 @@ export function App() {
                             )
                           )}
                           {m.streaming && m.text && <span className="caret animate-pulse" />}
+                          {(m.usedCodex || (m.codexEvents && m.codexEvents.length > 0)) && (
+                            <CodexTimeline events={m.codexEvents} status={m.codexStatus} />
+                          )}
                         </div>
                       </article>
                     );

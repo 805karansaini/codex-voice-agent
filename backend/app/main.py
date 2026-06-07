@@ -18,6 +18,7 @@ from .codex_runner import (
     close_codex_thread_session,
     close_codex_thread_sessions,
     close_codex_thread_sessions_for,
+    interrupt_codex_thread_session,
     resolve_workdir,
     run_codex,
     run_codex_stream_with_timer,
@@ -38,7 +39,7 @@ app = FastAPI(title="Codex Voice Agent")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://0.0.0.0:5173"],
-    allow_origin_regex=r"http://(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+):5173",
+    allow_origin_regex=r"https?://(127\.0\.0\.1|localhost|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -47,7 +48,7 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def shutdown_codex_sessions() -> None:
-    close_codex_thread_sessions()
+    await close_codex_thread_sessions()
 
 
 def _chat_context(chat_id: str | None) -> str:
@@ -121,9 +122,9 @@ async def clear_history(
 ) -> dict[str, object]:
     if project_id is not None:
         chat_ids = [str(chat.get("id")) for chat in chats.list(project_id=project_id) if chat.get("id")]
-        close_codex_thread_sessions_for(chat_ids)
+        await close_codex_thread_sessions_for(chat_ids)
     elif chat_id is not None:
-        close_codex_thread_session(chat_id)
+        await close_codex_thread_session(chat_id)
     history.clear(project_id=project_id, workdir=workdir, chat_id=chat_id)
     return {"ok": True}
 
@@ -154,7 +155,7 @@ async def save_project(req: ProjectRequest) -> dict[str, object]:
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str) -> dict[str, object]:
     chat_ids = [str(chat.get("id")) for chat in chats.list(project_id=project_id) if chat.get("id")]
-    close_codex_thread_sessions_for(chat_ids)
+    await close_codex_thread_sessions_for(chat_ids)
     projects.delete(project_id)
     chats.delete_for_project(project_id)
     history.clear(project_id=project_id)
@@ -182,7 +183,7 @@ async def save_chat(req: ChatMetaRequest) -> dict[str, object]:
 
 @app.delete("/api/chats/{chat_id}")
 async def delete_chat(chat_id: str) -> dict[str, object]:
-    close_codex_thread_session(chat_id)
+    await close_codex_thread_session(chat_id)
     chats.delete(chat_id)
     history.clear(chat_id=chat_id)
     console.clear(chat_id)
@@ -262,6 +263,10 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         final_text = ""
         final_workdir = workdir
         final_tool_calls = []
+        final_codex_events = []
+        final_codex_turn_id = None
+        final_codex_thread_id = None
+        final_codex_status = None
         try:
             async for event in ask_gemini_stream(
                 text,
@@ -275,6 +280,10 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                     final_text = str(event.get("text") or "")
                     final_workdir = str(event.get("workdir") or workdir)
                     final_tool_calls = list(event.get("tool_calls") or [])
+                    final_codex_events = list(event.get("codex_events") or [])
+                    final_codex_turn_id = event.get("codex_turn_id")
+                    final_codex_thread_id = event.get("codex_thread_id")
+                    final_codex_status = event.get("codex_status")
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
@@ -286,6 +295,10 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                     final_text,
                     {
                         "tool_calls": final_tool_calls,
+                        "codex_events": final_codex_events,
+                        "codex_turn_id": final_codex_turn_id,
+                        "codex_thread_id": final_codex_thread_id,
+                        "codex_status": final_codex_status,
                         "workdir": final_workdir,
                         "project_id": req.project_id,
                         "chat_id": req.chat_id,
@@ -327,6 +340,10 @@ async def live_voice(websocket: WebSocket) -> None:
     session_conversation_context = ""
     current_task_cancel_token: CancellationToken | None = None
     streamed_audio_this_turn = False
+    last_codex_events: list[dict[str, object]] = []
+    last_codex_turn_id: str | None = None
+    last_codex_thread_id: str | None = None
+    last_codex_status: str | None = None
 
     async def send_client_audio(session: object, initial: dict | None = None) -> None:
         nonlocal session_workdir, session_project_id, session_chat_id, session_conversation_context, current_task_cancel_token
@@ -354,12 +371,14 @@ async def live_voice(websocket: WebSocket) -> None:
             elif event_type == "cancel_task":
                 if current_task_cancel_token:
                     current_task_cancel_token.cancel()
+                    await interrupt_codex_thread_session(session_chat_id)
                     await websocket.send_json({"type": "debug", "message": "Codex task cancelled."})
             elif event_type == "close":
                 return
 
     async def receive_gemini(session: object) -> None:
         nonlocal audio_chunks, input_text_chunks, output_text_chunks, session_conversation_context, current_task_cancel_token, streamed_audio_this_turn
+        nonlocal last_codex_events, last_codex_turn_id, last_codex_thread_id, last_codex_status
         while True:
             received_message = False
             async for server_message in session.receive():
@@ -391,6 +410,10 @@ async def live_voice(websocket: WebSocket) -> None:
 
                         final_response = ""
                         resolved_workdir = workdir
+                        codex_events = []
+                        codex_turn_id = None
+                        codex_thread_id = None
+                        codex_status = None
                         async for event in run_codex_stream_with_timer(
                             enhanced_task,
                             workdir,
@@ -398,7 +421,17 @@ async def live_voice(websocket: WebSocket) -> None:
                             cancel_token,
                             session_chat_id,
                         ):
-                            if event.get("type") == "delta":
+                            if event.get("type") == "codex_event":
+                                codex_events.append(event)
+                                codex_turn_id = event.get("turn_id") or codex_turn_id
+                                codex_thread_id = event.get("thread_id") or codex_thread_id
+                                await websocket.send_json(
+                                    {
+                                        "type": "codex_event",
+                                        "event": event,
+                                    }
+                                )
+                            elif event.get("type") == "delta":
                                 text_delta = event.get("text", "")
                                 final_response += text_delta
                                 await websocket.send_json(
@@ -419,6 +452,10 @@ async def live_voice(websocket: WebSocket) -> None:
                             elif event.get("type") == "done":
                                 final_response = event.get("text", final_response)
                                 resolved_workdir = event.get("workdir", workdir)
+                                codex_events = list(event.get("events") or codex_events)
+                                codex_turn_id = event.get("turn_id") or codex_turn_id
+                                codex_thread_id = event.get("thread_id") or codex_thread_id
+                                codex_status = event.get("status") or codex_status
                             elif event.get("type") == "error":
                                 final_response = f"Error: {event.get('message')}"
                                 await websocket.send_json(
@@ -430,6 +467,10 @@ async def live_voice(websocket: WebSocket) -> None:
                                 )
 
                         current_task_cancel_token = None
+                        last_codex_events = codex_events[-200:]
+                        last_codex_turn_id = codex_turn_id
+                        last_codex_thread_id = codex_thread_id
+                        last_codex_status = codex_status
 
                         responses.append(
                             types.FunctionResponse(
@@ -444,6 +485,10 @@ async def live_voice(websocket: WebSocket) -> None:
                                 "name": call.name,
                                 "result": final_response,
                                 "workdir": resolved_workdir,
+                                "codex_events": codex_events[-200:],
+                                "codex_turn_id": codex_turn_id,
+                                "codex_thread_id": codex_thread_id,
+                                "codex_status": codex_status,
                             }
                         )
                     await session.send_tool_response(function_responses=responses)
@@ -455,6 +500,7 @@ async def live_voice(websocket: WebSocket) -> None:
                 if content.interrupted:
                     if current_task_cancel_token:
                         current_task_cancel_token.cancel()
+                        await interrupt_codex_thread_session(session_chat_id)
                     audio_chunks = []
                     input_text_chunks = []
                     output_text_chunks = []
@@ -492,7 +538,19 @@ async def live_voice(websocket: WebSocket) -> None:
                     assistant_text = "".join(output_text_chunks).strip() or "Done."
                     if user_text:
                         history.append("user", user_text, {"workdir": session_workdir, "project_id": session_project_id, "chat_id": session_chat_id})
-                    history.append("assistant", assistant_text, {"workdir": session_workdir, "project_id": session_project_id, "chat_id": session_chat_id})
+                    history.append(
+                        "assistant",
+                        assistant_text,
+                        {
+                            "workdir": session_workdir,
+                            "project_id": session_project_id,
+                            "chat_id": session_chat_id,
+                            "codex_events": last_codex_events,
+                            "codex_turn_id": last_codex_turn_id,
+                            "codex_thread_id": last_codex_thread_id,
+                            "codex_status": last_codex_status,
+                        },
+                    )
                     session_conversation_context = _chat_context(session_chat_id)
                     await websocket.send_json(
                         {
@@ -507,6 +565,10 @@ async def live_voice(websocket: WebSocket) -> None:
                     input_text_chunks = []
                     output_text_chunks = []
                     streamed_audio_this_turn = False
+                    last_codex_events = []
+                    last_codex_turn_id = None
+                    last_codex_thread_id = None
+                    last_codex_status = None
             if received_message:
                 await websocket.send_json({"type": "debug", "message": "Gemini receive loop is waiting for the next turn."})
             await asyncio.sleep(0.05)
@@ -543,6 +605,10 @@ async def live_voice(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "error", "message": str(exc)})
         except Exception:
             return
+    finally:
+        if current_task_cancel_token:
+            current_task_cancel_token.cancel()
+            await interrupt_codex_thread_session(session_chat_id)
 
 
 @app.post("/api/codex")
@@ -668,11 +734,21 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
     async def event_source():
         final_text = ""
         final_workdir = workdir
+        codex_events = []
+        codex_turn_id = None
+        codex_thread_id = None
+        codex_status = None
         try:
             async for event in run_codex_stream_with_timer(enhanced_task, workdir, settings, cancel_token, req.chat_id):
-                if event.get("type") == "done":
+                if event.get("type") == "codex_event":
+                    codex_events.append(event)
+                elif event.get("type") == "done":
                     final_text = str(event.get("text") or "")
                     final_workdir = str(event.get("workdir") or workdir)
+                    codex_events = list(event.get("events") or codex_events)
+                    codex_turn_id = event.get("turn_id")
+                    codex_thread_id = event.get("thread_id")
+                    codex_status = event.get("status")
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
@@ -682,7 +758,16 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
                 history.append(
                     "assistant",
                     final_text,
-                    {"direct_codex": True, "workdir": final_workdir, "project_id": req.project_id, "chat_id": req.chat_id},
+                    {
+                        "direct_codex": True,
+                        "workdir": final_workdir,
+                        "project_id": req.project_id,
+                        "chat_id": req.chat_id,
+                        "codex_events": codex_events[-200:],
+                        "codex_turn_id": codex_turn_id,
+                        "codex_thread_id": codex_thread_id,
+                        "codex_status": codex_status,
+                    },
                 )
 
     return StreamingResponse(
