@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator
 from google import genai
 from google.genai import types
 
+from . import tracing
 from .codex_runner import run_codex, run_codex_stream_with_timer, CancellationToken
 from .prompting import improve_codex_task_prompt
 from .settings import Settings
@@ -35,6 +36,16 @@ For those local-work requests:
 
 Only answer directly without a tool when the user is making conversation, asking a general conceptual question, or asking for a plan that does not require looking at local files or running anything.
 """
+
+
+def _turn_input(message: str, conversation_context: str | None) -> dict[str, str]:
+    """Readable trace input for a turn: the new user message plus the running
+    conversation so the whole context is visible on the trace. Cross-turn flow
+    is best viewed in the Langfuse Sessions tab (grouped by chat_id)."""
+    return {
+        "user_message": message,
+        "conversation_so_far": conversation_context or "(start of conversation)",
+    }
 
 
 def _system_instruction(workdir: str | None = None, conversation_context: str | None = None) -> str:
@@ -139,73 +150,87 @@ async def ask_gemini(
     codex_thread_id = None
     codex_status = None
 
-    async with client.aio.live.connect(model=settings.gemini_model, config=config) as session:
-        await session.send_client_content(
-            turns=types.Content(role="user", parts=[types.Part(text=message)]),
-            turn_complete=True,
-        )
+    def _result() -> dict[str, Any]:
+        reply = "".join(text_chunks).strip() or "Done."
+        tracing.update_current_generation(output=reply, metadata={"tool_calls": len(tool_calls)})
+        return {
+            "reply": reply,
+            "tool_calls": tool_calls,
+            "workdir": session_workdir,
+            "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
+        }
 
-        while True:
-            async for server_message in session.receive():
-                if server_message.tool_call and server_message.tool_call.function_calls:
-                    responses = []
-                    for call in server_message.tool_call.function_calls:
-                        args = dict(call.args or {})
-                        task = str(args.get("task") or message)
-                        enhanced_task = improve_codex_task_prompt(task)
-                        chosen_workdir = session_workdir or settings.codex_default_workdir
-                        codex_result = await run_codex(enhanced_task, chosen_workdir, settings, conversation_id)
-                        tool_calls.append(
-                            {
-                                "name": call.name,
-                                "args": {**args, "enhanced_task": enhanced_task},
-                                "result": codex_result.final_response,
-                                "workdir": codex_result.workdir,
-                            }
-                        )
-                        responses.append(
-                            types.FunctionResponse(
-                                id=call.id,
-                                name=call.name,
-                                response={
+    with tracing.session_context(
+        session_id=conversation_id,
+        metadata={"workdir": session_workdir},
+        tags=["voice-chat"],
+    ), tracing.generation(
+        "gemini-voice-turn",
+        model=settings.gemini_model,
+        input=_turn_input(message, conversation_context),
+    ) as gen:
+        async with client.aio.live.connect(model=settings.gemini_model, config=config) as session:
+            await session.send_client_content(
+                turns=types.Content(role="user", parts=[types.Part(text=message)]),
+                turn_complete=True,
+            )
+
+            while True:
+                async for server_message in session.receive():
+                    if server_message.tool_call and server_message.tool_call.function_calls:
+                        responses = []
+                        for call in server_message.tool_call.function_calls:
+                            args = dict(call.args or {})
+                            task = str(args.get("task") or message)
+                            enhanced_task = improve_codex_task_prompt(task)
+                            chosen_workdir = session_workdir or settings.codex_default_workdir
+                            with tracing.tool_call(
+                                call.name,
+                                parent=gen,
+                                input={"task": enhanced_task, "workdir": chosen_workdir},
+                            ) as tool_obs:
+                                codex_result = await run_codex(enhanced_task, chosen_workdir, settings, conversation_id)
+                                tracing.update_observation(
+                                    tool_obs,
+                                    output=codex_result.final_response,
+                                    metadata={"workdir": codex_result.workdir},
+                                )
+                            tool_calls.append(
+                                {
+                                    "name": call.name,
+                                    "args": {**args, "enhanced_task": enhanced_task},
                                     "result": codex_result.final_response,
                                     "workdir": codex_result.workdir,
-                                },
+                                }
                             )
-                        )
-                    await session.send_tool_response(function_responses=responses)
-                    break
+                            responses.append(
+                                types.FunctionResponse(
+                                    id=call.id,
+                                    name=call.name,
+                                    response={
+                                        "result": codex_result.final_response,
+                                        "workdir": codex_result.workdir,
+                                    },
+                                )
+                            )
+                        await session.send_tool_response(function_responses=responses)
+                        break
 
-                content = server_message.server_content
-                if content and content.output_transcription and content.output_transcription.text:
-                    text_chunks.append(content.output_transcription.text)
-                if content and content.model_turn:
-                    for part in content.model_turn.parts or []:
-                        if part.inline_data and part.inline_data.data:
-                            audio_chunks.append(part.inline_data.data)
-                        if part.text:
-                            text_chunks.append(part.text)
-                if content and content.turn_complete:
-                    return {
-                        "reply": "".join(text_chunks).strip() or "Done.",
-                        "tool_calls": tool_calls,
-                        "workdir": session_workdir,
-                        "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
-                    }
-            else:
-                return {
-                    "reply": "".join(text_chunks).strip() or "Done.",
-                    "tool_calls": tool_calls,
-                    "workdir": session_workdir,
-                    "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
-                }
+                    content = server_message.server_content
+                    if content and content.output_transcription and content.output_transcription.text:
+                        text_chunks.append(content.output_transcription.text)
+                    if content and content.model_turn:
+                        for part in content.model_turn.parts or []:
+                            if part.inline_data and part.inline_data.data:
+                                audio_chunks.append(part.inline_data.data)
+                            if part.text:
+                                text_chunks.append(part.text)
+                    if content and content.turn_complete:
+                        return _result()
+                else:
+                    return _result()
 
-    return {
-        "reply": "".join(text_chunks).strip() or "Done.",
-        "tool_calls": tool_calls,
-        "workdir": session_workdir,
-        "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
-    }
+    return _result()
 
 
 async def ask_gemini_stream(
@@ -227,121 +252,164 @@ async def ask_gemini_stream(
     tool_calls = []
     text_chunks: list[str] = []
     audio_chunks: list[bytes] = []
+    codex_events: list[dict[str, Any]] = []
+    codex_turn_id = None
+    codex_thread_id = None
+    codex_status = None
 
-    try:
-        async with client.aio.live.connect(model=settings.gemini_model, config=config) as session:
-            await session.send_client_content(
-                turns=types.Content(role="user", parts=[types.Part(text=message)]),
-                turn_complete=True,
-            )
+    def _finalize_generation() -> str:
+        final_text = "".join(text_chunks).strip() or "Done."
+        tracing.update_current_generation(
+            output=final_text, metadata={"tool_calls": len(tool_calls)}
+        )
+        return final_text
 
-            while True:
-                saw_message = False
-                async for server_message in session.receive():
-                    saw_message = True
+    with tracing.session_context(
+        session_id=conversation_id,
+        metadata={"workdir": session_workdir},
+        tags=["voice-chat", "stream"],
+    ), tracing.generation(
+        "gemini-voice-turn",
+        model=settings.gemini_model,
+        input=_turn_input(message, conversation_context),
+    ) as gen:
+        try:
+            async with client.aio.live.connect(model=settings.gemini_model, config=config) as session:
+                await session.send_client_content(
+                    turns=types.Content(role="user", parts=[types.Part(text=message)]),
+                    turn_complete=True,
+                )
 
-                    if server_message.tool_call and server_message.tool_call.function_calls:
-                        responses = []
-                        for call in server_message.tool_call.function_calls:
-                            args = dict(call.args or {})
-                            task = str(args.get("task") or message)
-                            enhanced_task = improve_codex_task_prompt(task)
-                            chosen_workdir = session_workdir or settings.codex_default_workdir
+                while True:
+                    saw_message = False
+                    async for server_message in session.receive():
+                        saw_message = True
+
+                        if server_message.tool_call and server_message.tool_call.function_calls:
+                            responses = []
+                            for call in server_message.tool_call.function_calls:
+                                args = dict(call.args or {})
+                                task = str(args.get("task") or message)
+                                enhanced_task = improve_codex_task_prompt(task)
+                                chosen_workdir = session_workdir or settings.codex_default_workdir
+                                yield {
+                                    "type": "tool_call",
+                                    "name": call.name,
+                                    "task": enhanced_task,
+                                    "original_task": task,
+                                    "workdir": chosen_workdir,
+                                }
+                                final_response = ""
+                                resolved_workdir = chosen_workdir
+                                with tracing.tool_call(
+                                    call.name,
+                                    parent=gen,
+                                    input={"task": enhanced_task, "workdir": chosen_workdir},
+                                ) as tool_obs:
+                                    async for event in run_codex_stream_with_timer(
+                                        enhanced_task,
+                                        chosen_workdir,
+                                        settings,
+                                        cancel_token,
+                                        conversation_id,
+                                    ):
+                                        if event.get("type") == "codex_event":
+                                            codex_events.append(event)
+                                            codex_turn_id = event.get("turn_id") or codex_turn_id
+                                            codex_thread_id = event.get("thread_id") or codex_thread_id
+                                            yield {"type": "codex_event", "event": event}
+                                        elif event.get("type") == "delta":
+                                            text_delta = event.get("text", "")
+                                            final_response += text_delta
+                                            yield {
+                                                "type": "tool_progress",
+                                                "name": call.name,
+                                                "text": text_delta,
+                                            }
+                                        elif event.get("type") == "status":
+                                            yield {
+                                                "type": "status",
+                                                "message": event.get("message"),
+                                                "elapsed": event.get("elapsed"),
+                                            }
+                                        elif event.get("type") == "done":
+                                            final_response = event.get("text", final_response)
+                                            resolved_workdir = event.get("workdir", chosen_workdir)
+                                            codex_events[:] = list(event.get("events") or codex_events)
+                                            codex_turn_id = event.get("turn_id") or codex_turn_id
+                                            codex_thread_id = event.get("thread_id") or codex_thread_id
+                                            codex_status = event.get("status") or codex_status
+                                        elif event.get("type") == "error":
+                                            final_response = f"Error: {event.get('message')}"
+                                            yield {
+                                                "type": "error",
+                                                "message": event.get("message")
+                                            }
+                                    tracing.update_observation(
+                                        tool_obs,
+                                        output=final_response,
+                                        metadata={"workdir": resolved_workdir, "status": codex_status},
+                                    )
+
+                                tool_call = {
+                                    "name": call.name,
+                                    "args": {**args, "enhanced_task": enhanced_task},
+                                    "result": final_response,
+                                    "workdir": resolved_workdir,
+                                }
+                                tool_calls.append(tool_call)
+                                yield {
+                                    "type": "tool_result",
+                                    "name": call.name,
+                                    "result": final_response,
+                                    "workdir": resolved_workdir,
+                                    "codex_events": codex_events[-200:],
+                                    "codex_turn_id": codex_turn_id,
+                                    "codex_thread_id": codex_thread_id,
+                                    "codex_status": codex_status,
+                                }
+                                responses.append(
+                                    types.FunctionResponse(
+                                        id=call.id,
+                                        name=call.name,
+                                        response={
+                                            "result": final_response,
+                                            "workdir": resolved_workdir,
+                                        },
+                                    )
+                                )
+                            await session.send_tool_response(function_responses=responses)
+                            break
+
+                        content = server_message.server_content
+                        if content and content.output_transcription and content.output_transcription.text:
+                            text = content.output_transcription.text
+                            text_chunks.append(text)
+                            yield {"type": "delta", "text": text}
+                        if content and content.model_turn:
+                            for part in content.model_turn.parts or []:
+                                if part.inline_data and part.inline_data.data:
+                                    audio_chunks.append(part.inline_data.data)
+                                if part.text:
+                                    text_chunks.append(part.text)
+                                    yield {"type": "delta", "text": part.text}
+                        if content and content.turn_complete:
                             yield {
-                                "type": "tool_call",
-                                "name": call.name,
-                                "task": enhanced_task,
-                                "original_task": task,
-                                "workdir": chosen_workdir,
-                            }
-                            final_response = ""
-                            resolved_workdir = chosen_workdir
-                            async for event in run_codex_stream_with_timer(
-                                enhanced_task,
-                                chosen_workdir,
-                                settings,
-                                cancel_token,
-                                conversation_id,
-                            ):
-                                if event.get("type") == "codex_event":
-                                    codex_events.append(event)
-                                    codex_turn_id = event.get("turn_id") or codex_turn_id
-                                    codex_thread_id = event.get("thread_id") or codex_thread_id
-                                    yield {"type": "codex_event", "event": event}
-                                elif event.get("type") == "delta":
-                                    text_delta = event.get("text", "")
-                                    final_response += text_delta
-                                    yield {
-                                        "type": "tool_progress",
-                                        "name": call.name,
-                                        "text": text_delta,
-                                    }
-                                elif event.get("type") == "status":
-                                    yield {
-                                        "type": "status",
-                                        "message": event.get("message"),
-                                        "elapsed": event.get("elapsed"),
-                                    }
-                                elif event.get("type") == "done":
-                                    final_response = event.get("text", final_response)
-                                    resolved_workdir = event.get("workdir", chosen_workdir)
-                                    codex_events[:] = list(event.get("events") or codex_events)
-                                    codex_turn_id = event.get("turn_id") or codex_turn_id
-                                    codex_thread_id = event.get("thread_id") or codex_thread_id
-                                    codex_status = event.get("status") or codex_status
-                                elif event.get("type") == "error":
-                                    final_response = f"Error: {event.get('message')}"
-                                    yield {
-                                        "type": "error",
-                                        "message": event.get("message")
-                                    }
-
-                            tool_call = {
-                                "name": call.name,
-                                "args": {**args, "enhanced_task": enhanced_task},
-                                "result": final_response,
-                                "workdir": resolved_workdir,
-                            }
-                            tool_calls.append(tool_call)
-                            yield {
-                                "type": "tool_result",
-                                "name": call.name,
-                                "result": final_response,
-                                "workdir": resolved_workdir,
+                                "type": "done",
+                                "text": _finalize_generation(),
+                                "tool_calls": tool_calls,
+                                "workdir": session_workdir,
                                 "codex_events": codex_events[-200:],
                                 "codex_turn_id": codex_turn_id,
                                 "codex_thread_id": codex_thread_id,
                                 "codex_status": codex_status,
+                                "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
                             }
-                            responses.append(
-                                types.FunctionResponse(
-                                    id=call.id,
-                                    name=call.name,
-                                    response={
-                                        "result": final_response,
-                                        "workdir": resolved_workdir,
-                                    },
-                                )
-                            )
-                        await session.send_tool_response(function_responses=responses)
-                        break
-
-                    content = server_message.server_content
-                    if content and content.output_transcription and content.output_transcription.text:
-                        text = content.output_transcription.text
-                        text_chunks.append(text)
-                        yield {"type": "delta", "text": text}
-                    if content and content.model_turn:
-                        for part in content.model_turn.parts or []:
-                            if part.inline_data and part.inline_data.data:
-                                audio_chunks.append(part.inline_data.data)
-                            if part.text:
-                                text_chunks.append(part.text)
-                                yield {"type": "delta", "text": part.text}
-                    if content and content.turn_complete:
+                            return
+                    if not saw_message:
                         yield {
                             "type": "done",
-                            "text": "".join(text_chunks).strip() or "Done.",
+                            "text": _finalize_generation(),
                             "tool_calls": tool_calls,
                             "workdir": session_workdir,
                             "codex_events": codex_events[-200:],
@@ -351,21 +419,9 @@ async def ask_gemini_stream(
                             "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
                         }
                         return
-                if not saw_message:
-                    yield {
-                        "type": "done",
-                        "text": "".join(text_chunks).strip() or "Done.",
-                        "tool_calls": tool_calls,
-                        "workdir": session_workdir,
-                        "codex_events": codex_events[-200:],
-                        "codex_turn_id": codex_turn_id,
-                        "codex_thread_id": codex_thread_id,
-                        "codex_status": codex_status,
-                        "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
-                    }
-                    return
-    except Exception as exc:
-        yield {"type": "error", "message": str(exc)}
+        except Exception as exc:
+            tracing.update_current_generation(level="ERROR", status_message=str(exc))
+            yield {"type": "error", "message": str(exc)}
 
 
 async def transcribe_audio(audio_bytes: bytes, mime_type: str, settings: Settings) -> str:
@@ -375,20 +431,25 @@ async def transcribe_audio(audio_bytes: bytes, mime_type: str, settings: Setting
         raise RuntimeError("No audio was recorded")
 
     client = genai.Client(api_key=settings.google_api_key)
-    response = await client.aio.models.generate_content(
-        model=settings.gemini_transcription_model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part(text="Transcribe this audio exactly. Return only the spoken words."),
-                    types.Part(inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)),
-                ],
-            )
-        ],
-        config=types.GenerateContentConfig(temperature=0, response_mime_type="text/plain"),
-    )
-    text = (response.text or "").strip()
-    if not text:
-        raise RuntimeError("Gemini could not transcribe the recorded audio")
-    return text
+    # The underlying generate_content call is auto-instrumented (model + token
+    # usage). The wrapping span gives the trace a readable name; we never record
+    # the raw audio bytes, only the resulting transcript.
+    with tracing.span("transcribe-audio", input={"mime_type": mime_type, "bytes": len(audio_bytes)}):
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_transcription_model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(text="Transcribe this audio exactly. Return only the spoken words."),
+                        types.Part(inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)),
+                    ],
+                )
+            ],
+            config=types.GenerateContentConfig(temperature=0, response_mime_type="text/plain"),
+        )
+        text = (response.text or "").strip()
+        tracing.update_current_span(output=text)
+        if not text:
+            raise RuntimeError("Gemini could not transcribe the recorded audio")
+        return text

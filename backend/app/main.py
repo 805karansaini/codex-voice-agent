@@ -27,6 +27,7 @@ from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, ask_gemini_stream, l
 from .history import ChatStore, ConsoleStore, HistoryStore, ProjectStore
 from .prompting import build_recent_conversation_context, improve_codex_task_prompt
 from .settings import get_settings
+from . import tracing
 
 
 settings = get_settings()
@@ -46,9 +47,15 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup_tracing() -> None:
+    tracing.setup_tracing()
+
+
 @app.on_event("shutdown")
 async def shutdown_codex_sessions() -> None:
     await close_codex_thread_sessions()
+    tracing.shutdown()
 
 
 def _chat_context(chat_id: str | None) -> str:
@@ -344,6 +351,7 @@ async def live_voice(websocket: WebSocket) -> None:
     last_codex_turn_id: str | None = None
     last_codex_thread_id: str | None = None
     last_codex_status: str | None = None
+    active_turn_gen = None
 
     async def send_client_audio(session: object, initial: dict | None = None) -> None:
         nonlocal session_workdir, session_project_id, session_chat_id, session_conversation_context, current_task_cancel_token
@@ -379,6 +387,22 @@ async def live_voice(websocket: WebSocket) -> None:
     async def receive_gemini(session: object) -> None:
         nonlocal audio_chunks, input_text_chunks, output_text_chunks, session_conversation_context, current_task_cancel_token, streamed_audio_this_turn
         nonlocal last_codex_events, last_codex_turn_id, last_codex_thread_id, last_codex_status
+        nonlocal active_turn_gen
+
+        # One Langfuse generation per voice turn. Created lazily when the turn
+        # produces its first signal (user transcript or tool call) and closed at
+        # turn_complete. Only transcribed text is recorded, never raw audio.
+        turn_gen = None
+
+        def ensure_turn_gen():
+            nonlocal turn_gen
+            if turn_gen is None:
+                turn_gen = tracing.start_observation(
+                    "generation", "gemini-voice-turn", model=settings.gemini_model
+                )
+                active_turn_gen = turn_gen
+            return turn_gen
+
         while True:
             received_message = False
             async for server_message in session.receive():
@@ -389,6 +413,7 @@ async def live_voice(websocket: WebSocket) -> None:
                 if server_message.tool_call and server_message.tool_call.function_calls:
                     responses = []
                     user_text = "".join(input_text_chunks).strip()
+                    ensure_turn_gen()
                     for call in server_message.tool_call.function_calls:
                         args = dict(call.args or {})
                         task = str(args.get("task") or user_text or "Run the requested local task.")
@@ -414,57 +439,67 @@ async def live_voice(websocket: WebSocket) -> None:
                         codex_turn_id = None
                         codex_thread_id = None
                         codex_status = None
-                        async for event in run_codex_stream_with_timer(
-                            enhanced_task,
-                            workdir,
-                            settings,
-                            cancel_token,
-                            session_chat_id,
-                        ):
-                            if event.get("type") == "codex_event":
-                                codex_events.append(event)
-                                codex_turn_id = event.get("turn_id") or codex_turn_id
-                                codex_thread_id = event.get("thread_id") or codex_thread_id
-                                await websocket.send_json(
-                                    {
-                                        "type": "codex_event",
-                                        "event": event,
-                                    }
-                                )
-                            elif event.get("type") == "delta":
-                                text_delta = event.get("text", "")
-                                final_response += text_delta
-                                await websocket.send_json(
-                                    {
-                                        "type": "tool_progress",
-                                        "name": call.name,
-                                        "text": text_delta,
-                                    }
-                                )
-                            elif event.get("type") == "status":
-                                await websocket.send_json(
-                                    {
-                                        "type": "status",
-                                        "message": event.get("message"),
-                                        "elapsed": event.get("elapsed"),
-                                    }
-                                )
-                            elif event.get("type") == "done":
-                                final_response = event.get("text", final_response)
-                                resolved_workdir = event.get("workdir", workdir)
-                                codex_events = list(event.get("events") or codex_events)
-                                codex_turn_id = event.get("turn_id") or codex_turn_id
-                                codex_thread_id = event.get("thread_id") or codex_thread_id
-                                codex_status = event.get("status") or codex_status
-                            elif event.get("type") == "error":
-                                final_response = f"Error: {event.get('message')}"
-                                await websocket.send_json(
-                                    {
-                                        "type": "tool_call_failed",
-                                        "name": call.name,
-                                        "message": event.get("message"),
-                                    }
-                                )
+                        with tracing.tool_call(
+                            call.name,
+                            parent=turn_gen,
+                            input={"task": enhanced_task, "workdir": workdir},
+                        ) as tool_obs:
+                            async for event in run_codex_stream_with_timer(
+                                enhanced_task,
+                                workdir,
+                                settings,
+                                cancel_token,
+                                session_chat_id,
+                            ):
+                                if event.get("type") == "codex_event":
+                                    codex_events.append(event)
+                                    codex_turn_id = event.get("turn_id") or codex_turn_id
+                                    codex_thread_id = event.get("thread_id") or codex_thread_id
+                                    await websocket.send_json(
+                                        {
+                                            "type": "codex_event",
+                                            "event": event,
+                                        }
+                                    )
+                                elif event.get("type") == "delta":
+                                    text_delta = event.get("text", "")
+                                    final_response += text_delta
+                                    await websocket.send_json(
+                                        {
+                                            "type": "tool_progress",
+                                            "name": call.name,
+                                            "text": text_delta,
+                                        }
+                                    )
+                                elif event.get("type") == "status":
+                                    await websocket.send_json(
+                                        {
+                                            "type": "status",
+                                            "message": event.get("message"),
+                                            "elapsed": event.get("elapsed"),
+                                        }
+                                    )
+                                elif event.get("type") == "done":
+                                    final_response = event.get("text", final_response)
+                                    resolved_workdir = event.get("workdir", workdir)
+                                    codex_events = list(event.get("events") or codex_events)
+                                    codex_turn_id = event.get("turn_id") or codex_turn_id
+                                    codex_thread_id = event.get("thread_id") or codex_thread_id
+                                    codex_status = event.get("status") or codex_status
+                                elif event.get("type") == "error":
+                                    final_response = f"Error: {event.get('message')}"
+                                    await websocket.send_json(
+                                        {
+                                            "type": "tool_call_failed",
+                                            "name": call.name,
+                                            "message": event.get("message"),
+                                        }
+                                    )
+                            tracing.update_observation(
+                                tool_obs,
+                                output=final_response,
+                                metadata={"workdir": resolved_workdir, "status": codex_status},
+                            )
 
                         current_task_cancel_token = None
                         last_codex_events = codex_events[-200:]
@@ -501,6 +536,14 @@ async def live_voice(websocket: WebSocket) -> None:
                     if current_task_cancel_token:
                         current_task_cancel_token.cancel()
                         await interrupt_codex_thread_session(session_chat_id)
+                    tracing.end_observation(
+                        turn_gen,
+                        output="".join(output_text_chunks).strip() or None,
+                        level="WARNING",
+                        status_message="interrupted",
+                    )
+                    turn_gen = None
+                    active_turn_gen = None
                     audio_chunks = []
                     input_text_chunks = []
                     output_text_chunks = []
@@ -510,6 +553,7 @@ async def live_voice(websocket: WebSocket) -> None:
                 if content.input_transcription and content.input_transcription.text:
                     text = content.input_transcription.text
                     input_text_chunks.append(text)
+                    ensure_turn_gen()
                     await websocket.send_json({"type": "user_transcript", "text": text})
 
                 if content.output_transcription and content.output_transcription.text:
@@ -536,6 +580,19 @@ async def live_voice(websocket: WebSocket) -> None:
                 if content.turn_complete:
                     user_text = "".join(input_text_chunks).strip()
                     assistant_text = "".join(output_text_chunks).strip() or "Done."
+                    tracing.end_observation(
+                        turn_gen,
+                        input={
+                            "user_message": user_text,
+                            # Context from prior turns; cross-turn flow is in the
+                            # Langfuse Sessions tab (grouped by chat_id).
+                            "conversation_so_far": session_conversation_context or "(start of conversation)",
+                        },
+                        output=assistant_text,
+                        metadata={"workdir": session_workdir, "project_id": session_project_id},
+                    )
+                    turn_gen = None
+                    active_turn_gen = None
                     if user_text:
                         history.append("user", user_text, {"workdir": session_workdir, "project_id": session_project_id, "chat_id": session_chat_id})
                     history.append(
@@ -590,13 +647,20 @@ async def live_voice(websocket: WebSocket) -> None:
             config=live_connect_config(settings, session_workdir, session_conversation_context),
         ) as session:
             await websocket.send_json({"type": "debug", "message": "Connected to Gemini Live."})
-            send_task = asyncio.create_task(send_client_audio(session, first_payload))
-            receive_task = asyncio.create_task(receive_gemini(session))
-            done, pending = await asyncio.wait({send_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            for task in done:
-                task.result()
+            # Group every observation from this live connection under one session.
+            # create_task copies the current context, so the spawned tasks inherit it.
+            with tracing.session_context(
+                session_id=session_chat_id,
+                metadata={"project_id": session_project_id, "workdir": session_workdir},
+                tags=["voice-live"],
+            ):
+                send_task = asyncio.create_task(send_client_audio(session, first_payload))
+                receive_task = asyncio.create_task(receive_gemini(session))
+                done, pending = await asyncio.wait({send_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
+                for task in pending:
+                    task.cancel()
+                for task in done:
+                    task.result()
             await websocket.close()
     except WebSocketDisconnect:
         return
@@ -609,6 +673,17 @@ async def live_voice(websocket: WebSocket) -> None:
         if current_task_cancel_token:
             current_task_cancel_token.cancel()
             await interrupt_codex_thread_session(session_chat_id)
+        tracing.end_observation(
+            active_turn_gen,
+            input={
+                "user_message": "".join(input_text_chunks).strip(),
+                "conversation_so_far": session_conversation_context or "(start of conversation)",
+            },
+            output="".join(output_text_chunks).strip() or None,
+            level="WARNING",
+            status_message="voice connection ended before turn_complete",
+            metadata={"workdir": session_workdir, "project_id": session_project_id},
+        )
 
 
 @app.post("/api/codex")
@@ -620,7 +695,12 @@ async def codex(req: CodexRequest) -> dict[str, object]:
     enhanced_task = improve_codex_task_prompt(task)
     history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
     try:
-        result = await run_codex(enhanced_task, workdir, settings, req.chat_id)
+        with tracing.session_context(
+            session_id=req.chat_id,
+            metadata={"workdir": workdir, "project_id": req.project_id},
+            tags=["direct-codex"],
+        ):
+            result = await run_codex(enhanced_task, workdir, settings, req.chat_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     history.append("assistant", result.final_response, {"direct_codex": True, "workdir": result.workdir, "project_id": req.project_id, "chat_id": req.chat_id})
@@ -739,17 +819,22 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
         codex_thread_id = None
         codex_status = None
         try:
-            async for event in run_codex_stream_with_timer(enhanced_task, workdir, settings, cancel_token, req.chat_id):
-                if event.get("type") == "codex_event":
-                    codex_events.append(event)
-                elif event.get("type") == "done":
-                    final_text = str(event.get("text") or "")
-                    final_workdir = str(event.get("workdir") or workdir)
-                    codex_events = list(event.get("events") or codex_events)
-                    codex_turn_id = event.get("turn_id")
-                    codex_thread_id = event.get("thread_id")
-                    codex_status = event.get("status")
-                yield f"data: {json.dumps(event)}\n\n"
+            with tracing.session_context(
+                session_id=req.chat_id,
+                metadata={"workdir": workdir, "project_id": req.project_id},
+                tags=["direct-codex", "stream"],
+            ):
+                async for event in run_codex_stream_with_timer(enhanced_task, workdir, settings, cancel_token, req.chat_id):
+                    if event.get("type") == "codex_event":
+                        codex_events.append(event)
+                    elif event.get("type") == "done":
+                        final_text = str(event.get("text") or "")
+                        final_workdir = str(event.get("workdir") or workdir)
+                        codex_events = list(event.get("events") or codex_events)
+                        codex_turn_id = event.get("turn_id")
+                        codex_thread_id = event.get("thread_id")
+                        codex_status = event.get("status")
+                    yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:

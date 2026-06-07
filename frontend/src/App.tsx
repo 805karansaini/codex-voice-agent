@@ -80,23 +80,28 @@ async function readSseStream(res: Response, onEvent: (evt: any) => void) {
 
 function appendCodexEvent(events: CodexTimelineEvent[] | undefined, event: CodexTimelineEvent): CodexTimelineEvent[] {
   const current = events || [];
-  const key = `${event.method}:${event.item_id || ""}:${event.turn_id || ""}:${event.summary || ""}`;
-  const existing = new Set(current.map((e) => `${e.method}:${e.item_id || ""}:${e.turn_id || ""}:${e.summary || ""}`));
+  // Dedup on method + item_id (unique per Codex item). Avoid including summary
+  // in the key since different items can share the same summary text.
+  const key = `${event.method}:${event.item_id || ""}:${event.turn_id || ""}`;
+  const existing = new Set(current.map((e) => `${e.method}:${e.item_id || ""}:${e.turn_id || ""}`));
   if (existing.has(key)) return current;
   return [...current, event].slice(-80);
 }
 
+const TIMELINE_METHODS = new Set([
+  "turn/started",
+  "item/started",
+  "item/completed",
+  "turn/completed",
+  "item/fileChange/patchUpdated",
+  "item/plan/delta",
+  "item/reasoning/summaryTextDelta",
+]);
+
 function CodexTimeline({ events, status }: { events?: CodexTimelineEvent[]; status?: string }) {
-  const visible = (events || []).filter((event) =>
-    [
-      "turn/started",
-      "item/started",
-      "item/completed",
-      "turn/completed",
-      "item/fileChange/patchUpdated",
-      "item/plan/delta",
-      "item/reasoning/summaryTextDelta",
-    ].includes(event.method)
+  const visible = React.useMemo(
+    () => (events || []).filter((event) => TIMELINE_METHODS.has(event.method)),
+    [events]
   );
   if (visible.length === 0 && !status) return null;
   return (

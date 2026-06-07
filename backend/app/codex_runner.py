@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from . import tracing
 from .settings import Settings
 
 
@@ -149,6 +150,8 @@ async def interrupt_codex_thread_session(conversation_id: str | None) -> bool:
         session = _sessions.get(_session_key(conversation_id))
     if not session:
         return False
+    # Snapshot active_turn to avoid a race with _stream_turn's finally block
+    # which sets active_turn = None after the lock is released.
     turn = session.active_turn
     if not turn:
         return False
@@ -220,10 +223,9 @@ def _event_summary(method: str, payload: Any) -> str:
     return method
 
 
-def _normalize_event(event: Any) -> dict[str, Any]:
+def _normalize_event(event: Any, *, include_payload: bool = True) -> dict[str, Any]:
     method = str(getattr(event, "method", "unknown"))
     payload = getattr(event, "payload", None)
-    payload_json = _dump_model(payload)
     item = _root_item(getattr(payload, "item", None))
     turn = getattr(payload, "turn", None)
     item_id = getattr(payload, "item_id", None) or getattr(item, "id", None)
@@ -232,8 +234,12 @@ def _normalize_event(event: Any) -> dict[str, Any]:
     data: dict[str, Any] = {
         "method": method,
         "summary": _event_summary(method, payload),
-        "payload": payload_json,
     }
+    # The full payload can be very large (model_dump output). Include it in
+    # real-time streaming so the client has full detail, but callers that
+    # persist events (e.g. history) should pass include_payload=False.
+    if include_payload:
+        data["payload"] = _dump_model(payload)
     if item_id:
         data["item_id"] = item_id
     if turn_id:
@@ -256,6 +262,7 @@ def _normalize_event(event: Any) -> dict[str, Any]:
 
 
 def _strip_payload(event: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of the event without the heavy 'payload' field for persistence."""
     return {k: v for k, v in event.items() if k != "payload"}
 
 
@@ -284,6 +291,16 @@ async def _stream_turn(
 ) -> AsyncIterator[dict[str, Any]]:
     parts: list[str] = []
     events: list[dict[str, Any]] = []
+    # Treat each Codex turn as a generation: it is an autonomous coding agent
+    # acting on the prompt. The full text response is the output; command/file
+    # activity is summarised in metadata.
+    codex_obs = tracing.start_observation(
+        "generation",
+        "codex-turn",
+        model="codex",
+        input=prompt,
+        metadata={"workdir": workdir},
+    )
     turn = await thread.turn(prompt)
     if session:
         session.active_turn = turn
@@ -311,6 +328,18 @@ async def _stream_turn(
                         item = _root_item(raw_item)
                         if getattr(item, "type", None) == "agentMessage":
                             final = str(getattr(item, "text", "") or "").strip()
+                tracing.end_observation(
+                    codex_obs,
+                    output=final or "Done.",
+                    metadata={
+                        "workdir": workdir,
+                        "status": status,
+                        "thread_id": getattr(thread, "id", None),
+                        "turn_id": getattr(turn, "id", None),
+                        "event_count": len(events),
+                    },
+                )
+                codex_obs = None
                 yield {
                     "type": "done",
                     "text": final or "Done.",
@@ -322,8 +351,14 @@ async def _stream_turn(
                 }
                 return
     except Exception as exc:
+        tracing.end_observation(
+            codex_obs, level="ERROR", status_message=str(exc), output=f"Error: {exc}"
+        )
+        codex_obs = None
         yield {"type": "error", "message": str(exc), "events": [_strip_payload(e) for e in events[-200:]]}
     finally:
+        # Ensure the observation is closed even on cancellation / early return.
+        tracing.end_observation(codex_obs)
         if session:
             session.active_turn = None
 
