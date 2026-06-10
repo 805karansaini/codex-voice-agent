@@ -88,6 +88,10 @@ def _is_local_host(host: str) -> bool:
     return host in _LOCAL_CLIENTS
 
 
+def _has_history_filter(project_id: str | None, workdir: str | None, chat_id: str | None) -> bool:
+    return any(value is not None and value.strip() for value in (project_id, workdir, chat_id))
+
+
 @app.middleware("http")
 async def require_api_auth(request: Request, call_next):
     if request.method == "OPTIONS" or request.url.path == "/api/health":
@@ -352,6 +356,8 @@ async def health() -> dict[str, object]:
 async def list_history(
     project_id: str | None = None, workdir: str | None = None, chat_id: str | None = None
 ) -> list[dict[str, object]]:
+    if not _has_history_filter(project_id, workdir, chat_id):
+        raise HTTPException(status_code=400, detail="Provide project_id, workdir, or chat_id")
     return history.list(project_id=project_id, workdir=workdir, chat_id=chat_id)
 
 

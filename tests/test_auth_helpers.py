@@ -4,6 +4,7 @@ from backend.app.main import (
     _artifact_content_type,
     _bearer_token,
     _changed_files_from_status,
+    _has_history_filter,
     _has_file_changes,
     _is_local_host,
 )
@@ -40,6 +41,11 @@ class AuthHelperTests(unittest.TestCase):
             _changed_files_from_status(status),
             ["backend/app/main.py", "new.txt", "notes.md"],
         )
+
+    def test_history_filter_requires_specific_scope(self) -> None:
+        self.assertFalse(_has_history_filter(None, None, None))
+        self.assertFalse(_has_history_filter("", "  ", None))
+        self.assertTrue(_has_history_filter(None, None, "chat-1"))
 
 
 if __name__ == "__main__":
