@@ -217,6 +217,152 @@ function CodexTimeline({ events, status }: { events?: CodexTimelineEvent[]; stat
   );
 }
 
+type ConfirmDialogState = {
+  title: string;
+  body: string;
+  actionLabel: string;
+  danger?: boolean;
+  onConfirm: () => void;
+};
+
+function ConfirmModal({ dialog, onClose }: { dialog: ConfirmDialogState; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      onMouseDown={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface-0/60 p-4 backdrop-blur-sm"
+    >
+      <div
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        className="relative flex w-[95vw] max-w-sm flex-col gap-4 rounded-xl border border-line bg-surface-1 p-5 shadow-xl"
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 rounded-md p-1 text-fg-dim transition-colors hover:bg-surface-2 hover:text-fg"
+          aria-label="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        <div className="pr-6">
+          <h3 className="text-base font-semibold tracking-tight text-fg">{dialog.title}</h3>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-fg-muted">{dialog.body}</p>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-line-soft pt-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md px-3 py-2 text-[12.5px] font-semibold text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              dialog.onConfirm();
+              onClose();
+            }}
+            className={cn(
+              "rounded-md px-3 py-2 text-[12.5px] font-semibold text-white transition-all hover:brightness-110",
+              dialog.danger ? "bg-danger" : "bg-accent text-accent-foreground"
+            )}
+          >
+            {dialog.actionLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type RenameDialogState = {
+  projectId: string;
+  chatId: string;
+  initialTitle: string;
+};
+
+function RenameChatModal({
+  dialog,
+  onClose,
+  onRename,
+}: {
+  dialog: RenameDialogState;
+  onClose: () => void;
+  onRename: (projectId: string, chatId: string, title: string) => void;
+}) {
+  const [title, setTitle] = useState(dialog.initialTitle);
+  const cleanTitle = title.trim();
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const submit = () => {
+    if (!cleanTitle) return;
+    onRename(dialog.projectId, dialog.chatId, cleanTitle);
+    onClose();
+  };
+
+  return (
+    <div
+      onMouseDown={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface-0/60 p-4 backdrop-blur-sm"
+    >
+      <div
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        className="relative flex w-[95vw] max-w-sm flex-col gap-4 rounded-xl border border-line bg-surface-1 p-5 shadow-xl"
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 rounded-md p-1 text-fg-dim transition-colors hover:bg-surface-2 hover:text-fg"
+          aria-label="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        <div className="pr-6">
+          <h3 className="text-base font-semibold tracking-tight text-fg">Rename conversation</h3>
+        </div>
+        <input
+          autoFocus
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          onKeyDown={(event) => event.key === "Enter" && submit()}
+          className="w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-[13.5px] text-fg placeholder:text-fg-dim focus:border-accent focus:outline-none"
+        />
+        <div className="flex justify-end gap-2 border-t border-line-soft pt-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md px-3 py-2 text-[12.5px] font-semibold text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!cleanTitle}
+            className="rounded-md bg-accent px-3 py-2 text-[12.5px] font-semibold text-accent-foreground transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Rename
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const store = useProjectStore();
 
@@ -236,6 +382,8 @@ export function App() {
   const [actions, setActions] = useState<ActionEntry[]>([]);
 
   const [showAdd, setShowAdd] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [railOpen, setRailOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
 
@@ -1125,22 +1273,27 @@ export function App() {
   };
 
   const handleRemoveProject = (id: string, name: string) => {
-    if (window.confirm(`Remove project “${name}”? This clears its chats and local history.`)) {
-      store.removeProject(id);
-    }
+    setConfirmDialog({
+      title: "Remove project",
+      body: `Remove ${name}? This clears its chats and local history.`,
+      actionLabel: "Remove",
+      danger: true,
+      onConfirm: () => store.removeProject(id),
+    });
   };
 
   const handleRemoveChat = (projectId: string, chatId: string) => {
-    if (window.confirm("Delete this conversation?")) {
-      store.removeChat(projectId, chatId);
-    }
+    setConfirmDialog({
+      title: "Delete conversation",
+      body: "Delete this conversation and its local history?",
+      actionLabel: "Delete",
+      danger: true,
+      onConfirm: () => store.removeChat(projectId, chatId),
+    });
   };
 
   const handleRenameChat = (projectId: string, chatId: string, title: string) => {
-    const next = window.prompt("Rename conversation", title);
-    if (next !== null) {
-      store.renameChat(projectId, chatId, next);
-    }
+    setRenameDialog({ projectId, chatId, initialTitle: title });
   };
 
   const statusClass =
@@ -2148,6 +2301,14 @@ export function App() {
           }}
           usedColors={store.projects.map((p) => p.color)}
           existingPaths={store.projects.map((p) => p.path)}
+        />
+      )}
+      {confirmDialog && <ConfirmModal dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />}
+      {renameDialog && (
+        <RenameChatModal
+          dialog={renameDialog}
+          onClose={() => setRenameDialog(null)}
+          onRename={store.renameChat}
         />
       )}
 
