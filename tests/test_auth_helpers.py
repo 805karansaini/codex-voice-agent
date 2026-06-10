@@ -9,6 +9,7 @@ from backend.app.main import (
     _changed_files_from_status,
     _has_history_filter,
     _has_file_changes,
+    _is_false_tool_claim,
     _is_local_host,
     _project_briefing,
 )
@@ -50,6 +51,12 @@ class AuthHelperTests(unittest.TestCase):
         self.assertFalse(_has_history_filter(None, None, None))
         self.assertFalse(_has_history_filter("", "  ", None))
         self.assertTrue(_has_history_filter(None, None, "chat-1"))
+
+    def test_false_tool_claim_detector_requires_no_codex_use(self) -> None:
+        self.assertTrue(_is_false_tool_claim("I'll check the files now.", used_codex=False))
+        self.assertTrue(_is_false_tool_claim("Calling run_codex_task.", used_codex=False))
+        self.assertFalse(_is_false_tool_claim("I checked the files.", used_codex=True))
+        self.assertFalse(_is_false_tool_claim("This is a general answer.", used_codex=False))
 
     def test_project_briefing_summarizes_git_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

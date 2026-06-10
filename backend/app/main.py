@@ -92,6 +92,30 @@ def _has_history_filter(project_id: str | None, workdir: str | None, chat_id: st
     return any(value is not None and value.strip() for value in (project_id, workdir, chat_id))
 
 
+def _is_false_tool_claim(assistant_text: str, used_codex: bool) -> bool:
+    if used_codex:
+        return False
+    value = assistant_text.lower()
+    return any(
+        keyword in value
+        for keyword in (
+            "run_codex",
+            "calling the tool",
+            "calling codex",
+            "pulling those",
+            "i'm pulling",
+            "i'll pull",
+            "running the tool",
+            "running codex",
+            "i'll get that",
+            "let me get",
+            "i'll fetch",
+            "i'll check",
+            "let me check",
+        )
+    )
+
+
 @app.middleware("http")
 async def require_api_auth(request: Request, call_next):
     if request.method == "OPTIONS" or request.url.path == "/api/health":
@@ -1053,18 +1077,7 @@ async def live_voice(websocket: WebSocket) -> None:
                     user_text = "".join(input_text_chunks).strip()
                     assistant_text = "".join(output_text_chunks).strip()
                     used_codex = bool(last_codex_status or last_codex_events)
-                    # Detect false tool-call claims: model says it called the
-                    # tool (or is calling it) but no actual tool call occurred.
-                    false_tool_claim = False
-                    if not used_codex:
-                        _lower = assistant_text.lower()
-                        false_tool_claim = any(kw in _lower for kw in (
-                            "run_codex", "calling the tool", "calling codex",
-                            "pulling those", "i'm pulling", "i'll pull",
-                            "running the tool", "running codex",
-                            "i'll get that", "let me get", "i'll fetch",
-                            "i'll check", "let me check",
-                        ))
+                    false_tool_claim = _is_false_tool_claim(assistant_text, used_codex)
                     live_log.write(
                         "gemini.turn_complete",
                         chat_id=session_chat_id,
@@ -1073,6 +1086,29 @@ async def live_voice(websocket: WebSocket) -> None:
                         used_codex=used_codex,
                         false_tool_claim=false_tool_claim,
                     )
+                    if false_tool_claim:
+                        live_log.write("gemini.false_tool_claim_corrected", chat_id=session_chat_id)
+                        await session.send_client_content(
+                            turns=types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part(
+                                        text=(
+                                            "System correction: you claimed or implied a local tool call, "
+                                            "but no tool was actually called. If the user's request requires "
+                                            "local files, commands, git state, tests, builds, or code changes, "
+                                            "call run_codex_task now. Otherwise answer directly without claiming tool use.\n\n"
+                                            f"Original user request: {user_text or '(no transcript)'}"
+                                        )
+                                    )
+                                ],
+                            ),
+                            turn_complete=True,
+                        )
+                        audio_chunks = []
+                        output_text_chunks = []
+                        streamed_audio_this_turn = False
+                        continue
                     tracing.end_observation(
                         turn_gen,
                         input={
