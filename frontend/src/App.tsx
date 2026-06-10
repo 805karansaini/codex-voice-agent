@@ -1375,6 +1375,13 @@ export function App() {
       : liveVoice.state === "error"
       ? "Voice needs attention"
       : "Live voice";
+  const liveStatusText = [
+    voiceActive ? voiceTitle : "",
+    voiceActive ? liveVoice.message : "",
+    busy ? "Assistant response in progress" : "",
+  ]
+    .filter(Boolean)
+    .join(". ");
 
   const suggestions =
     mode === "codex"
@@ -1968,6 +1975,9 @@ export function App() {
           {/* Composer Footer */}
           <footer className={cn("border-t border-line bg-surface-1/40 shrink-0", isMobile ? "px-3 py-2.5" : "px-5 py-3")}>
             <div className="mx-auto max-w-[760px]">
+              <div className="sr-only" aria-live="polite" aria-atomic="true">
+                {liveStatusText}
+              </div>
               {voiceActive && (
                 <div className="mb-3 rounded-lg border border-accent/25 bg-surface-2 p-3.5 shadow-lg flex items-center gap-3.5 animate-in slide-in-from-bottom-2 duration-200">
                   {/* Equalizer */}
@@ -2161,7 +2171,11 @@ export function App() {
           </div>
 
           {/* Console Tabs */}
-          <div className="flex items-center gap-0.5 border-b border-line-soft px-2 pt-1.5 shrink-0 overflow-x-auto">
+          <div
+            className="flex items-center gap-0.5 border-b border-line-soft px-2 pt-1.5 shrink-0 overflow-x-auto"
+            role="tablist"
+            aria-label="Console views"
+          >
             {(
               [
                 { id: "stream", label: "Stream", icon: Activity },
@@ -2175,6 +2189,11 @@ export function App() {
               return (
                 <button
                   key={t.id}
+                  id={`console-tab-${t.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  aria-controls={`console-panel-${t.id}`}
                   onClick={() => setActiveConsoleTab(t.id)}
                   className={cn(
                     "relative flex items-center gap-1.5 px-2.5 py-2 text-[11.5px] transition-colors shrink-0",
@@ -2192,7 +2211,12 @@ export function App() {
           {/* Console Contents */}
           <div className="flex-1 overflow-y-auto p-3">
             {activeConsoleTab === "stream" && (
-              <div className="font-mono text-[11px] leading-relaxed">
+              <div
+                id="console-panel-stream"
+                role="tabpanel"
+                aria-labelledby="console-tab-stream"
+                className="font-mono text-[11px] leading-relaxed"
+              >
                 {debugEntries.length === 0 ? (
                   <div className="text-center py-12 text-fg-dim italic">Waiting for events…</div>
                 ) : (
@@ -2207,7 +2231,7 @@ export function App() {
             )}
 
             {activeConsoleTab === "actions" && (
-              <div className="space-y-2">
+              <div id="console-panel-actions" role="tabpanel" aria-labelledby="console-tab-actions" className="space-y-2">
                 {actions.length === 0 ? (
                   <div className="text-center py-12 text-fg-dim italic">No operator actions logged.</div>
                 ) : (
@@ -2278,7 +2302,7 @@ export function App() {
             )}
 
             {activeConsoleTab === "handoffs" && (
-              <div className="space-y-2">
+              <div id="console-panel-handoffs" role="tabpanel" aria-labelledby="console-tab-handoffs" className="space-y-2">
                 {handoffs.length === 0 ? (
                   <div className="text-center py-12 text-fg-dim italic">No handoffs between Agent and Codex.</div>
                 ) : (
@@ -2298,7 +2322,7 @@ export function App() {
             )}
 
             {activeConsoleTab === "voice" && (
-              <div className="space-y-4 text-xs">
+              <div id="console-panel-voice" role="tabpanel" aria-labelledby="console-tab-voice" className="space-y-4 text-xs">
                 <div className="panel p-3 bg-surface-2 border border-line">
                   <label className="label mb-2 block font-semibold">Fallback TTS Voice</label>
                   <select
