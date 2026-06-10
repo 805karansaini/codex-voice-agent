@@ -128,8 +128,11 @@ function ChangeReviewChip({ artifact }: { artifact: ChatArtifact }) {
   );
 }
 
-const ArtifactCard: React.FC<{ artifact: ChatArtifact }> = ({ artifact }) => {
-  const [open, setOpen] = useState(false);
+const ArtifactCard: React.FC<{ artifact: ChatArtifact; defaultOpen?: boolean }> = ({
+  artifact,
+  defaultOpen = false,
+}) => {
+  const [open, setOpen] = useState(defaultOpen);
   const [raw, setRaw] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -1930,7 +1933,7 @@ export function App() {
                           {m.artifacts && m.artifacts.length > 0 && (
                             <div className="mt-3 flex flex-col gap-2">
                               {m.artifacts.map((artifact) => (
-                                <ArtifactCard key={artifact.id} artifact={artifact} />
+                                <ArtifactCard key={artifact.id} artifact={artifact} defaultOpen={artifact.content_type === "diff"} />
                               ))}
                             </div>
                           )}

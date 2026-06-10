@@ -25,7 +25,7 @@ from .codex_runner import (
     resolve_workdir,
     run_codex_stream_with_timer,
 )
-from .gemini_agent import _pcm_to_wav_data_url, ask_gemini_stream, live_connect_config, transcribe_audio
+from .gemini_agent import _pcm_to_wav_data_url, ask_gemini_stream, live_connect_config
 from .history import ArtifactStore, ChatStore, ConsoleStore, HistoryStore, ProjectStore
 from .live_logging import JsonlEventLogger, LiveSessionLogger, clip_text
 from .prompting import build_recent_conversation_context, improve_codex_task_prompt
@@ -337,17 +337,11 @@ class ConsoleStateRequest(BaseModel):
     debugEntries: list[dict[str, object]] = []
 
 
-class TranscribeRequest(BaseModel):
-    audio_base64: str
-    mime_type: str = "audio/webm"
-
-
 @app.get("/api/health")
 async def health() -> dict[str, object]:
     return {
         "ok": True,
         "gemini_model": settings.gemini_model,
-        "gemini_transcription_model": settings.gemini_transcription_model,
         "gemini_voice_name": settings.gemini_voice_name,
         "has_google_api_key": bool(settings.google_api_key),
         "codex_default_workdir": settings.codex_default_workdir,
@@ -618,20 +612,6 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@app.post("/api/transcribe")
-async def transcribe(req: TranscribeRequest) -> dict[str, object]:
-    try:
-        audio_bytes = base64.b64decode(req.audio_base64)
-        if len(audio_bytes) > settings.max_audio_bytes:
-            raise HTTPException(status_code=413, detail="Audio payload is too large")
-        text = await transcribe_audio(audio_bytes, req.mime_type, settings)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"text": text}
 
 
 @app.websocket("/api/live")

@@ -23,7 +23,6 @@ One trace per turn, grouped into a session by ``chat_id``::
     gemini-voice-turn        (generation)  input = user msg + conversation so far
       └─ run_codex_task      (tool)        input = task + workdir
           └─ codex-turn      (generation)  the Codex agent's own run
-    transcribe-audio         (span -> auto-instrumented generate_content)
 
 Nesting works because ``tool_call()`` makes the tool observation the *active*
 context, so the Codex observation created in ``codex_runner`` attaches under it.

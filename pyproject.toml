@@ -6,6 +6,8 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.115.14",
     "uvicorn[standard]==0.35.0",
+    # Keep the Live API client fixed until the voice-session surface stabilizes;
+    # uv.lock carries the full transitive pin set for reproducible installs.
     "google-genai==1.33.0",
     "openai-codex",
     "python-dotenv==1.1.1",

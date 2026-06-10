@@ -26,6 +26,9 @@ cp .env.example .env
 ```
 
 Set `GOOGLE_API_KEY` to your Google AI Studio key. The default model is `gemini-3.1-flash-live-preview`.
+The Google GenAI SDK is pinned in `pyproject.toml` because the Live API surface
+changes quickly; update it intentionally and run the backend and frontend checks
+before relying on a newer client.
 
 For access from another device, also set a private `CODEX_API_TOKEN` in the backend
 `.env`, then set the same value as `VITE_API_TOKEN` in the frontend environment.
@@ -61,9 +64,9 @@ gemini-voice-turn   (generation)   input = user message + conversation so far
 ```
 
 Traces are grouped by chat as **sessions** (`session_id = chat_id`) — open the
-**Sessions** tab to see a whole conversation across turns. Audio transcriptions are
-auto-instrumented as their own traces. Only transcribed text is recorded — never raw
-audio or API keys. All Langfuse logic lives in `backend/app/tracing.py`.
+**Sessions** tab to see a whole conversation across turns. Only transcribed text is
+recorded — never raw audio or API keys. All Langfuse logic lives in
+`backend/app/tracing.py`.
 
 ## Run
 

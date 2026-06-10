@@ -374,34 +374,3 @@ async def ask_gemini_stream(
         except Exception as exc:
             tracing.update_current_generation(level="ERROR", status_message=str(exc))
             yield {"type": "error", "message": str(exc)}
-
-
-async def transcribe_audio(audio_bytes: bytes, mime_type: str, settings: Settings) -> str:
-    if not settings.google_api_key:
-        raise RuntimeError("GOOGLE_API_KEY is not set")
-    if not audio_bytes:
-        raise RuntimeError("No audio was recorded")
-
-    client = genai.Client(api_key=settings.google_api_key)
-    # The underlying generate_content call is auto-instrumented (model + token
-    # usage). The wrapping span gives the trace a readable name; we never record
-    # the raw audio bytes, only the resulting transcript.
-    with tracing.span("transcribe-audio", input={"mime_type": mime_type, "bytes": len(audio_bytes)}):
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_transcription_model,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part(text="Transcribe this audio exactly. Return only the spoken words."),
-                        types.Part(inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)),
-                    ],
-                )
-            ],
-            config=types.GenerateContentConfig(temperature=0, response_mime_type="text/plain"),
-        )
-        text = (response.text or "").strip()
-        tracing.update_current_span(output=text)
-        if not text:
-            raise RuntimeError("Gemini could not transcribe the recorded audio")
-        return text
