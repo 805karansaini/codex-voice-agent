@@ -597,6 +597,8 @@ export function App() {
     if (!chatId || consoleLoadedChatRef.current !== chatId) return;
     if (consoleSaveTimerRef.current) window.clearTimeout(consoleSaveTimerRef.current);
     consoleSaveTimerRef.current = window.setTimeout(() => {
+      // Console state is local operator telemetry; concurrent tabs may still
+      // overwrite each other, but chat switching is guarded above.
       void api.saveConsoleState(chatId, { actions, handoffs, debugEntries }).catch(() => {});
     }, 250);
     return () => {
