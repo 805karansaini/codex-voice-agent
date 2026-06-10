@@ -23,10 +23,9 @@ from .codex_runner import (
     close_codex_thread_sessions_for,
     interrupt_codex_thread_session,
     resolve_workdir,
-    run_codex,
     run_codex_stream_with_timer,
 )
-from .gemini_agent import _pcm_to_wav_data_url, ask_gemini, ask_gemini_stream, live_connect_config, transcribe_audio
+from .gemini_agent import _pcm_to_wav_data_url, ask_gemini_stream, live_connect_config, transcribe_audio
 from .history import ArtifactStore, ChatStore, ConsoleStore, HistoryStore, ProjectStore
 from .live_logging import JsonlEventLogger, LiveSessionLogger, clip_text
 from .prompting import build_recent_conversation_context, improve_codex_task_prompt
@@ -405,74 +404,6 @@ async def clear_console_state(chat_id: str) -> dict[str, object]:
     app_log.write("console.clear", chat_id=chat_id)
     console.clear(chat_id)
     return {"ok": True}
-
-
-@app.post("/api/chat")
-async def chat(req: ChatRequest) -> dict[str, object]:
-    text = req.message.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Message is required")
-    history_meta = {
-        "workdir": req.workdir or settings.codex_default_workdir,
-        "project_id": req.project_id,
-        "chat_id": req.chat_id,
-    }
-    conversation_context = _chat_context(req.chat_id)
-    history.append("user", text, history_meta)
-    app_log.write(
-        "chat.start",
-        chat_id=req.chat_id,
-        project_id=req.project_id,
-        workdir=history_meta["workdir"],
-        message_chars=len(text),
-        context_chars=len(conversation_context),
-    )
-    try:
-        result = await ask_gemini(
-            text,
-            settings,
-            workdir=req.workdir,
-            conversation_id=req.chat_id,
-            conversation_context=conversation_context,
-        )
-    except Exception as exc:
-        app_log.write("chat.error", chat_id=req.chat_id, message=clip_text(exc))
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    result_artifacts = []
-    for idx, tool_call in enumerate(result.get("tool_calls") or [], start=1):
-        if not isinstance(tool_call, dict):
-            continue
-        artifact = _create_tool_artifact(
-            chat_id=req.chat_id,
-            message_id=None,
-            title=f"{tool_call.get('name') or 'Codex'} output {idx}",
-            content=tool_call.get("result"),
-            source=str(tool_call.get("name") or "run_codex_task"),
-            workdir=str(tool_call.get("workdir") or history_meta["workdir"]),
-        )
-        if artifact:
-            result_artifacts.append(artifact)
-    if result_artifacts:
-        result["artifacts"] = result_artifacts
-    app_log.write(
-        "chat.done",
-        chat_id=req.chat_id,
-        reply_chars=len(str(result.get("reply") or "")),
-        tool_call_count=len(result.get("tool_calls") or []),
-        workdir=result.get("workdir"),
-    )
-    history.append(
-        "assistant",
-        result["reply"],
-        {
-            "tool_calls": result["tool_calls"],
-            "artifacts": result_artifacts,
-            "workdir": result.get("workdir"),
-            "project_id": req.project_id,
-            "chat_id": req.chat_id,
-        },
-    )
-    return result
 
 
 @app.post("/api/chat/stream")
@@ -1178,61 +1109,6 @@ async def live_voice(websocket: WebSocket) -> None:
             status_message="voice connection ended before turn_complete",
             metadata={"workdir": session_workdir, "project_id": session_project_id},
         )
-
-
-@app.post("/api/codex")
-async def codex(req: CodexRequest) -> dict[str, object]:
-    task = req.task.strip()
-    if not task:
-        raise HTTPException(status_code=400, detail="Task is required")
-    workdir = req.workdir or settings.codex_default_workdir
-    enhanced_task = improve_codex_task_prompt(task)
-    history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
-    app_log.write(
-        "codex.start",
-        chat_id=req.chat_id,
-        project_id=req.project_id,
-        workdir=workdir,
-        task_chars=len(task),
-    )
-    try:
-        with tracing.session_context(
-            session_id=req.chat_id,
-            metadata={"workdir": workdir, "project_id": req.project_id},
-            tags=["direct-codex"],
-        ):
-            result = await run_codex(enhanced_task, workdir, settings, req.chat_id)
-    except Exception as exc:
-        app_log.write("codex.error", chat_id=req.chat_id, message=clip_text(exc))
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    artifact = _create_tool_artifact(
-        chat_id=req.chat_id,
-        message_id=None,
-        title="Codex output",
-        content=result.final_response,
-        source="direct_codex",
-        workdir=result.workdir,
-    )
-    app_log.write(
-        "codex.done",
-        chat_id=req.chat_id,
-        reply_chars=len(result.final_response),
-        codex_status=result.status,
-        codex_turn_id=result.turn_id,
-        codex_thread_id=result.thread_id,
-    )
-    history.append(
-        "assistant",
-        result.final_response,
-        {
-            "direct_codex": True,
-            "workdir": result.workdir,
-            "project_id": req.project_id,
-            "chat_id": req.chat_id,
-            "artifacts": [artifact] if artifact else [],
-        },
-    )
-    return {"reply": result.final_response, "workdir": result.workdir, "artifacts": [artifact] if artifact else []}
 
 
 def _git_branch(root: Path) -> str | None:

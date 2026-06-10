@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types
 
 from . import tracing
-from .codex_runner import run_codex, run_codex_stream_with_timer, CancellationToken
+from .codex_runner import run_codex_stream_with_timer, CancellationToken
 from .prompting import improve_codex_task_prompt
 from .settings import Settings
 
@@ -166,128 +166,6 @@ def live_connect_config(
         ),
         tools=_get_tools(),
     )
-
-
-async def ask_gemini(
-    message: str,
-    settings: Settings,
-    workdir: str | None = None,
-    conversation_id: str | None = None,
-    conversation_context: str | None = None,
-) -> dict[str, Any]:
-    if not settings.google_api_key:
-        raise RuntimeError("GOOGLE_API_KEY is not set")
-
-    client = genai.Client(api_key=settings.google_api_key)
-    session_workdir = workdir or settings.codex_default_workdir
-    config = live_connect_config(settings, session_workdir, conversation_context)
-
-    tool_calls = []
-    text_chunks: list[str] = []
-    audio_chunks: list[bytes] = []
-    codex_events: list[dict[str, Any]] = []
-    codex_turn_id = None
-    codex_thread_id = None
-    codex_status = None
-
-    def _result() -> dict[str, Any]:
-        reply = "".join(text_chunks).strip() or "Done."
-        tracing.update_current_generation(output=reply, metadata={"tool_calls": len(tool_calls)})
-        return {
-            "reply": reply,
-            "tool_calls": tool_calls,
-            "workdir": session_workdir,
-            "audio_data_url": _pcm_to_wav_data_url(audio_chunks),
-        }
-
-    with tracing.session_context(
-        session_id=conversation_id,
-        metadata={"workdir": session_workdir},
-        tags=["voice-chat"],
-    ), tracing.generation(
-        "gemini-voice-turn",
-        model=settings.gemini_model,
-        input=_turn_input(message, conversation_context),
-    ) as gen:
-        async with client.aio.live.connect(model=settings.gemini_model, config=config) as session:
-            await session.send_client_content(
-                turns=types.Content(role="user", parts=[types.Part(text=message)]),
-                turn_complete=True,
-            )
-
-            while True:
-                async for server_message in session.receive():
-                    if server_message.tool_call and server_message.tool_call.function_calls:
-                        responses = []
-                        for call in server_message.tool_call.function_calls:
-                            if call.name == "end_conversation":
-                                responses.append(
-                                    types.FunctionResponse(
-                                        id=call.id,
-                                        name=call.name,
-                                        response={"result": "Session ended successfully."},
-                                    )
-                                )
-                                tool_calls.append(
-                                    {
-                                        "name": call.name,
-                                        "args": {},
-                                        "result": "Session ended successfully.",
-                                        "workdir": session_workdir,
-                                    }
-                                )
-                                continue
-                            args = dict(call.args or {})
-                            task = str(args.get("task") or message)
-                            enhanced_task = improve_codex_task_prompt(task)
-                            chosen_workdir = session_workdir or settings.codex_default_workdir
-                            with tracing.tool_call(
-                                call.name,
-                                parent=gen,
-                                input={"task": enhanced_task, "workdir": chosen_workdir},
-                            ) as tool_obs:
-                                codex_result = await run_codex(enhanced_task, chosen_workdir, settings, conversation_id)
-                                tracing.update_observation(
-                                    tool_obs,
-                                    output=codex_result.final_response,
-                                    metadata={"workdir": codex_result.workdir},
-                                )
-                            tool_calls.append(
-                                {
-                                    "name": call.name,
-                                    "args": {**args, "enhanced_task": enhanced_task},
-                                    "result": codex_result.final_response,
-                                    "workdir": codex_result.workdir,
-                                }
-                            )
-                            responses.append(
-                                types.FunctionResponse(
-                                    id=call.id,
-                                    name=call.name,
-                                    response={
-                                        "result": codex_result.final_response,
-                                        "workdir": codex_result.workdir,
-                                    },
-                                )
-                            )
-                        await session.send_tool_response(function_responses=responses)
-                        break
-
-                    content = server_message.server_content
-                    if content and content.output_transcription and content.output_transcription.text:
-                        text_chunks.append(content.output_transcription.text)
-                    if content and content.model_turn:
-                        for part in content.model_turn.parts or []:
-                            if part.inline_data and part.inline_data.data:
-                                audio_chunks.append(part.inline_data.data)
-                            if part.text:
-                                text_chunks.append(part.text)
-                    if content and content.turn_complete:
-                        return _result()
-                else:
-                    return _result()
-
-    return _result()
 
 
 async def ask_gemini_stream(
