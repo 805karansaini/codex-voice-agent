@@ -173,7 +173,13 @@ def _artifact_summary(text: object, limit: int = 220) -> str:
 
 def _artifact_content_type(text: object) -> str:
     value = str(text or "")
-    markdown_markers = ("```", "##", "- ", "* ", "|", "`")
+    if value.startswith("diff --git ") or "\n@@ " in value:
+        return "diff"
+    if value.startswith(("```", "## ", "### ")):
+        return "markdown"
+    if "\n| " in value and "\n|-" in value:
+        return "markdown"
+    markdown_markers = ("```", "\n## ", "\n### ", "\n- [", "\n* [")
     return "markdown" if any(marker in value for marker in markdown_markers) else "text"
 
 
