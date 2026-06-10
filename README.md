@@ -31,6 +31,9 @@ For access from another device, also set a private `CODEX_API_TOKEN` in the back
 `.env`, then set the same value as `VITE_API_TOKEN` in the frontend environment.
 Without a token, the backend accepts same-machine requests only.
 
+By default, local app data is written under `backend/data`. Set `DATA_DIR` if you
+want history, artifacts, chats, console state, and logs somewhere else.
+
 ### Tracing (optional)
 
 The backend is instrumented with [Langfuse](https://langfuse.com) for LLM observability.

@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -41,7 +42,18 @@ chats = ChatStore(settings.history_path.with_name("chats.json"))
 console = ConsoleStore(settings.history_path.with_name("console.json"))
 app_log = JsonlEventLogger(settings.history_path.with_name("app_events.jsonl"))
 
-app = FastAPI(title="Codex Voice Agent")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    tracing.setup_tracing()
+    try:
+        yield
+    finally:
+        await close_codex_thread_sessions()
+        tracing.shutdown()
+
+
+app = FastAPI(title="Codex Voice Agent", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://0.0.0.0:5173"],
@@ -128,17 +140,6 @@ def _chat_created_at(value: object) -> int:
         except ValueError:
             return 0
     return 0
-
-
-@app.on_event("startup")
-async def startup_tracing() -> None:
-    tracing.setup_tracing()
-
-
-@app.on_event("shutdown")
-async def shutdown_codex_sessions() -> None:
-    await close_codex_thread_sessions()
-    tracing.shutdown()
 
 
 def _chat_context(chat_id: str | None) -> str:
