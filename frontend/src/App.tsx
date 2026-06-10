@@ -500,7 +500,15 @@ export function App() {
   const speak = useCallback(
     (text: string) => {
       if (!text || !("speechSynthesis" in window)) return;
-      const utterance = new SpeechSynthesisUtterance(text.slice(0, 500));
+      let spokenText = text.trim();
+      if (spokenText.length > 500) {
+        const preview = spokenText.slice(0, 500);
+        const sentenceEnd = Math.max(preview.lastIndexOf("."), preview.lastIndexOf("!"), preview.lastIndexOf("?"));
+        const wordEnd = preview.lastIndexOf(" ");
+        const cutAt = sentenceEnd > 240 ? sentenceEnd + 1 : wordEnd > 240 ? wordEnd : preview.length;
+        spokenText = preview.slice(0, cutAt).trim();
+      }
+      const utterance = new SpeechSynthesisUtterance(spokenText);
       const v = voices.find((x) => x.voiceURI === selectedVoiceURI);
       if (v) utterance.voice = v;
       utterance.rate = 0.94;
@@ -2122,7 +2130,7 @@ export function App() {
                 <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
                   {Math.round(store.messages.reduce((acc, m) => acc + (m.text?.length || 0), 0) / 4.2).toLocaleString()}
                 </span>
-                <span className="font-mono text-[9px] text-fg-dim">tokens</span>
+                <span className="font-mono text-[9px] text-fg-dim">≈ tokens</span>
               </div>
             </div>
           </div>
