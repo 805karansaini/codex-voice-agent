@@ -102,6 +102,32 @@ function appendArtifact(artifacts: ChatArtifact[] | undefined, artifact: ChatArt
   return [...current, artifact];
 }
 
+function appendArtifacts(
+  artifacts: ChatArtifact[] | undefined,
+  ...items: (ChatArtifact | null | undefined)[]
+): ChatArtifact[] {
+  return items.reduce((current, item) => appendArtifact(current, item), artifacts || []);
+}
+
+function changeArtifacts(artifacts: ChatArtifact[] | undefined): ChatArtifact[] {
+  return (artifacts || []).filter((artifact) => artifact.content_type === "diff" || artifact.source === "git_diff");
+}
+
+function ChangeReviewChip({ artifact }: { artifact: ChatArtifact }) {
+  const files = artifact.changed_files || [];
+  const label = files.length > 0 ? `${files.length} file${files.length === 1 ? "" : "s"} changed` : artifact.summary;
+  return (
+    <div
+      className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-[11.5px] font-semibold text-accent transition-colors hover:bg-accent/15"
+      title={files.slice(0, 8).join("\n") || artifact.title}
+    >
+      <FileCode2 className="h-3.5 w-3.5" />
+      <span>{label}</span>
+      <span className="text-accent/70">Review</span>
+    </div>
+  );
+}
+
 const ArtifactCard: React.FC<{ artifact: ChatArtifact }> = ({ artifact }) => {
   const [open, setOpen] = useState(false);
   const [raw, setRaw] = useState(false);
@@ -883,6 +909,7 @@ export function App() {
       const ctx = voiceCtxRef.current;
       if (ctx) {
         const artifact = details?.artifact as ChatArtifact | undefined;
+        const changeArtifact = details?.change_artifact as ChatArtifact | undefined;
         if (activeAssistantVoiceMsgIdRef.current) {
           store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
             ...m,
@@ -891,7 +918,7 @@ export function App() {
             codexStatus: String(details?.codex_status || m.codexStatus || ""),
             codexTurnId: String(details?.codex_turn_id || m.codexTurnId || ""),
             codexThreadId: String(details?.codex_thread_id || m.codexThreadId || ""),
-            artifacts: appendArtifact(m.artifacts, artifact),
+            artifacts: appendArtifacts(m.artifacts, artifact, changeArtifact),
           }));
         } else {
           const id = crypto.randomUUID();
@@ -903,7 +930,7 @@ export function App() {
             usedCodex: true,
             streaming: true,
             workdir,
-            artifacts: artifact ? [artifact] : [],
+            artifacts: appendArtifacts([], artifact, changeArtifact),
             codexEvents: (details?.codex_events || []) as CodexTimelineEvent[],
             codexStatus: String(details?.codex_status || ""),
             codexTurnId: String(details?.codex_turn_id || ""),
@@ -1017,7 +1044,11 @@ export function App() {
               codexStatus: String(evt.status || m.codexStatus || ""),
               codexTurnId: String(evt.turn_id || m.codexTurnId || ""),
               codexThreadId: String(evt.thread_id || m.codexThreadId || ""),
-              artifacts: appendArtifact(m.artifacts, evt.artifact as ChatArtifact | undefined),
+              artifacts: appendArtifacts(
+                m.artifacts,
+                evt.artifact as ChatArtifact | undefined,
+                evt.change_artifact as ChatArtifact | undefined
+              ),
             }));
             updateAction(actionId, {
               status: "done",
@@ -1135,7 +1166,11 @@ export function App() {
               codexStatus: String(evt.codex_status || m.codexStatus || ""),
               codexTurnId: String(evt.codex_turn_id || m.codexTurnId || ""),
               codexThreadId: String(evt.codex_thread_id || m.codexThreadId || ""),
-              artifacts: appendArtifact(m.artifacts, evt.artifact as ChatArtifact | undefined),
+              artifacts: appendArtifacts(
+                m.artifacts,
+                evt.artifact as ChatArtifact | undefined,
+                evt.change_artifact as ChatArtifact | undefined
+              ),
             }));
             if (activeActionId) {
               updateAction(activeActionId, {
@@ -1866,6 +1901,7 @@ export function App() {
                       </article>
                     );
                   } else {
+                    const diffs = changeArtifacts(m.artifacts);
                     return (
                       <article
                         key={m.id}
@@ -1884,6 +1920,13 @@ export function App() {
                             )
                           )}
                           {m.streaming && m.text && <span className="caret animate-pulse" />}
+                          {diffs.length > 0 && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {diffs.map((artifact) => (
+                                <ChangeReviewChip key={artifact.id} artifact={artifact} />
+                              ))}
+                            </div>
+                          )}
                           {m.artifacts && m.artifacts.length > 0 && (
                             <div className="mt-3 flex flex-col gap-2">
                               {m.artifacts.map((artifact) => (

@@ -21,10 +21,11 @@ export type ChatArtifact = {
   title: string;
   summary: string;
   content: string;
-  content_type: "markdown" | "text" | "json";
+  content_type: "markdown" | "text" | "json" | "diff";
   source: string;
   workdir?: string;
   created_at?: string;
+  changed_files?: string[];
 };
 
 export type CodexTimelineEvent = {
