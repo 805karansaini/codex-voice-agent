@@ -1,4 +1,7 @@
 import unittest
+import subprocess
+import tempfile
+from pathlib import Path
 
 from backend.app.main import (
     _artifact_content_type,
@@ -7,6 +10,7 @@ from backend.app.main import (
     _has_history_filter,
     _has_file_changes,
     _is_local_host,
+    _project_briefing,
 )
 
 
@@ -46,6 +50,23 @@ class AuthHelperTests(unittest.TestCase):
         self.assertFalse(_has_history_filter(None, None, None))
         self.assertFalse(_has_history_filter("", "  ", None))
         self.assertTrue(_has_history_filter(None, None, "chat-1"))
+
+    def test_project_briefing_summarizes_git_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+            (root / "README.md").write_text("hello\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=root, check=True, capture_output=True)
+            (root / "README.md").write_text("hello\nchanged\n", encoding="utf-8")
+
+            briefing = _project_briefing(str(root))
+
+            self.assertIn("Current git branch: main", briefing)
+            self.assertIn("M README.md", briefing)
+            self.assertIn("Initial commit", briefing)
 
 
 if __name__ == "__main__":

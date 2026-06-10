@@ -145,11 +145,32 @@ def _chat_created_at(value: object) -> int:
     return 0
 
 
-def _chat_context(chat_id: str | None) -> str:
-    if not chat_id:
+def _project_briefing(workdir: str | None) -> str:
+    if not workdir:
         return ""
-    parts = [build_recent_conversation_context(history.list(chat_id=chat_id))]
-    recent_artifacts = artifacts.list(chat_id=chat_id)[-5:]
+    try:
+        root = resolve_workdir(workdir)
+    except Exception:
+        return ""
+    branch = _git_output(root, ["branch", "--show-current"])
+    status_text = _git_output(root, ["status", "--short"])
+    commits = _git_output(root, ["log", "--oneline", "-3"])
+    parts = [f"Project briefing for {root}:"]
+    if branch:
+        parts.append(f"Current git branch: {branch}")
+    parts.append("Working tree status:")
+    parts.append(status_text or "clean")
+    if commits:
+        parts.append("Recent commits:")
+        parts.append(commits)
+    return "\n".join(parts)
+
+
+def _chat_context(chat_id: str | None, workdir: str | None = None) -> str:
+    parts = [_project_briefing(workdir)]
+    if chat_id:
+        parts.append(build_recent_conversation_context(history.list(chat_id=chat_id)))
+    recent_artifacts = artifacts.list(chat_id=chat_id)[-5:] if chat_id else []
     if recent_artifacts:
         lines = ["Recent visible artifacts in this chat:"]
         for item in recent_artifacts:
@@ -498,7 +519,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     if not text:
         raise HTTPException(status_code=400, detail="Message is required")
     workdir = req.workdir or settings.codex_default_workdir
-    conversation_context = _chat_context(req.chat_id)
+    conversation_context = _chat_context(req.chat_id, req.workdir)
     history.append("user", text, {"workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
     app_log.write(
         "chat_stream.start",
@@ -662,7 +683,7 @@ async def live_voice(websocket: WebSocket) -> None:
                 session_workdir = str(payload.get("workdir") or "").strip() or session_workdir
                 session_project_id = str(payload.get("project_id") or "").strip() or session_project_id
                 session_chat_id = str(payload.get("chat_id") or "").strip() or session_chat_id
-                session_conversation_context = _chat_context(session_chat_id)
+                session_conversation_context = _chat_context(session_chat_id, session_workdir)
                 live_log.write(
                     "client.config",
                     chat_id=session_chat_id,
@@ -945,7 +966,7 @@ async def live_voice(websocket: WebSocket) -> None:
                                 "artifacts": last_artifacts,
                             },
                         )
-                        session_conversation_context = _chat_context(session_chat_id)
+                        session_conversation_context = _chat_context(session_chat_id, session_workdir)
                         live_log.write(
                             "session.auto_disconnect",
                             chat_id=session_chat_id,
@@ -1092,7 +1113,7 @@ async def live_voice(websocket: WebSocket) -> None:
                             "artifacts": last_artifacts,
                         },
                     )
-                    session_conversation_context = _chat_context(session_chat_id)
+                    session_conversation_context = _chat_context(session_chat_id, session_workdir)
                     if session_ended_by_tool:
                         live_log.write(
                             "session.auto_disconnect",
@@ -1133,7 +1154,7 @@ async def live_voice(websocket: WebSocket) -> None:
             session_workdir = str(first_payload.get("workdir") or "").strip() or session_workdir
             session_project_id = str(first_payload.get("project_id") or "").strip() or session_project_id
             session_chat_id = str(first_payload.get("chat_id") or "").strip() or session_chat_id
-            session_conversation_context = _chat_context(session_chat_id)
+            session_conversation_context = _chat_context(session_chat_id, session_workdir)
             live_log.write(
                 "client.initial_config",
                 chat_id=session_chat_id,
