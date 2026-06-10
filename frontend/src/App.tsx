@@ -815,32 +815,34 @@ export function App() {
     onTurnComplete: (userText, assistantText, usedCodex, workdir) => {
       const ctx = voiceCtxRef.current;
       if (!ctx) return;
+      const finalUserText = userText.trim();
+      const finalAssistantText = assistantText.trim();
       if (activeUserVoiceMsgIdRef.current) {
         store.updateMessage(ctx.chatId, activeUserVoiceMsgIdRef.current, (m) => ({
           ...m,
-          text: userText || m.text,
+          text: finalUserText || m.text,
         }));
-      } else {
+      } else if (finalUserText) {
         store.appendMessage(ctx.chatId, {
           id: crypto.randomUUID(),
           role: "user",
-          text: userText,
+          text: finalUserText,
           workdir: ctx.project.path,
         });
       }
       if (activeAssistantVoiceMsgIdRef.current) {
         store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
           ...m,
-          text: assistantText || m.text,
+          text: finalAssistantText || m.text,
           streaming: false,
           usedCodex,
           workdir,
         }));
-      } else {
+      } else if (finalAssistantText || usedCodex) {
         store.appendMessage(ctx.chatId, {
           id: crypto.randomUUID(),
           role: "assistant",
-          text: assistantText,
+          text: finalAssistantText,
           usedCodex,
           workdir,
         });

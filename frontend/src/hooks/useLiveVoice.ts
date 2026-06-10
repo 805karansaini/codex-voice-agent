@@ -365,8 +365,8 @@ export function useLiveVoice({
           const assistantText = String(payload.assistant_text || "").trim();
           log(`[Turn Complete] user_chars=${userText.length}, assistant_chars=${assistantText.length}, session_ended=${payload.session_ended}`);
           cbRef.current.onTurnComplete?.(
-            userText || "Voice message",
-            assistantText || "Done.",
+            userText,
+            assistantText,
             usedCodexRef.current,
             payload.workdir
           );
