@@ -765,6 +765,24 @@ export function App() {
       activeUserVoiceMsgIdRef.current = null;
       activeAssistantVoiceMsgIdRef.current = null;
     },
+    onSessionRestarted: () => {
+      const ctx = voiceCtxRef.current;
+      if (!ctx) return;
+      if (activeAssistantVoiceMsgIdRef.current) {
+        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          streaming: false,
+        }));
+      }
+      store.appendMessage(ctx.chatId, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: "Voice session restarted. Context is preserved up to your last completed turn.",
+        workdir: ctx.project.path,
+      });
+      activeUserVoiceMsgIdRef.current = null;
+      activeAssistantVoiceMsgIdRef.current = null;
+    },
     onTurnComplete: (userText, assistantText, usedCodex, workdir) => {
       const ctx = voiceCtxRef.current;
       if (!ctx) return;

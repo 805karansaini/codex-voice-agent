@@ -126,6 +126,7 @@ interface UseLiveVoiceProps {
   onUserTranscript?: (text: string) => void;
   onAssistantDelta?: (text: string) => void;
   onInterrupted?: () => void;
+  onSessionRestarted?: () => void;
   onTurnComplete?: (
     userText: string,
     assistantText: string,
@@ -149,6 +150,7 @@ export function useLiveVoice({
   onUserTranscript,
   onAssistantDelta,
   onInterrupted,
+  onSessionRestarted,
   onTurnComplete,
 }: UseLiveVoiceProps) {
   const [state, setState] = useState<LiveVoiceState>("idle");
@@ -183,6 +185,7 @@ export function useLiveVoice({
   const usedCodexRef = useRef(false);
   const audioPlayerRef = useRef<AudioStreamPlayer | null>(null);
   const hasStreamedAudioRef = useRef(false);
+  const reconnectNoticeSentRef = useRef(false);
 
   const clearToolResultFallback = useCallback(() => {
     if (toolResultFallbackTimerRef.current) {
@@ -210,6 +213,7 @@ export function useLiveVoice({
     onUserTranscript,
     onAssistantDelta,
     onInterrupted,
+    onSessionRestarted,
     onTurnComplete,
     getWorkdir,
     getProjectId,
@@ -229,6 +233,7 @@ export function useLiveVoice({
       onUserTranscript,
       onAssistantDelta,
       onInterrupted,
+      onSessionRestarted,
       onTurnComplete,
       getWorkdir,
       getProjectId,
@@ -246,6 +251,7 @@ export function useLiveVoice({
     onUserTranscript,
     onAssistantDelta,
     onInterrupted,
+    onSessionRestarted,
     onTurnComplete,
     getWorkdir,
     getProjectId,
@@ -326,6 +332,7 @@ export function useLiveVoice({
     websocketRef.current = websocket;
 
     websocket.onopen = () => {
+      reconnectNoticeSentRef.current = false;
       log("Live channel connected.");
       sendSessionConfig(websocket);
       flushBufferedAudio(websocket);
@@ -480,7 +487,12 @@ export function useLiveVoice({
       }
       if (streamRef.current) {
         setState("connecting");
-        setMessage("Gemini Live is reconnecting. Your microphone stream is being restored.");
+        setMessage("Gemini Live is reconnecting. Context is preserved up to your last completed turn.");
+        if (!reconnectNoticeSentRef.current) {
+          reconnectNoticeSentRef.current = true;
+          cbRef.current.onSessionRestarted?.();
+          log("Gemini Live session restarted; context is preserved up to the last completed turn.");
+        }
         if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = window.setTimeout(() => {
           reconnectTimerRef.current = null;
