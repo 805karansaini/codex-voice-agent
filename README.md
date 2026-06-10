@@ -25,7 +25,9 @@ Create `.env` from the example:
 cp .env.example .env
 ```
 
-Set `GOOGLE_API_KEY` to your Google AI Studio key. The default model is `gemini-3.1-flash-live-preview`.
+Set `GOOGLE_API_KEY` to your Google AI Studio key. Live voice uses `GEMINI_MODEL`
+and defaults to `gemini-3.1-flash-live-preview`. Typed chat uses
+`GEMINI_TEXT_MODEL` and defaults to `gemini-2.5-flash`.
 The Google GenAI SDK is pinned in `pyproject.toml` because the Live API surface
 changes quickly; update it intentionally and run the backend and frontend checks
 before relying on a newer client.

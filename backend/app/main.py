@@ -391,6 +391,7 @@ async def health() -> dict[str, object]:
     return {
         "ok": True,
         "gemini_model": settings.gemini_model,
+        "gemini_text_model": settings.gemini_text_model,
         "gemini_voice_name": settings.gemini_voice_name,
         "has_google_api_key": bool(settings.google_api_key),
         "codex_default_workdir": settings.codex_default_workdir,

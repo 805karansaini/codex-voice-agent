@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     api_token: str | None = Field(default=None, alias="CODEX_API_TOKEN")
     google_api_key: str | None = Field(default=None, alias="GOOGLE_API_KEY")
     gemini_model: str = Field(default="gemini-3.1-flash-live-preview", alias="GEMINI_MODEL")
+    gemini_text_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_TEXT_MODEL")
     gemini_voice_name: str = Field(default="Aoede", alias="GEMINI_VOICE_NAME")
     gemini_language_code: str = Field(default="en-US", alias="GEMINI_LANGUAGE_CODE")
     max_audio_bytes: int = Field(default=2_000_000, alias="MAX_AUDIO_BYTES")
