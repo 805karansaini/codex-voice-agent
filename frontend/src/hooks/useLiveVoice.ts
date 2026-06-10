@@ -593,6 +593,7 @@ export function useLiveVoice({
       }
 
       if (!micWorkletNode) {
+        log("Microphone AudioWorklet unavailable; using ScriptProcessor fallback.");
         const processor = audioContext.createScriptProcessor(4096, 1, 1);
         processorRef.current = processor;
 
