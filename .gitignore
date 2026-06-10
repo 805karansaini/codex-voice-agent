@@ -11,6 +11,7 @@ __pycache__/
 node_modules/
 dist/
 .env
+.env.local
 backend/data/history.json
 backend/data/projects.json
 backend/data/chats.json

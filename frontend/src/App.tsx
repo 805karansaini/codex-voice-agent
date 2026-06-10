@@ -72,10 +72,14 @@ async function readSseStream(res: Response, onEvent: (evt: any) => void) {
     const frames = buffer.split("\n\n");
     buffer = frames.pop() || "";
     for (const frame of frames) {
-      const line = frame.split("\n").find((l) => l.startsWith("data:"));
-      if (!line) continue;
+      const data = frame
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+      if (!data) continue;
       try {
-        onEvent(JSON.parse(line.slice(5).trim()));
+        onEvent(JSON.parse(data.trim()));
       } catch {}
     }
   }

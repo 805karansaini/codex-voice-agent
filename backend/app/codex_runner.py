@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -57,10 +58,13 @@ class _ThreadSession:
     sandbox: object
     lock: asyncio.Lock
     active_turn: object | None = None
+    last_used: datetime | None = None
 
 
 _sessions: dict[str, _ThreadSession] = {}
 _sessions_lock = asyncio.Lock()
+_SESSION_IDLE_TTL = timedelta(minutes=30)
+_SESSION_LIMIT = 12
 
 
 def _session_key(conversation_id: str) -> str:
@@ -75,6 +79,27 @@ async def _close_session(session: _ThreadSession) -> None:
             pass
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _evict_idle_sessions_locked() -> list[_ThreadSession]:
+    now = _now()
+    stale: list[_ThreadSession] = []
+    for key, session in list(_sessions.items()):
+        last_used = session.last_used or now
+        if session.active_turn is None and now - last_used > _SESSION_IDLE_TTL:
+            stale.append(_sessions.pop(key))
+    if len(_sessions) > _SESSION_LIMIT:
+        idle = sorted(
+            ((key, session) for key, session in _sessions.items() if session.active_turn is None),
+            key=lambda item: item[1].last_used or now,
+        )
+        for key, session in idle[: max(0, len(_sessions) - _SESSION_LIMIT)]:
+            stale.append(_sessions.pop(key))
+    return stale
+
+
 async def _get_thread_session(workdir: str, settings: Settings, conversation_id: str | None = None) -> _ThreadSession:
     from openai_codex import AsyncCodex, CodexConfig
 
@@ -85,7 +110,9 @@ async def _get_thread_session(workdir: str, settings: Settings, conversation_id:
     approval_mode, sandbox = _codex_modes(settings)
     key = _session_key(conversation_id)
     old_session = None
+    stale_sessions: list[_ThreadSession] = []
     async with _sessions_lock:
+        stale_sessions = await _evict_idle_sessions_locked()
         session = _sessions.get(key)
         if (
             session
@@ -93,10 +120,14 @@ async def _get_thread_session(workdir: str, settings: Settings, conversation_id:
             and session.approval_mode == approval_mode
             and session.sandbox == sandbox
         ):
+            session.last_used = _now()
             return session
 
         if session:
             old_session = _sessions.pop(key, None)
+
+    for stale_session in stale_sessions:
+        await _close_session(stale_session)
 
     if old_session:
         await _close_session(old_session)
@@ -111,11 +142,13 @@ async def _get_thread_session(workdir: str, settings: Settings, conversation_id:
         approval_mode=approval_mode,
         sandbox=sandbox,
         lock=asyncio.Lock(),
+        last_used=_now(),
     )
     async with _sessions_lock:
         current = _sessions.get(key)
         if current is not None:
             await _close_session(session)
+            current.last_used = _now()
             return current
         _sessions[key] = session
         return session
@@ -304,6 +337,7 @@ async def _stream_turn(
     turn = await thread.turn(prompt)
     if session:
         session.active_turn = turn
+        session.last_used = _now()
     try:
         async for event in turn.stream():
             if cancel_token and cancel_token.is_cancelled:
@@ -360,6 +394,7 @@ async def _stream_turn(
         # Ensure the observation is closed even on cancellation / early return.
         tracing.end_observation(codex_obs)
         if session:
+            session.last_used = _now()
             session.active_turn = None
 
 

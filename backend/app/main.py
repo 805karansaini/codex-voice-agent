@@ -5,11 +5,12 @@ import shutil
 import subprocess
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
@@ -49,6 +50,84 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+_LOCAL_CLIENTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _token_matches(value: str | None) -> bool:
+    expected = (settings.api_token or "").strip()
+    return bool(expected and value and value.strip() == expected)
+
+
+def _bearer_token(value: str | None) -> str | None:
+    if not value:
+        return None
+    scheme, _, token = value.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return token.strip()
+
+
+def _client_host(value: object) -> str:
+    return str(value or "").split("%", 1)[0]
+
+
+def _is_local_host(host: str) -> bool:
+    return host in _LOCAL_CLIENTS
+
+
+@app.middleware("http")
+async def require_api_auth(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path == "/api/health":
+        return await call_next(request)
+    token = _bearer_token(request.headers.get("authorization")) or request.headers.get("x-api-token")
+    if _token_matches(token):
+        return await call_next(request)
+    if not settings.api_token and _is_local_host(_client_host(request.client.host if request.client else "")):
+        return await call_next(request)
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={
+            "detail": "Set CODEX_API_TOKEN on the backend and VITE_API_TOKEN in the frontend to allow remote access."
+        },
+    )
+
+
+async def _authorize_live_websocket(websocket: WebSocket) -> bool:
+    token = (
+        websocket.query_params.get("api_token")
+        or _bearer_token(websocket.headers.get("authorization"))
+        or websocket.headers.get("x-api-token")
+    )
+    if _token_matches(token):
+        return True
+    if not settings.api_token and _is_local_host(_client_host(websocket.client.host if websocket.client else "")):
+        return True
+    await websocket.close(code=1008)
+    return False
+
+
+def _chat_title(text: object) -> str:
+    value = " ".join(str(text or "").split())
+    if not value:
+        return "New chat"
+    return value if len(value) <= 44 else f"{value[:41]}..."
+
+
+def _chat_created_at(value: object) -> int:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+        try:
+            return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+        except ValueError:
+            return 0
+    return 0
 
 
 @app.on_event("startup")
@@ -187,17 +266,7 @@ async def health() -> dict[str, object]:
 async def list_history(
     project_id: str | None = None, workdir: str | None = None, chat_id: str | None = None
 ) -> list[dict[str, object]]:
-    rows = history.list(project_id=project_id, workdir=workdir, chat_id=chat_id)
-    if not rows:
-        return rows
-    for row in rows:
-        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
-        message_id = str(row.get("id") or "")
-        row_artifacts = artifacts.list(message_id=message_id)
-        if row_artifacts:
-            meta["artifacts"] = row_artifacts
-            row["meta"] = meta
-    return rows
+    return history.list(project_id=project_id, workdir=workdir, chat_id=chat_id)
 
 
 @app.delete("/api/history")
@@ -237,7 +306,10 @@ async def save_project(req: ProjectRequest) -> dict[str, object]:
         "color": req.color,
         "createdAt": req.createdAt,
     }
-    return projects.upsert(project)
+    try:
+        return projects.upsert(project)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.delete("/api/projects/{project_id}")
@@ -247,13 +319,29 @@ async def delete_project(project_id: str) -> dict[str, object]:
     projects.delete(project_id)
     chats.delete_for_project(project_id)
     history.clear(project_id=project_id)
+    for chat_id in chat_ids:
+        artifacts.clear(chat_id)
     console.clear_for_project(chat_ids)
     return {"ok": True}
 
 
 @app.get("/api/chats")
 async def list_chats(project_id: str | None = None) -> list[dict[str, object]]:
-    return chats.list(project_id=project_id)
+    stored = chats.list(project_id=project_id)
+    by_id = {str(chat.get("id")): chat for chat in stored if chat.get("id")}
+    for summary in history.chat_summaries(project_id=project_id):
+        chat_id = str(summary["chat_id"])
+        if chat_id in by_id:
+            continue
+        recovered = {
+            "id": chat_id,
+            "projectId": str(summary["project_id"]),
+            "title": _chat_title(summary.get("first_user_text")),
+            "createdAt": _chat_created_at(summary.get("created_at")),
+        }
+        by_id[chat_id] = recovered
+        chats.upsert(recovered)
+    return sorted(by_id.values(), key=lambda chat: int(chat.get("createdAt") or 0), reverse=True)
 
 
 @app.post("/api/chats")
@@ -274,6 +362,7 @@ async def delete_chat(chat_id: str) -> dict[str, object]:
     await close_codex_thread_session(chat_id)
     chats.delete(chat_id)
     history.clear(chat_id=chat_id)
+    artifacts.clear(chat_id)
     console.clear(chat_id)
     return {"ok": True}
 
@@ -501,7 +590,11 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
 async def transcribe(req: TranscribeRequest) -> dict[str, object]:
     try:
         audio_bytes = base64.b64decode(req.audio_base64)
+        if len(audio_bytes) > settings.max_audio_bytes:
+            raise HTTPException(status_code=413, detail="Audio payload is too large")
         text = await transcribe_audio(audio_bytes, req.mime_type, settings)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"text": text}
@@ -509,6 +602,8 @@ async def transcribe(req: TranscribeRequest) -> dict[str, object]:
 
 @app.websocket("/api/live")
 async def live_voice(websocket: WebSocket) -> None:
+    if not await _authorize_live_websocket(websocket):
+        return
     await websocket.accept()
     live_log = LiveSessionLogger(settings.history_path.with_name("live_sessions.jsonl"), str(uuid.uuid4()))
     live_log.write("websocket.accepted")
@@ -561,6 +656,10 @@ async def live_voice(websocket: WebSocket) -> None:
                 if not audio_base64:
                     continue
                 audio_bytes = base64.b64decode(audio_base64)
+                if len(audio_bytes) > settings.max_audio_bytes:
+                    live_log.write("client.audio_rejected", chat_id=session_chat_id, bytes=len(audio_bytes))
+                    await websocket.send_json({"type": "error", "message": "Audio frame is too large."})
+                    continue
                 mime_type = str(payload.get("mime_type") or "audio/pcm;rate=16000")
                 await session.send_realtime_input(audio=types.Blob(data=audio_bytes, mime_type=mime_type))
             elif event_type == "stop":
@@ -588,7 +687,7 @@ async def live_voice(websocket: WebSocket) -> None:
         turn_gen = None
 
         def ensure_turn_gen():
-            nonlocal turn_gen
+            nonlocal active_turn_gen, turn_gen
             if turn_gen is None:
                 turn_gen = tracing.start_observation(
                     "generation", "gemini-voice-turn", model=settings.gemini_model
@@ -844,8 +943,7 @@ async def live_voice(websocket: WebSocket) -> None:
                         last_codex_thread_id = None
                         last_codex_status = None
                         last_artifacts = []
-                        while True:
-                            await asyncio.sleep(3600)
+                        return
 
                 content = server_message.server_content
                 if not content:
@@ -903,7 +1001,7 @@ async def live_voice(websocket: WebSocket) -> None:
 
                 if content.turn_complete:
                     user_text = "".join(input_text_chunks).strip()
-                    assistant_text = "".join(output_text_chunks).strip() or "Done."
+                    assistant_text = "".join(output_text_chunks).strip()
                     used_codex = bool(last_codex_status or last_codex_events)
                     # Detect false tool-call claims: model says it called the
                     # tool (or is calling it) but no actual tool call occurred.
@@ -938,11 +1036,22 @@ async def live_voice(websocket: WebSocket) -> None:
                     )
                     turn_gen = None
                     active_turn_gen = None
+                    if not user_text and not assistant_text and not last_artifacts:
+                        audio_chunks = []
+                        input_text_chunks = []
+                        output_text_chunks = []
+                        streamed_audio_this_turn = False
+                        last_codex_events = []
+                        last_codex_turn_id = None
+                        last_codex_thread_id = None
+                        last_codex_status = None
+                        last_artifacts = []
+                        continue
                     if user_text:
                         history.append("user", user_text, {"workdir": session_workdir, "project_id": session_project_id, "chat_id": session_chat_id})
                     history.append(
                         "assistant",
-                        assistant_text,
+                        assistant_text or "Done.",
                         {
                             "workdir": session_workdir,
                             "project_id": session_project_id,

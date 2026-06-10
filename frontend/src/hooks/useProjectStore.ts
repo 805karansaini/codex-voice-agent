@@ -101,11 +101,7 @@ export function useProjectStore() {
     api.fetchProjects()
       .then((serverProjects) => {
         if (cancelled || serverProjects.length === 0) return;
-        setProjects((current) => {
-          const byId = new Map(current.map((p) => [p.id, p]));
-          for (const p of serverProjects) byId.set(p.id, p);
-          return Array.from(byId.values()).sort((a, b) => b.createdAt - a.createdAt);
-        });
+        setProjects(serverProjects);
         setActiveId((current) => current || serverProjects[0]?.id || "");
       })
       .catch(() => {});
@@ -117,21 +113,14 @@ export function useProjectStore() {
     api.fetchChats()
       .then((serverChats) => {
         if (cancelled || serverChats.length === 0) return;
-        setChats((current) => {
-          const grouped = new Map<string, Map<string, Chat>>();
-          for (const [pid, list] of Object.entries(current)) {
-            grouped.set(pid, new Map(list.map((c) => [c.id, c])));
-          }
-          for (const chat of serverChats) {
-            if (!grouped.has(chat.projectId)) grouped.set(chat.projectId, new Map());
-            grouped.get(chat.projectId)!.set(chat.id, chat);
-          }
-          const next: Record<string, Chat[]> = {};
-          for (const [pid, byId] of grouped) {
-            next[pid] = Array.from(byId.values()).sort((a, b) => b.createdAt - a.createdAt);
-          }
-          return next;
-        });
+        const next: Record<string, Chat[]> = {};
+        for (const chat of serverChats) {
+          next[chat.projectId] = [...(next[chat.projectId] || []), chat];
+        }
+        for (const projectId of Object.keys(next)) {
+          next[projectId] = next[projectId].sort((a, b) => b.createdAt - a.createdAt);
+        }
+        setChats(next);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -143,12 +132,8 @@ export function useProjectStore() {
     let cancelled = false;
     api.fetchHistory(activeChatId)
       .then((rows) => {
-        if (cancelled || rows.length === 0) return;
-        setMessagesByChat((current) =>
-          (current[activeChatId] || []).length > 0
-            ? current
-            : { ...current, [activeChatId]: historyRowsToMessages(rows) }
-        );
+        if (cancelled) return;
+        setMessagesByChat((current) => ({ ...current, [activeChatId]: historyRowsToMessages(rows) }));
       })
       .catch(() => {});
     return () => { cancelled = true; };

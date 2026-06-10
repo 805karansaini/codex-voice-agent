@@ -1,10 +1,11 @@
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Iterator
+from typing import Any, Iterator, List
 
 
 class HistoryStore:
@@ -108,10 +109,41 @@ class HistoryStore:
                 query += " ORDER BY created_at ASC"
                 return [self._row_to_item(row) for row in conn.execute(query, params)]
 
+    def chat_summaries(self, project_id: str | None = None) -> List[dict[str, Any]]:
+        with self.lock:
+            with self._connect() as conn:
+                query = """
+                    SELECT
+                        json_extract(meta_json, '$.chat_id') AS chat_id,
+                        json_extract(meta_json, '$.project_id') AS project_id,
+                        MIN(created_at) AS first_created_at,
+                        MIN(CASE WHEN role = 'user' THEN text END) AS first_user_text
+                    FROM history
+                    WHERE json_extract(meta_json, '$.chat_id') IS NOT NULL
+                """
+                params: list[Any] = []
+                if project_id is not None:
+                    query += " AND json_extract(meta_json, '$.project_id') = ?"
+                    params.append(project_id)
+                query += " GROUP BY chat_id, project_id ORDER BY first_created_at DESC"
+                rows = []
+                for row in conn.execute(query, params):
+                    if not row["chat_id"] or not row["project_id"]:
+                        continue
+                    rows.append(
+                        {
+                            "chat_id": row["chat_id"],
+                            "project_id": row["project_id"],
+                            "created_at": row["first_created_at"],
+                            "first_user_text": row["first_user_text"],
+                        }
+                    )
+                return rows
+
     def append(self, role: str, text: str, meta: dict[str, Any] | None = None) -> dict[str, Any]:
         created_at = datetime.now(timezone.utc).isoformat()
         item = {
-            "id": created_at,
+            "id": str(uuid.uuid4()),
             "role": role,
             "text": text,
             "meta": meta or {},
@@ -293,7 +325,17 @@ class ProjectStore:
     def upsert(self, project: dict[str, Any]) -> dict[str, Any]:
         with self.lock:
             rows = json.loads(self.path.read_text(encoding="utf-8"))
-            rows = [row for row in rows if row.get("id") != project.get("id") and row.get("path") != project.get("path")]
+            conflicting = next(
+                (
+                    row
+                    for row in rows
+                    if row.get("path") == project.get("path") and row.get("id") != project.get("id")
+                ),
+                None,
+            )
+            if conflicting:
+                raise ValueError("A project already exists for this folder")
+            rows = [row for row in rows if row.get("id") != project.get("id")]
             rows.insert(0, project)
             self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         return project
