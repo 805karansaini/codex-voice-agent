@@ -216,6 +216,92 @@ def _create_tool_artifact(
     return item
 
 
+def _event_item_type(event: object) -> str:
+    if not isinstance(event, dict):
+        return ""
+    nested = event.get("event")
+    if isinstance(nested, dict):
+        return str(nested.get("item_type") or nested.get("type") or "")
+    return str(event.get("item_type") or "")
+
+
+def _has_file_changes(events: list[object]) -> bool:
+    return any(_event_item_type(event) == "fileChange" for event in events)
+
+
+def _git_output(root: Path, args: list[str]) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _changed_files_from_status(status_text: str) -> list[str]:
+    files: list[str] = []
+    for line in status_text.splitlines():
+        value = line[3:].strip() if len(line) > 3 else ""
+        if " -> " in value:
+            value = value.split(" -> ", 1)[1].strip()
+        if value:
+            files.append(value)
+    return files
+
+
+def _create_change_review_artifact(
+    *,
+    chat_id: str | None,
+    workdir: str | None,
+    codex_events: list[object],
+) -> dict[str, object] | None:
+    if not workdir or not _has_file_changes(codex_events):
+        return None
+    try:
+        root = resolve_workdir(workdir)
+    except Exception:
+        return None
+    status_text = _git_output(root, ["status", "--short"])
+    diff_text = _git_output(root, ["diff", "--no-ext-diff", "HEAD", "--"])
+    if not status_text and not diff_text:
+        return None
+    files = _changed_files_from_status(status_text)
+    file_summary = f"{len(files)} file{'s' if len(files) != 1 else ''} changed"
+    content = "\n".join(
+        part
+        for part in [
+            f"# Git status\n\n```text\n{status_text or '(clean)'}\n```",
+            f"# Diff\n\n```diff\n{diff_text or '(no tracked diff)'}\n```",
+        ]
+        if part
+    )
+    artifact = artifacts.create(
+        chat_id=chat_id,
+        message_id=None,
+        title=f"Change review: {file_summary}",
+        summary=file_summary,
+        content=content,
+        content_type="diff",
+        source="git_diff",
+        workdir=str(root),
+    )
+    artifact["changed_files"] = files
+    app_log.write(
+        "artifact.created",
+        chat_id=chat_id,
+        artifact_id=artifact["id"],
+        title=artifact["title"],
+        source="git_diff",
+        content_chars=len(content),
+        changed_file_count=len(files),
+    )
+    return artifact
+
+
 class ChatRequest(BaseModel):
     message: str
     workdir: str | None = None
@@ -467,6 +553,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         workdir=event.get("workdir"),
                     )
                 elif event.get("type") == "tool_result":
+                    result_events = list(event.get("codex_events") or [])
                     artifact = _create_tool_artifact(
                         chat_id=req.chat_id,
                         message_id=None,
@@ -478,6 +565,15 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                     if artifact:
                         final_artifacts.append(artifact)
                         event["artifact"] = artifact
+                    change_artifact = _create_change_review_artifact(
+                        chat_id=req.chat_id,
+                        workdir=str(event.get("workdir") or workdir),
+                        codex_events=result_events,
+                    )
+                    if change_artifact:
+                        final_artifacts.append(change_artifact)
+                        event["change_artifact"] = change_artifact
+                        event["changed_files"] = change_artifact.get("changed_files", [])
                     app_log.write(
                         "chat_stream.tool_result",
                         chat_id=req.chat_id,
@@ -781,6 +877,13 @@ async def live_voice(websocket: WebSocket) -> None:
                         )
                         if artifact:
                             last_artifacts.append(artifact)
+                        change_artifact = _create_change_review_artifact(
+                            chat_id=session_chat_id,
+                            workdir=resolved_workdir,
+                            codex_events=codex_events,
+                        )
+                        if change_artifact:
+                            last_artifacts.append(change_artifact)
 
                         responses.append(
                             types.FunctionResponse(
@@ -796,6 +899,8 @@ async def live_voice(websocket: WebSocket) -> None:
                                 "result": final_response,
                                 "workdir": resolved_workdir,
                                 "artifact": artifact,
+                                "change_artifact": change_artifact,
+                                "changed_files": change_artifact.get("changed_files", []) if change_artifact else [],
                                 "codex_events": codex_events[-200:],
                                 "codex_turn_id": codex_turn_id,
                                 "codex_thread_id": codex_thread_id,
@@ -1257,6 +1362,15 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
                         if artifact:
                             final_artifacts.append(artifact)
                             event["artifact"] = artifact
+                        change_artifact = _create_change_review_artifact(
+                            chat_id=req.chat_id,
+                            workdir=final_workdir,
+                            codex_events=codex_events,
+                        )
+                        if change_artifact:
+                            final_artifacts.append(change_artifact)
+                            event["change_artifact"] = change_artifact
+                            event["changed_files"] = change_artifact.get("changed_files", [])
                         app_log.write(
                             "codex_stream.done_event",
                             chat_id=req.chat_id,
