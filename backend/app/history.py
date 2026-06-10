@@ -39,13 +39,32 @@ class HistoryStore:
                     role TEXT NOT NULL,
                     text TEXT NOT NULL,
                     meta_json TEXT NOT NULL,
+                    chat_id TEXT,
+                    project_id TEXT,
+                    workdir TEXT,
                     created_at TEXT NOT NULL
                 )
                 """
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_history_chat ON history(json_extract(meta_json, '$.chat_id'))")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_history_project ON history(json_extract(meta_json, '$.project_id'))")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_history_workdir ON history(json_extract(meta_json, '$.workdir'))")
+            self._ensure_history_scope_columns(conn)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_history_chat ON history(chat_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_history_project ON history(project_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_history_workdir ON history(workdir)")
+
+    def _ensure_history_scope_columns(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(history)")}
+        for column in ("chat_id", "project_id", "workdir"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE history ADD COLUMN {column} TEXT")
+        conn.execute(
+            """
+            UPDATE history
+            SET
+                chat_id = COALESCE(chat_id, json_extract(meta_json, '$.chat_id')),
+                project_id = COALESCE(project_id, json_extract(meta_json, '$.project_id')),
+                workdir = COALESCE(workdir, json_extract(meta_json, '$.workdir'))
+            """
+        )
 
     def _migrate_legacy_json(self) -> None:
         if not self.legacy_path.exists():
@@ -64,13 +83,21 @@ class HistoryStore:
                 if not isinstance(row, dict):
                     continue
                 item_id = str(row.get("id") or datetime.now(timezone.utc).isoformat())
+                meta = row.get("meta") or {}
                 conn.execute(
-                    "INSERT OR IGNORE INTO history (id, role, text, meta_json, created_at) VALUES (?, ?, ?, ?, ?)",
+                    """
+                    INSERT OR IGNORE INTO history (
+                        id, role, text, meta_json, chat_id, project_id, workdir, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                     (
                         item_id,
                         str(row.get("role") or ""),
                         str(row.get("text") or ""),
-                        json.dumps(row.get("meta") or {}),
+                        json.dumps(meta),
+                        meta.get("chat_id"),
+                        meta.get("project_id"),
+                        meta.get("workdir"),
                         item_id,
                     ),
                 )
@@ -98,13 +125,13 @@ class HistoryStore:
                 query = "SELECT * FROM history"
                 params: list[Any] = []
                 if chat_id is not None:
-                    query += " WHERE json_extract(meta_json, '$.chat_id') = ?"
+                    query += " WHERE chat_id = ?"
                     params.append(chat_id)
                 elif project_id is not None:
-                    query += " WHERE json_extract(meta_json, '$.project_id') = ?"
+                    query += " WHERE project_id = ?"
                     params.append(project_id)
                 elif workdir is not None:
-                    query += " WHERE json_extract(meta_json, '$.workdir') = ?"
+                    query += " WHERE workdir = ?"
                     params.append(workdir)
                 query += " ORDER BY created_at ASC"
                 return [self._row_to_item(row) for row in conn.execute(query, params)]
@@ -114,16 +141,16 @@ class HistoryStore:
             with self._connect() as conn:
                 query = """
                     SELECT
-                        json_extract(meta_json, '$.chat_id') AS chat_id,
-                        json_extract(meta_json, '$.project_id') AS project_id,
+                        chat_id,
+                        project_id,
                         MIN(created_at) AS first_created_at,
                         MIN(CASE WHEN role = 'user' THEN text END) AS first_user_text
                     FROM history
-                    WHERE json_extract(meta_json, '$.chat_id') IS NOT NULL
+                    WHERE chat_id IS NOT NULL
                 """
                 params: list[Any] = []
                 if project_id is not None:
-                    query += " AND json_extract(meta_json, '$.project_id') = ?"
+                    query += " AND project_id = ?"
                     params.append(project_id)
                 query += " GROUP BY chat_id, project_id ORDER BY first_created_at DESC"
                 rows = []
@@ -151,8 +178,21 @@ class HistoryStore:
         with self.lock:
             with self._connect() as conn:
                 conn.execute(
-                    "INSERT INTO history (id, role, text, meta_json, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (item["id"], role, text, json.dumps(item["meta"]), created_at),
+                    """
+                    INSERT INTO history (
+                        id, role, text, meta_json, chat_id, project_id, workdir, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item["id"],
+                        role,
+                        text,
+                        json.dumps(item["meta"]),
+                        item["meta"].get("chat_id"),
+                        item["meta"].get("project_id"),
+                        item["meta"].get("workdir"),
+                        created_at,
+                    ),
                 )
         return item
 
@@ -170,13 +210,13 @@ class HistoryStore:
                 clauses = []
                 params: list[Any] = []
                 if chat_id is not None:
-                    clauses.append("json_extract(meta_json, '$.chat_id') = ?")
+                    clauses.append("chat_id = ?")
                     params.append(chat_id)
                 if project_id is not None:
-                    clauses.append("json_extract(meta_json, '$.project_id') = ?")
+                    clauses.append("project_id = ?")
                     params.append(project_id)
                 if workdir is not None:
-                    clauses.append("json_extract(meta_json, '$.workdir') = ?")
+                    clauses.append("workdir = ?")
                     params.append(workdir)
                 conn.execute(f"DELETE FROM history WHERE {' OR '.join(clauses)}", params)
 

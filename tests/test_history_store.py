@@ -1,3 +1,5 @@
+import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +17,57 @@ class HistoryStoreTests(unittest.TestCase):
 
             self.assertNotEqual(first["id"], second["id"])
             self.assertEqual([item["id"] for item in store.list(chat_id="chat-1")], [first["id"], second["id"]])
+
+    def test_history_scope_columns_are_queryable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HistoryStore(Path(tmp) / "history.json")
+
+            store.append(
+                "user",
+                "hello",
+                {"chat_id": "chat-1", "project_id": "project-1", "workdir": "/tmp/project-1"},
+            )
+
+            with sqlite3.connect(store.path) as conn:
+                row = conn.execute("SELECT chat_id, project_id, workdir FROM history").fetchone()
+            self.assertEqual(row, ("chat-1", "project-1", "/tmp/project-1"))
+            self.assertEqual(len(store.list(project_id="project-1")), 1)
+            self.assertEqual(len(store.list(workdir="/tmp/project-1")), 1)
+
+    def test_existing_history_rows_backfill_scope_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "history.sqlite3"
+            with sqlite3.connect(path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE history (
+                        id TEXT PRIMARY KEY,
+                        role TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        meta_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO history (id, role, text, meta_json, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        "row-1",
+                        "user",
+                        "hello",
+                        json.dumps({"chat_id": "chat-1", "project_id": "project-1", "workdir": "/tmp/project-1"}),
+                        "2026-01-01T00:00:00+00:00",
+                    ),
+                )
+
+            store = HistoryStore(Path(tmp) / "history.json")
+
+            self.assertEqual([item["id"] for item in store.list(chat_id="chat-1")], ["row-1"])
+            with sqlite3.connect(store.path) as conn:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(history)")}
+                row = conn.execute("SELECT chat_id, project_id, workdir FROM history").fetchone()
+            self.assertTrue({"chat_id", "project_id", "workdir"}.issubset(columns))
+            self.assertEqual(row, ("chat-1", "project-1", "/tmp/project-1"))
 
 
 class ProjectStoreTests(unittest.TestCase):
