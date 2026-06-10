@@ -21,13 +21,43 @@ class CodexRun:
 class CancellationToken:
     def __init__(self):
         self._is_cancelled = False
+        self._active_turn: object | None = None
 
     def cancel(self):
         self._is_cancelled = True
+        self._interrupt_active_turn()
 
     @property
     def is_cancelled(self) -> bool:
         return self._is_cancelled
+
+    def bind_turn(self, turn: object) -> None:
+        self._active_turn = turn
+        if self._is_cancelled:
+            self._interrupt_active_turn()
+
+    def clear_turn(self, turn: object) -> None:
+        if self._active_turn is turn:
+            self._active_turn = None
+
+    def _interrupt_active_turn(self) -> None:
+        turn = self._active_turn
+        if turn is None:
+            return
+        interrupt = getattr(turn, "interrupt", None)
+        if not callable(interrupt):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._interrupt_safely(interrupt))
+
+    async def _interrupt_safely(self, interrupt: object) -> None:
+        try:
+            await interrupt()
+        except Exception:
+            pass
 
 
 def resolve_workdir(workdir: str) -> Path:
@@ -335,6 +365,8 @@ async def _stream_turn(
         metadata={"workdir": workdir},
     )
     turn = await thread.turn(prompt)
+    if cancel_token:
+        cancel_token.bind_turn(turn)
     if session:
         session.active_turn = turn
         session.last_used = _now()
@@ -393,6 +425,8 @@ async def _stream_turn(
     finally:
         # Ensure the observation is closed even on cancellation / early return.
         tracing.end_observation(codex_obs)
+        if cancel_token:
+            cancel_token.clear_turn(turn)
         if session:
             session.last_used = _now()
             session.active_turn = None
