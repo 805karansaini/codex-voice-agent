@@ -5,6 +5,9 @@ import { getWebSocketUrl } from "../services/api";
 const LIVE_AUDIO_RATE = 16000;
 const MAX_BUFFERED_AUDIO_CHUNKS = 360;
 const RECONNECT_DELAY_MS = 900;
+// Backend Codex status events start after about 20s, then repeat every 60s.
+// This waits slightly longer than the first status event before surfacing a
+// completed Codex result when Gemini does not produce a final voice response.
 const TOOL_RESULT_FALLBACK_MS = 25000;
 
 function encodePcmChunk(input: Float32Array, sourceRate: number): string {

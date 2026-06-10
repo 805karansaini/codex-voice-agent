@@ -8,6 +8,10 @@ from . import tracing
 from .settings import Settings
 
 
+_CODEX_STATUS_FIRST_DELAY_SECONDS = 20
+_CODEX_STATUS_REPEAT_SECONDS = 60
+
+
 @dataclass
 class CodexRun:
     final_response: str
@@ -501,11 +505,11 @@ async def run_codex_stream_with_timer(
 
         start_time = time.time()
         try:
-            await asyncio.sleep(20)
+            await asyncio.sleep(_CODEX_STATUS_FIRST_DELAY_SECONDS)
             while not done:
                 elapsed = int(time.time() - start_time)
                 await queue.put({"type": "status", "message": f"{latest_status} (elapsed: {elapsed}s)", "elapsed": elapsed})
-                await asyncio.sleep(60)
+                await asyncio.sleep(_CODEX_STATUS_REPEAT_SECONDS)
         except asyncio.CancelledError:
             pass
 
