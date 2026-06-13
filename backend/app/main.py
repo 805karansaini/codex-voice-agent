@@ -318,6 +318,13 @@ def _chat_created_at(value: object) -> int:
     return 0
 
 
+def _is_gemini_disconnect_cleanup_exception(exc: Exception) -> bool:
+    # google-genai 1.33 can raise this RuntimeError while unwinding the Live
+    # async generator after a websocket disconnect. It is cleanup noise, not a
+    # user-visible session failure.
+    return isinstance(exc, RuntimeError) and "generator didn't stop after throw()" in str(exc)
+
+
 def _project_briefing(workdir: str | None) -> str:
     if not workdir:
         return ""
@@ -1615,7 +1622,7 @@ async def live_voice(websocket: WebSocket) -> None:
         live_log.write("websocket.disconnect", chat_id=session_chat_id)
         return
     except Exception as exc:
-        if "generator didn't stop after throw()" in str(exc):
+        if _is_gemini_disconnect_cleanup_exception(exc):
             live_log.write("websocket.disconnect_cleanup", chat_id=session_chat_id, message=clip_text(exc))
             return
         live_log.write("websocket.exception", chat_id=session_chat_id, message=clip_text(exc))

@@ -160,6 +160,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added local JSONL event log rotation.
   - Commit: `06970b5` - Rotate local JSONL event logs
   - Covers review item: Q6
+- [x] Made the Gemini Live disconnect-cleanup logging path explicit and tested.
+  - Commit: Clarify Gemini cleanup exception handling
+  - Covers remaining review item: Q6
 - [x] Added initial backend and frontend lint/format tooling.
   - Commit: Add lint and format tooling
   - Covers review item: Q2
@@ -317,3 +320,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Add backend pyright check |
 | 2026-06-13 | current commit | Enforce frontend prettier check |
 | 2026-06-13 | current commit | Stabilize live voice reconnect callbacks |
+| 2026-06-13 | current commit | Clarify Gemini cleanup exception handling |
