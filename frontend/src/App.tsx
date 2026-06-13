@@ -31,6 +31,7 @@ import { useComposerInput } from "./hooks/useComposerInput";
 import { useSearchResultNavigation } from "./hooks/useSearchResultNavigation";
 import { useChatSwitcherKeyboard } from "./hooks/useChatSwitcherKeyboard";
 import { useClearThread } from "./hooks/useClearThread";
+import { useWorkspaceSidebarState } from "./hooks/useWorkspaceSidebarState";
 import { Project, CodexTimelineEvent, ChatArtifact } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 import { appendArtifacts } from "./utils/artifacts";
@@ -79,8 +80,13 @@ export function App() {
 
   const [showAdd, setShowAdd] = useState(false);
   const [activeConsoleTab, setActiveConsoleTab] = useState<ConsoleTabId>("stream");
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
-  const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
+  const {
+    expandedProjects,
+    visibleChatsCount,
+    toggleProjectExpanded,
+    markProjectExpanded,
+    showMoreChats,
+  } = useWorkspaceSidebarState();
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const { input, textareaRef, resetComposer, onComposerInput } = useComposerInput();
@@ -740,18 +746,10 @@ export function App() {
             visibleChatsCount={visibleChatsCount}
             theme={store.theme}
             onAddProject={() => setShowAdd(true)}
-            onToggleProject={(projectId, expanded) => {
-              setExpandedProjects((prev) => ({
-                ...prev,
-                [projectId]: !expanded,
-              }));
-            }}
+            onToggleProject={toggleProjectExpanded}
             onCreateChat={(projectId) => {
               store.createChat(projectId);
-              setExpandedProjects((prev) => ({
-                ...prev,
-                [projectId]: true,
-              }));
+              markProjectExpanded(projectId);
               if (isMobile) {
                 setMobileView("chat");
               }
@@ -765,12 +763,7 @@ export function App() {
             }}
             onRenameChat={handleRenameChat}
             onRemoveChat={handleRemoveChat}
-            onShowMoreChats={(projectId) => {
-              setVisibleChatsCount((prev) => ({
-                ...prev,
-                [projectId]: (prev[projectId] || 5) + 5,
-              }));
-            }}
+            onShowMoreChats={showMoreChats}
             onToggleTheme={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
             onOpenVoiceSettings={() => {
               setMobileView("console");
