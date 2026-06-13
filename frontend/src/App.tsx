@@ -14,6 +14,7 @@ import {
 
 import { useProjectStore } from "./hooks/useProjectStore";
 import { useLiveVoice } from "./hooks/useLiveVoice";
+import { useStreamingChat } from "./hooks/useStreamingChat";
 import * as api from "./services/api";
 import {
   Project,
@@ -28,7 +29,6 @@ import {
 } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 import { appendArtifacts } from "./utils/artifacts";
-import { readSseStream } from "./utils/sse";
 
 import AddProjectModal from "./components/modals/AddProjectModal";
 import ConfirmModal, { ConfirmDialogState } from "./components/modals/ConfirmModal";
@@ -756,280 +756,16 @@ export function App() {
         : null;
   }, [voiceActive, store.activeProject, store.activeChatId]);
 
-  const streamCodex = useCallback(
-    async (task: string, project: Project, chatId: string) => {
-      const actionId = addAction({
-        title: "Codex task",
-        status: "running",
-        detail: task,
-        workdir: project.path,
-      });
-      const assistantId = crypto.randomUUID();
-      store.appendMessage(chatId, {
-        id: assistantId,
-        role: "assistant",
-        text: "",
-        usedCodex: true,
-        streaming: true,
-      });
-
-      const controller = new AbortController();
-      activeAbortControllerRef.current = controller;
-
-      let finalText = "";
-
-      try {
-        const res = await api.postCodexStream(
-          {
-            task,
-            workdir: project.path,
-            projectId: project.id,
-            chatId,
-          },
-          controller.signal,
-        );
-
-        if (!res.ok || !res.body) {
-          const payload = await res.json().catch(() => ({}));
-          store.updateMessage(chatId, assistantId, (m) => ({
-            ...m,
-            streaming: false,
-            text: m.text || "Codex request failed.",
-          }));
-          updateAction(actionId, {
-            status: "failed",
-            streamingResponse: payload.detail || "Codex request failed",
-          });
-          throw new Error(payload.detail || "Codex request failed");
-        }
-
-        const handle = (evt: any) => {
-          if (evt.type === "codex_event" && evt.method) {
-            store.updateMessage(chatId, assistantId, (m) => ({
-              ...m,
-              codexEvents: appendCodexEvent(m.codexEvents, evt as CodexTimelineEvent),
-              codexStatus: String(evt.status || m.codexStatus || ""),
-              codexTurnId: String(evt.turn_id || m.codexTurnId || ""),
-              codexThreadId: String(evt.thread_id || m.codexThreadId || ""),
-            }));
-          } else if (evt.type === "delta" && evt.text) {
-            finalText += evt.text;
-            store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
-            updateAction(actionId, (prev) => ({
-              streamingResponse: (prev.streamingResponse || "") + evt.text,
-            }));
-          } else if (evt.type === "done") {
-            finalText = String(evt.text ?? finalText);
-            store.updateMessage(chatId, assistantId, (m) => ({
-              ...m,
-              text: finalText || m.text,
-              streaming: false,
-              workdir: evt.workdir,
-              codexEvents: (evt.events || m.codexEvents || []) as CodexTimelineEvent[],
-              codexStatus: String(evt.status || m.codexStatus || ""),
-              codexTurnId: String(evt.turn_id || m.codexTurnId || ""),
-              codexThreadId: String(evt.thread_id || m.codexThreadId || ""),
-              artifacts: appendArtifacts(
-                m.artifacts,
-                evt.artifact as ChatArtifact | undefined,
-                evt.change_artifact as ChatArtifact | undefined,
-              ),
-            }));
-            updateAction(actionId, {
-              status: "done",
-              streamingResponse: finalText,
-              workdir: evt.workdir || project.path,
-            });
-            addHandoff("run_codex_task", finalText.slice(0, 160));
-          } else if (evt.type === "error") {
-            store.updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false }));
-            updateAction(actionId, {
-              status: "failed",
-              streamingResponse: String(evt.message || "Codex failed"),
-            });
-            setError(String(evt.message || "Codex failed"));
-          }
-        };
-
-        await readSseStream(res, handle);
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-          store.updateMessage(chatId, assistantId, (m) => ({
-            ...m,
-            streaming: false,
-            text: m.text || "Cancelled.",
-          }));
-          updateAction(actionId, {
-            status: "failed",
-            streamingResponse: "Cancelled by user.",
-          });
-          return;
-        }
-        throw err;
-      } finally {
-        activeAbortControllerRef.current = null;
-      }
-
-      store.updateMessage(chatId, assistantId, (m) =>
-        m.streaming ? { ...m, streaming: false } : m,
-      );
-      if (finalText) speak(finalText);
-    },
-    [addAction, addHandoff, speak, store, updateAction],
-  );
-
-  const streamAgent = useCallback(
-    async (message: string, project: Project, chatId: string) => {
-      const assistantId = crypto.randomUUID();
-      store.appendMessage(chatId, {
-        id: assistantId,
-        role: "assistant",
-        text: "",
-        streaming: true,
-      });
-
-      const controller = new AbortController();
-      activeAbortControllerRef.current = controller;
-      let finalText = "";
-      let finalAudioUrl = "";
-      let usedCodex = false;
-      let activeActionId = "";
-
-      try {
-        const res = await api.postChatStream(
-          {
-            message,
-            workdir: project.path,
-            projectId: project.id,
-            chatId,
-          },
-          controller.signal,
-        );
-
-        if (!res.ok || !res.body) {
-          const payload = await res.json().catch(() => ({}));
-          store.updateMessage(chatId, assistantId, (m) => ({
-            ...m,
-            streaming: false,
-            text: m.text || "Agent request failed.",
-          }));
-          throw new Error(payload.detail || "Agent request failed");
-        }
-
-        await readSseStream(res, (evt) => {
-          if (evt.type === "codex_event" && evt.event) {
-            const event = evt.event as CodexTimelineEvent;
-            store.updateMessage(chatId, assistantId, (m) => ({
-              ...m,
-              usedCodex: true,
-              codexEvents: appendCodexEvent(m.codexEvents, event),
-              codexStatus: String(event.status || m.codexStatus || ""),
-              codexTurnId: String(event.turn_id || m.codexTurnId || ""),
-              codexThreadId: String(event.thread_id || m.codexThreadId || ""),
-            }));
-            // Keep prompt detail as the original task
-          } else if (evt.type === "delta" && evt.text) {
-            finalText += evt.text;
-            store.updateMessage(chatId, assistantId, (m) => ({ ...m, text: m.text + evt.text }));
-          } else if (evt.type === "tool_call") {
-            usedCodex = true;
-            activeActionId = addAction({
-              title: "Agent handoff to Codex",
-              status: "running",
-              detail: String(evt.task || "Local task"),
-              streamingResponse: "",
-              workdir: String(evt.workdir || project.path),
-            });
-            store.updateMessage(chatId, assistantId, (m) => ({ ...m, usedCodex: true }));
-          } else if (evt.type === "tool_progress" && evt.text) {
-            if (activeActionId) {
-              updateAction(activeActionId, (prev) => ({
-                streamingResponse: (prev.streamingResponse || "") + evt.text,
-              }));
-            }
-          } else if (evt.type === "status") {
-            // Keep prompt detail unchanged
-          } else if (evt.type === "tool_result") {
-            usedCodex = true;
-            const summary = String(evt.result || "").slice(0, 180);
-            addHandoff(String(evt.name || "run_codex_task"), summary);
-            store.updateMessage(chatId, assistantId, (m) => ({
-              ...m,
-              usedCodex: true,
-              codexEvents: (evt.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
-              codexStatus: String(evt.codex_status || m.codexStatus || ""),
-              codexTurnId: String(evt.codex_turn_id || m.codexTurnId || ""),
-              codexThreadId: String(evt.codex_thread_id || m.codexThreadId || ""),
-              artifacts: appendArtifacts(
-                m.artifacts,
-                evt.artifact as ChatArtifact | undefined,
-                evt.change_artifact as ChatArtifact | undefined,
-              ),
-            }));
-            if (activeActionId) {
-              updateAction(activeActionId, {
-                status: "done",
-                workdir: String(evt.workdir || project.path),
-              });
-            }
-          } else if (evt.type === "done") {
-            finalText = String(evt.text ?? finalText);
-            finalAudioUrl = String(evt.audio_data_url || "");
-            usedCodex = usedCodex || (Array.isArray(evt.tool_calls) && evt.tool_calls.length > 0);
-            store.updateMessage(chatId, assistantId, (m) => ({
-              ...m,
-              text: finalText || m.text || "Done.",
-              streaming: false,
-              usedCodex,
-              workdir: evt.workdir || project.path,
-              codexEvents: (evt.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
-              codexStatus: String(evt.codex_status || m.codexStatus || ""),
-              codexTurnId: String(evt.codex_turn_id || m.codexTurnId || ""),
-              codexThreadId: String(evt.codex_thread_id || m.codexThreadId || ""),
-            }));
-          } else if (evt.type === "error") {
-            store.updateMessage(chatId, assistantId, (m) => ({
-              ...m,
-              streaming: false,
-              text: m.text || "Agent failed.",
-            }));
-            if (activeActionId) {
-              updateAction(activeActionId, {
-                status: "failed",
-                streamingResponse: String(evt.message || "Agent failed"),
-              });
-            }
-            setError(String(evt.message || "Agent failed"));
-          }
-        });
-
-        store.updateMessage(chatId, assistantId, (m) =>
-          m.streaming ? { ...m, streaming: false } : m,
-        );
-        if (finalAudioUrl) await playResponseAudio(finalAudioUrl);
-        else if (finalText) speak(finalText);
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-          store.updateMessage(chatId, assistantId, (m) => ({
-            ...m,
-            streaming: false,
-            text: m.text || "Cancelled.",
-          }));
-          if (activeActionId) {
-            updateAction(activeActionId, {
-              status: "failed",
-              streamingResponse: "Cancelled by user.",
-            });
-          }
-          return;
-        }
-        throw err;
-      } finally {
-        activeAbortControllerRef.current = null;
-      }
-    },
-    [addAction, addHandoff, playResponseAudio, speak, store, updateAction],
-  );
+  const { streamAgent, streamCodex } = useStreamingChat({
+    store,
+    activeAbortControllerRef,
+    addAction,
+    updateAction,
+    addHandoff,
+    speak,
+    playResponseAudio,
+    setError,
+  });
 
   const send = useCallback(
     async (raw?: string, projectOverride?: Project, chatOverride?: string) => {
