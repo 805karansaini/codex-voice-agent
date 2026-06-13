@@ -28,8 +28,9 @@ import { useChatActionDialogs } from "./hooks/useChatActionDialogs";
 import { useChatDisplayState } from "./hooks/useChatDisplayState";
 import { useMessageAutoScroll } from "./hooks/useMessageAutoScroll";
 import { useComposerInput } from "./hooks/useComposerInput";
+import { useSearchResultNavigation } from "./hooks/useSearchResultNavigation";
 import * as api from "./services/api";
-import { Project, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
+import { Project, CodexTimelineEvent, ChatArtifact } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 import { appendArtifacts } from "./utils/artifacts";
 
@@ -104,6 +105,13 @@ export function App() {
     useWorkspaceSearch();
   const { doctorChecks, refreshDoctor } = useSetupDoctor();
   const status = useBackendStatus();
+  const openSearchResult = useSearchResultNavigation({
+    chats: store.chats,
+    selectChat: store.selectChat,
+    clearSearch,
+    isMobile,
+    setMobileView,
+  });
   const {
     confirmDialog,
     setConfirmDialog,
@@ -529,23 +537,6 @@ export function App() {
     clearConsoleState();
     setError("");
     api.deleteConsoleState(chatId).catch(() => {});
-  };
-
-  const openSearchResult = (result: SearchResult) => {
-    if (!result.chat_id) return;
-    let projectId = result.project_id || "";
-    if (!projectId) {
-      for (const [candidateProjectId, projectChats] of Object.entries(store.chats)) {
-        if (projectChats.some((chat) => chat.id === result.chat_id)) {
-          projectId = candidateProjectId;
-          break;
-        }
-      }
-    }
-    if (!projectId) return;
-    store.selectChat(projectId, result.chat_id);
-    clearSearch();
-    if (isMobile) setMobileView("chat");
   };
 
   const handleChatSwitcherKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
