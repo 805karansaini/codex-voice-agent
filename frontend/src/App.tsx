@@ -29,11 +29,8 @@ import { appendArtifacts } from "./utils/artifacts";
 import AddProjectModal from "./components/modals/AddProjectModal";
 import ConfirmModal from "./components/modals/ConfirmModal";
 import RenameChatModal from "./components/modals/RenameChatModal";
-import ChatPanel from "./components/chat/ChatPanel";
-import ConsolePanel from "./components/console/ConsolePanel";
-import ActivityRail from "./components/layout/ActivityRail";
 import AppTitleBar from "./components/layout/AppTitleBar";
-import WorkspaceSidebar from "./components/layout/WorkspaceSidebar";
+import WorkspaceLayout from "./components/layout/WorkspaceLayout";
 
 function appendCodexEvent(
   events: CodexTimelineEvent[] | undefined,
@@ -558,154 +555,107 @@ export function App() {
         onTogglePanel={() => setPanelOpen((open) => !open)}
       />
 
-      {/* Main Container */}
-      <div className="flex flex-1 min-h-0 min-w-0">
-        {/* Column 1: ActivityRail */}
-        {!isMobile && (
-          <ActivityRail
-            theme={store.theme}
-            onNewProject={() => setShowAdd(true)}
-            onToggleTheme={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
-            onOpenConsoleSettings={() => {
-              setPanelOpen(true);
-              openVoiceTab();
-            }}
-          />
-        )}
-
-        {/* Column 2: ExplorerPanel (Resizable Sidebar) */}
-        {(!isMobile ? railOpen : mobileView === "explorer") && (
-          <WorkspaceSidebar
-            isMobile={isMobile}
-            width={railWidth}
-            projects={store.projects}
-            chats={store.chats}
-            activeProjectId={store.activeId}
-            activeChatByProject={store.activeChatByProject}
-            expandedProjects={expandedProjects}
-            visibleChatsCount={visibleChatsCount}
-            theme={store.theme}
-            onAddProject={() => setShowAdd(true)}
-            onToggleProject={toggleProjectExpanded}
-            onCreateChat={(projectId) => {
-              store.createChat(projectId);
-              markProjectExpanded(projectId);
-              if (isMobile) {
-                setMobileView("chat");
-              }
-            }}
-            onRemoveProject={handleRemoveProject}
-            onSelectChat={(projectId, chatId) => {
-              store.selectChat(projectId, chatId);
-              if (isMobile) {
-                setMobileView("chat");
-              }
-            }}
-            onRenameChat={handleRenameChat}
-            onRemoveChat={handleRemoveChat}
-            onShowMoreChats={showMoreChats}
-            onToggleTheme={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
-            onOpenVoiceSettings={() => {
-              setMobileView("console");
-              openVoiceTab();
-            }}
-            onChatKeyDown={handleChatSwitcherKeyDown}
-          />
-        )}
-
-        {/* Column 2 Resizer Handle */}
-        {!isMobile && railOpen && (
-          <div
-            className="w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent transition-colors bg-line-soft shrink-0"
-            onMouseDown={startRailDrag}
-          />
-        )}
-
-        {/* Column 3: ChatPanel */}
-        {(!isMobile || mobileView === "chat") && (
-          <ChatPanel
-            isMobile={isMobile}
-            title={store.activeChat?.title || "No Thread Selected"}
-            messageCount={store.messages.length}
-            mode={mode}
-            onModeChange={setMode}
-            onExport={handleExportChat}
-            exportDisabled={!store.activeChatId || store.messages.length === 0}
-            voiceSupported={liveVoice.supported}
-            voiceActive={voiceActive}
-            voiceDisabled={!store.activeProject}
-            onToggleVoice={toggleVoice}
-            busy={busy}
-            activeProject={store.activeProject}
-            messages={store.messages}
-            suggestions={suggestions}
-            messageEndRef={messageEndRef}
-            onAddProject={() => setShowAdd(true)}
-            onSuggestion={(suggestion) => void send(suggestion)}
-            onCommitChangeReview={confirmCommitChangeReview}
-            onRevertChangeReview={confirmRevertChangeReview}
-            liveStatusText={liveStatusText}
-            streamingStatusText={streamingStatusText}
-            voiceTitle={voiceTitle}
-            voiceMessage={liveVoice.message}
-            voiceContextLabel={voiceContextLabel}
-            voiceTranscriptPreview={liveVoice.transcriptPreview}
-            voiceMuted={liveVoice.muted}
-            voiceInputMode={voiceInputMode}
-            input={input}
-            hasActiveProject={Boolean(store.activeProject)}
-            error={error}
-            textareaRef={textareaRef}
-            onInputChange={onComposerInput}
-            onSubmit={() => void send()}
-            onCancelTask={handleCancelTask}
-            onToggleMute={liveVoice.toggleMute}
-            onHoldToTalk={holdToTalk}
-            onReleaseToMute={releaseToMute}
-          />
-        )}
-
-        {/* Column 3 Resizer Handle */}
-        {!isMobile && panelOpen && (
-          <div
-            className="w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent transition-colors bg-line-soft shrink-0"
-            onMouseDown={startPanelDrag}
-          />
-        )}
-
-        {/* Column 4: ConsolePanel (Resizable Sidebar) */}
-        {(!isMobile ? panelOpen : mobileView === "console") && (
-          <ConsolePanel
-            isMobile={isMobile}
-            width={panelWidth}
-            status={status}
-            canClear={Boolean(store.activeChatId)}
-            activeTab={activeConsoleTab}
-            debugEntries={debugEntries}
-            actions={actions}
-            handoffs={handoffs}
-            messages={store.messages}
-            doctorChecks={doctorChecks}
-            voices={voices}
-            selectedVoiceURI={selectedVoiceURI}
-            voiceInputMode={voiceInputMode}
-            pendingAudioUrl={pendingAudioUrl}
-            onHide={() => setPanelOpen(false)}
-            onBackToChat={() => setMobileView("chat")}
-            onClear={clearThread}
-            onTabChange={setActiveConsoleTab}
-            onRefreshDoctor={refreshDoctor}
-            onSelectedVoiceChange={setSelectedVoiceURI}
-            onVoiceInputModeChange={(nextMode) => {
-              setVoiceInputMode(nextMode);
-              if (voiceActive) {
-                liveVoice.setMuted(nextMode === "push");
-              }
-            }}
-            onPlayResponseAudio={(audioUrl) => void playResponseAudio(audioUrl)}
-          />
-        )}
-      </div>
+      <WorkspaceLayout
+        isMobile={isMobile}
+        mobileView={mobileView}
+        railOpen={railOpen}
+        panelOpen={panelOpen}
+        railWidth={railWidth}
+        panelWidth={panelWidth}
+        theme={store.theme}
+        projects={store.projects}
+        chats={store.chats}
+        activeProjectId={store.activeId}
+        activeProject={store.activeProject}
+        activeChatId={store.activeChatId}
+        activeChatTitle={store.activeChat?.title}
+        activeChatByProject={store.activeChatByProject}
+        expandedProjects={expandedProjects}
+        visibleChatsCount={visibleChatsCount}
+        messages={store.messages}
+        mode={mode}
+        busy={busy}
+        suggestions={suggestions}
+        messageEndRef={messageEndRef}
+        liveStatusText={liveStatusText}
+        streamingStatusText={streamingStatusText}
+        voiceTitle={voiceTitle}
+        voiceMessage={liveVoice.message}
+        voiceContextLabel={voiceContextLabel}
+        voiceTranscriptPreview={liveVoice.transcriptPreview}
+        voiceMuted={liveVoice.muted}
+        voiceSupported={liveVoice.supported}
+        voiceActive={voiceActive}
+        voiceInputMode={voiceInputMode}
+        input={input}
+        error={error}
+        textareaRef={textareaRef}
+        status={status}
+        activeConsoleTab={activeConsoleTab}
+        debugEntries={debugEntries}
+        actions={actions}
+        handoffs={handoffs}
+        doctorChecks={doctorChecks}
+        voices={voices}
+        selectedVoiceURI={selectedVoiceURI}
+        pendingAudioUrl={pendingAudioUrl}
+        onNewProject={() => setShowAdd(true)}
+        onToggleTheme={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
+        onOpenConsoleSettings={() => {
+          setPanelOpen(true);
+          openVoiceTab();
+        }}
+        onToggleProject={toggleProjectExpanded}
+        onCreateChat={(projectId) => {
+          store.createChat(projectId);
+          markProjectExpanded(projectId);
+          if (isMobile) {
+            setMobileView("chat");
+          }
+        }}
+        onRemoveProject={handleRemoveProject}
+        onSelectChat={(projectId, chatId) => {
+          store.selectChat(projectId, chatId);
+          if (isMobile) {
+            setMobileView("chat");
+          }
+        }}
+        onRenameChat={handleRenameChat}
+        onRemoveChat={handleRemoveChat}
+        onShowMoreChats={showMoreChats}
+        onOpenVoiceSettings={() => {
+          setMobileView("console");
+          openVoiceTab();
+        }}
+        onChatKeyDown={handleChatSwitcherKeyDown}
+        onStartRailDrag={startRailDrag}
+        onStartPanelDrag={startPanelDrag}
+        onModeChange={setMode}
+        onExportChat={handleExportChat}
+        onToggleVoice={toggleVoice}
+        onSuggestion={(suggestion) => void send(suggestion)}
+        onCommitChangeReview={confirmCommitChangeReview}
+        onRevertChangeReview={confirmRevertChangeReview}
+        onInputChange={onComposerInput}
+        onSubmit={() => void send()}
+        onCancelTask={handleCancelTask}
+        onToggleMute={liveVoice.toggleMute}
+        onHoldToTalk={holdToTalk}
+        onReleaseToMute={releaseToMute}
+        onHideConsole={() => setPanelOpen(false)}
+        onBackToChat={() => setMobileView("chat")}
+        onClearThread={clearThread}
+        onConsoleTabChange={setActiveConsoleTab}
+        onRefreshDoctor={refreshDoctor}
+        onSelectedVoiceChange={setSelectedVoiceURI}
+        onVoiceInputModeChange={(nextMode) => {
+          setVoiceInputMode(nextMode);
+          if (voiceActive) {
+            liveVoice.setMuted(nextMode === "push");
+          }
+        }}
+        onPlayResponseAudio={(audioUrl) => void playResponseAudio(audioUrl)}
+      />
 
       {/* Modals rendering */}
       {showAdd && (
