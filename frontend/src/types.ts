@@ -119,3 +119,16 @@ export type ConsoleState = {
   handoffs: Handoff[];
   debugEntries: DebugEntry[];
 };
+
+export type SearchResult = {
+  type: "message" | "artifact";
+  id: string;
+  chat_id?: string;
+  project_id?: string;
+  title: string;
+  snippet: string;
+  content_type?: string;
+  source?: string;
+  workdir?: string;
+  created_at?: string;
+};

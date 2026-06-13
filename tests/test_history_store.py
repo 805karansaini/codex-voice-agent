@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.app.history import HistoryStore, ProjectStore
+from backend.app.history import ArtifactStore, HistoryStore, ProjectStore
 
 
 class HistoryStoreTests(unittest.TestCase):
@@ -68,6 +68,46 @@ class HistoryStoreTests(unittest.TestCase):
                 row = conn.execute("SELECT chat_id, project_id, workdir FROM history").fetchone()
             self.assertTrue({"chat_id", "project_id", "workdir"}.issubset(columns))
             self.assertEqual(row, ("chat-1", "project-1", "/tmp/project-1"))
+
+    def test_search_returns_matching_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HistoryStore(Path(tmp) / "history.json")
+            store.append(
+                "user",
+                "Please fix the login redirect",
+                {"chat_id": "chat-1", "project_id": "project-1", "workdir": "/tmp/project-1"},
+            )
+            store.append("assistant", "Unrelated", {"chat_id": "chat-2"})
+
+            results = store.search("login")
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["type"], "message")
+            self.assertEqual(results[0]["chat_id"], "chat-1")
+            self.assertIn("login", results[0]["snippet"])
+
+
+class ArtifactStoreTests(unittest.TestCase):
+    def test_search_returns_matching_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ArtifactStore(Path(tmp) / "history.json")
+            item = store.create(
+                chat_id="chat-1",
+                message_id=None,
+                title="Auth diff",
+                summary="Changed login redirect",
+                content="diff --git a/app.py b/app.py",
+                content_type="diff",
+                source="git_diff",
+                workdir="/tmp/project-1",
+            )
+
+            results = store.search("redirect")
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["type"], "artifact")
+            self.assertEqual(results[0]["id"], item["id"])
+            self.assertEqual(results[0]["chat_id"], "chat-1")
 
 
 class ProjectStoreTests(unittest.TestCase):

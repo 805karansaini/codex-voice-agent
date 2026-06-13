@@ -38,7 +38,7 @@ import {
 import { useProjectStore } from "./hooks/useProjectStore";
 import { useLiveVoice } from "./hooks/useLiveVoice";
 import * as api from "./services/api";
-import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo, CodexTimelineEvent, ChatArtifact } from "./types";
+import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 
 import AddProjectModal from "./components/modals/AddProjectModal";
@@ -431,6 +431,9 @@ export function App() {
   const [activeConsoleTab, setActiveConsoleTab] = useState<"stream" | "actions" | "handoffs" | "voice">("stream");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
 
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleLoadedChatRef = useRef("");
@@ -632,6 +635,33 @@ export function App() {
       });
     return () => { cancelled = true; };
   }, [store.activeProject]);
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      api.searchContent(query)
+        .then((results) => {
+          if (!cancelled) setSearchResults(results);
+        })
+        .catch(() => {
+          if (!cancelled) setSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
 
   const addDebug = useCallback((message: string) => {
     const time = new Date().toLocaleTimeString([], {
@@ -1372,6 +1402,24 @@ export function App() {
     }
   };
 
+  const openSearchResult = (result: SearchResult) => {
+    if (!result.chat_id) return;
+    let projectId = result.project_id || "";
+    if (!projectId) {
+      for (const [candidateProjectId, projectChats] of Object.entries(store.chats)) {
+        if (projectChats.some((chat) => chat.id === result.chat_id)) {
+          projectId = candidateProjectId;
+          break;
+        }
+      }
+    }
+    if (!projectId) return;
+    store.selectChat(projectId, result.chat_id);
+    setSearchQuery("");
+    setSearchResults([]);
+    if (isMobile) setMobileView("chat");
+  };
+
   const statusClass =
     status === "Ready" ? "ready" : status === "Backend offline" ? "offline" : "warn";
 
@@ -1456,9 +1504,46 @@ export function App() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <div className="flex items-center gap-2 rounded-md border border-line bg-surface-2 px-2.5 py-1 text-[11.5px] text-fg-muted">
+            <div className="relative">
+              <div className="flex items-center gap-2 rounded-md border border-line bg-surface-2 px-2.5 py-1 text-[11.5px] text-fg-muted">
               <Search className="h-3.5 w-3.5" />
-              <span>Scope: {store.activeProject ? store.activeProject.path : "Select a project"}</span>
+                <input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search chats"
+                  className="w-48 bg-transparent text-[11.5px] text-fg outline-none placeholder:text-fg-dim"
+                />
+              </div>
+              {searchQuery.trim().length >= 2 && (
+                <div className="absolute right-0 top-8 z-30 w-80 overflow-hidden rounded-md border border-line bg-surface-1 shadow-xl">
+                  <div className="border-b border-line-soft px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-fg-dim">
+                    {searching ? "Searching" : `${searchResults.length} result${searchResults.length === 1 ? "" : "s"}`}
+                  </div>
+                  <div className="max-h-80 overflow-y-auto py-1">
+                    {!searching && searchResults.length === 0 ? (
+                      <div className="px-3 py-3 text-[12px] text-fg-dim">No matches found.</div>
+                    ) : (
+                      searchResults.map((result) => (
+                        <button
+                          key={`${result.type}-${result.id}`}
+                          onClick={() => openSearchResult(result)}
+                          className="flex w-full flex-col gap-1 px-3 py-2 text-left hover:bg-surface-2"
+                        >
+                          <span className="flex items-center gap-2 text-[12px] font-semibold text-fg">
+                            <span className="rounded border border-line-soft px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg-dim">
+                              {result.type}
+                            </span>
+                            {result.title || "Result"}
+                          </span>
+                          <span className="max-h-9 overflow-hidden text-[11.5px] leading-relaxed text-fg-muted">
+                            {result.snippet || "No preview available."}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <button
               title={railOpen ? "Hide workspace sidebar" : "Show workspace sidebar"}

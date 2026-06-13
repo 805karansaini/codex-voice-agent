@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import sqlite3
 import uuid
@@ -6,6 +8,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Iterator, List
+
+
+def _snippet(text: object, query: str, radius: int = 80) -> str:
+    value = " ".join(str(text or "").split())
+    if not value:
+        return ""
+    needle = query.lower()
+    idx = value.lower().find(needle)
+    if idx < 0:
+        return value[: radius * 2].rstrip()
+    start = max(0, idx - radius)
+    end = min(len(value), idx + len(query) + radius)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(value) else ""
+    return f"{prefix}{value[start:end].strip()}{suffix}"
 
 
 class HistoryStore:
@@ -166,6 +183,37 @@ class HistoryStore:
                         }
                     )
                 return rows
+
+    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        value = " ".join(query.split())
+        if not value:
+            return []
+        like = f"%{value}%"
+        with self.lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, role, text, chat_id, project_id, workdir, created_at
+                    FROM history
+                    WHERE text LIKE ? OR meta_json LIKE ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (like, like, limit),
+                )
+                return [
+                    {
+                        "type": "message",
+                        "id": row["id"],
+                        "chat_id": row["chat_id"],
+                        "project_id": row["project_id"],
+                        "workdir": row["workdir"],
+                        "title": row["role"].title(),
+                        "snippet": _snippet(row["text"], value),
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
 
     def append(self, role: str, text: str, meta: dict[str, Any] | None = None) -> dict[str, Any]:
         created_at = datetime.now(timezone.utc).isoformat()
@@ -340,6 +388,46 @@ class ArtifactStore:
                     params.append(chat_id)
                 query += " ORDER BY created_at ASC"
                 return [self._row_to_item(row) for row in conn.execute(query, params)]
+
+    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        value = " ".join(query.split())
+        if not value:
+            return []
+        like = f"%{value}%"
+        with self.lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, chat_id, message_id, title, summary, content, content_type, source, workdir, created_at
+                    FROM artifacts
+                    WHERE title LIKE ? OR summary LIKE ? OR content LIKE ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (like, like, like, limit),
+                )
+                return [
+                    {
+                        "type": "artifact",
+                        "id": row["id"],
+                        "chat_id": row["chat_id"],
+                        "message_id": row["message_id"],
+                        "title": row["title"],
+                        "snippet": _snippet(
+                            " ".join(
+                                part
+                                for part in (row["summary"], row["content"])
+                                if part
+                            ),
+                            value,
+                        ),
+                        "content_type": row["content_type"],
+                        "source": row["source"],
+                        "workdir": row["workdir"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
 
     def clear(self, chat_id: str | None = None) -> None:
         with self.lock:

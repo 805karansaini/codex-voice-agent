@@ -142,6 +142,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added chat export as markdown.
   - Commit: Export chats as markdown
   - Covers review feature: F6
+- [x] Added search across chats and artifacts.
+  - Commit: Search chats and artifacts
+  - Covers review feature: F6
 
 ## Still Remaining Or Pending
 
@@ -167,8 +170,6 @@ This file tracks what has been completed from the product review and what still 
   - Review feature: F2
 - [ ] Persist Codex threads across server restarts.
   - Review feature: F3
-- [ ] Add search across chats and artifacts.
-  - Review feature: F6
 - [ ] Support multiple workdirs or monorepo subpaths per project.
   - Review feature: F6
 - [ ] Add mobile wake-word or push-to-talk mode.
@@ -228,3 +229,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-11 | `cc3f545` | Move typed chat off Live API |
 | 2026-06-13 | current commit | Add lint and format tooling |
 | 2026-06-13 | current commit | Export chats as markdown |
+| 2026-06-13 | current commit | Search chats and artifacts |

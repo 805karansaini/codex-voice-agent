@@ -1,4 +1,4 @@
-import { Project, Chat, ConsoleState, HistoryRow, ProjectInfo } from "../types";
+import { Project, Chat, ConsoleState, HistoryRow, ProjectInfo, SearchResult } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const API_TOKEN = import.meta.env.VITE_API_TOKEN || "";
@@ -118,6 +118,14 @@ export async function deleteHistory(chatId: string): Promise<void> {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to clear history");
+}
+
+export async function searchContent(query: string): Promise<SearchResult[]> {
+  const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Search failed");
+  return res.json();
 }
 
 export async function getProjectInfo(path: string): Promise<ProjectInfo> {

@@ -491,6 +491,17 @@ async def clear_history(
     return {"ok": True}
 
 
+@app.get("/api/search")
+async def search_content(q: str, limit: int = 20) -> list[dict[str, object]]:
+    query = " ".join(q.split())
+    if len(query) < 2:
+        return []
+    safe_limit = max(1, min(limit, 50))
+    results = history.search(query, limit=safe_limit) + artifacts.search(query, limit=safe_limit)
+    results.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return results[:safe_limit]
+
+
 @app.get("/api/projects")
 async def list_projects() -> list[dict[str, object]]:
     return projects.list()
