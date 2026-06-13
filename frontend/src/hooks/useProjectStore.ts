@@ -2,13 +2,13 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Project, Chat, Message } from "../types";
 import * as api from "../services/api";
 import { loadJSON, saveJSON, chatTitleFrom } from "../utils";
-import { historyRowsToMessages } from "../utils/history";
+import { mergeBackendHistoryWithLocalMessages } from "../utils/history";
 
 const LS_PROJECTS = "cva.projects.v1";
 const LS_ACTIVE = "cva.activeProject.v1";
 const LS_THREADS = "cva.threads.v1"; // Legacy
 const LS_CHATS = "cva.chats.v1";
-const LS_MESSAGES = "cva.messages.v1";
+const LS_MESSAGES = "cva.messages.v1"; // Legacy, ignored after backend history became source of truth.
 const LS_ACTIVE_CHAT = "cva.activeChat.v1";
 const LS_THEME = "cva.theme.v1";
 
@@ -22,7 +22,7 @@ function loadChatState(): ChatState {
   if (localStorage.getItem(LS_CHATS) !== null) {
     return {
       chats: loadJSON<Record<string, Chat[]>>(LS_CHATS, {}),
-      messages: loadJSON<Record<string, Message[]>>(LS_MESSAGES, {}),
+      messages: {},
       activeChat: loadJSON<Record<string, string>>(LS_ACTIVE_CHAT, {}),
     };
   }
@@ -76,8 +76,8 @@ export function useProjectStore() {
   useEffect(() => saveJSON(LS_PROJECTS, projects), [projects]);
   useEffect(() => saveJSON(LS_ACTIVE, activeId), [activeId]);
   useEffect(() => saveJSON(LS_CHATS, chats), [chats]);
-  useEffect(() => saveJSON(LS_MESSAGES, messagesByChat), [messagesByChat]);
   useEffect(() => saveJSON(LS_ACTIVE_CHAT, activeChatByProject), [activeChatByProject]);
+  useEffect(() => localStorage.removeItem(LS_MESSAGES), []);
 
   useEffect(() => {
     saveJSON(LS_THEME, theme);
@@ -129,10 +129,13 @@ export function useProjectStore() {
       .fetchHistory(activeChatId)
       .then((rows) => {
         if (cancelled) return;
-        setMessagesByChat((current) => ({
-          ...current,
-          [activeChatId]: historyRowsToMessages(rows),
-        }));
+        setMessagesByChat((current) => {
+          const localMessages = current[activeChatId] || [];
+          return {
+            ...current,
+            [activeChatId]: mergeBackendHistoryWithLocalMessages(rows, localMessages),
+          };
+        });
       })
       .catch(() => {});
     return () => {

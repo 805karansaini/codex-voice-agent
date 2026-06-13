@@ -48,6 +48,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Tightened project-scoped message hydration from backend history.
   - Commit: `4a99bc4` - Harden local agent access and fix review bugs
   - Partially covers review item: B7
+- [x] Stopped booting chat messages from localStorage and preserved only in-flight local messages during backend history hydration.
+  - Commit: Prefer backend history for chat messages
+  - Partially covers review item: B7
 - [x] Fixed Server-Sent Events parsing so multi-line data is handled correctly.
   - Commit: `4a99bc4` - Harden local agent access and fix review bugs
   - Covers review item: B8
@@ -237,7 +240,7 @@ This file tracks what has been completed from the product review and what still 
 
 - [ ] Finish making backend history the single source of truth for messages.
   - Review item: B7
-  - Current status: partially improved, but the broader frontend/backend message ownership problem still needs a full pass.
+  - Current status: localStorage no longer seeds or persists chat messages, and active chats refresh from backend history while preserving in-flight local streaming messages. Remaining work is a broader pass to remove local chat-list/project metadata duplication.
 - [ ] Decompose the large `/api/live` handler into smaller, testable parts.
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
@@ -321,3 +324,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Enforce frontend prettier check |
 | 2026-06-13 | current commit | Stabilize live voice reconnect callbacks |
 | 2026-06-13 | current commit | Clarify Gemini cleanup exception handling |
+| 2026-06-13 | current commit | Prefer backend history for chat messages |

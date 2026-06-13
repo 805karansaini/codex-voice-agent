@@ -20,3 +20,15 @@ export function historyRowsToMessages(rows: HistoryRow[]): Message[] {
       codexThreadId: row.meta?.codex_thread_id,
     }));
 }
+
+export function mergeBackendHistoryWithLocalMessages(
+  rows: HistoryRow[],
+  localMessages: Message[],
+): Message[] {
+  const serverMessages = historyRowsToMessages(rows);
+  const serverIds = new Set(serverMessages.map((message) => message.id));
+  const pendingLocalMessages = localMessages.filter(
+    (message) => message.streaming || !serverIds.has(message.id),
+  );
+  return [...serverMessages, ...pendingLocalMessages];
+}

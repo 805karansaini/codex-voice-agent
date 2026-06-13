@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { historyRowsToMessages } from "../src/utils/history.ts";
-import type { ChatArtifact, CodexTimelineEvent, HistoryRow } from "../src/types.ts";
+import {
+  historyRowsToMessages,
+  mergeBackendHistoryWithLocalMessages,
+} from "../src/utils/history.ts";
+import type { ChatArtifact, CodexTimelineEvent, HistoryRow, Message } from "../src/types.ts";
 
 test("historyRowsToMessages keeps only chat message roles", () => {
   const rows = [
@@ -86,5 +89,50 @@ test("historyRowsToMessages marks direct Codex and tool-call rows as Codex-backe
       ["tool", true],
       ["plain", false],
     ]
+  );
+});
+
+test("mergeBackendHistoryWithLocalMessages prefers backend history over stale local messages", () => {
+  const rows = [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      text: "Backend text",
+    },
+  ] as HistoryRow[];
+  const localMessages = [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      text: "Stale local text",
+    },
+  ] as Message[];
+
+  assert.deepEqual(mergeBackendHistoryWithLocalMessages(rows, localMessages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      text: "Backend text",
+      artifacts: [],
+      usedCodex: false,
+      workdir: undefined,
+      codexEvents: [],
+      codexStatus: undefined,
+      codexTurnId: undefined,
+      codexThreadId: undefined,
+    },
+  ]);
+});
+
+test("mergeBackendHistoryWithLocalMessages keeps pending local messages", () => {
+  const rows = [{ id: "user-1", role: "user", text: "Saved" }] as HistoryRow[];
+  const localMessages = [
+    { id: "user-1", role: "user", text: "Saved" },
+    { id: "assistant-stream", role: "assistant", text: "Typing", streaming: true },
+  ] as Message[];
+
+  assert.deepEqual(
+    mergeBackendHistoryWithLocalMessages(rows, localMessages).map((message) => message.id),
+    ["user-1", "assistant-stream"],
   );
 });
