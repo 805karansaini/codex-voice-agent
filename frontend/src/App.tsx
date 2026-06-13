@@ -1133,6 +1133,42 @@ export function App() {
     setRenameDialog({ projectId, chatId, initialTitle: title });
   };
 
+  const handleRevertChangeReview = async (artifact: ChatArtifact) => {
+    const files = artifact.changed_files || [];
+    if (!artifact.workdir || files.length === 0) {
+      setError("This change review artifact does not include files to revert.");
+      return;
+    }
+    const actionId = addAction({
+      title: "Revert Codex changes",
+      status: "running",
+      detail: files.join(", "),
+      workdir: artifact.workdir,
+    });
+    try {
+      const result = await api.revertChangeReview(artifact.workdir, files);
+      updateAction(actionId, {
+        status: "done",
+        streamingResponse: `Reverted ${result.reverted_files.length} file${result.reverted_files.length === 1 ? "" : "s"}.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to revert changes";
+      updateAction(actionId, { status: "failed", streamingResponse: message });
+      setError(message);
+    }
+  };
+
+  const confirmRevertChangeReview = (artifact: ChatArtifact) => {
+    const files = artifact.changed_files || [];
+    setConfirmDialog({
+      title: "Revert Codex changes?",
+      body: `Restore ${files.length} changed file${files.length === 1 ? "" : "s"} from this turn back to HEAD. Untracked files in this change set will be removed.`,
+      actionLabel: "Revert",
+      danger: true,
+      onConfirm: () => void handleRevertChangeReview(artifact),
+    });
+  };
+
   const handleExportChat = async () => {
     if (!store.activeChatId) return;
     try {
@@ -1827,7 +1863,11 @@ export function App() {
                           {diffs.length > 0 && (
                             <div className="mt-3 flex flex-wrap gap-2">
                               {diffs.map((artifact) => (
-                                <ChangeReviewChip key={artifact.id} artifact={artifact} />
+                                <ChangeReviewChip
+                                  key={artifact.id}
+                                  artifact={artifact}
+                                  onRevert={confirmRevertChangeReview}
+                                />
                               ))}
                             </div>
                           )}

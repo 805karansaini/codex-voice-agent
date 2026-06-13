@@ -8,7 +8,7 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -543,6 +543,55 @@ def _create_change_review_artifact(
     return artifact
 
 
+def _safe_changed_file(value: str) -> str:
+    normalized = value.replace("\\", "/").strip().strip("/")
+    path = PurePosixPath(normalized)
+    if not normalized or path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"Unsafe changed file path: {value}")
+    return path.as_posix()
+
+
+def _git_file_is_tracked(root: Path, rel_path: str) -> bool:
+    proc = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", rel_path],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    return proc.returncode == 0
+
+
+def _revert_changed_files(workdir: str, files: list[str]) -> dict[str, object]:
+    if not files:
+        raise ValueError("No changed files were provided")
+    root = resolve_workdir(workdir)
+    if not (root / ".git").exists() and not _git_output(root, ["rev-parse", "--show-toplevel"]):
+        raise ValueError("Workdir is not inside a git repository")
+
+    reverted: list[str] = []
+    for raw_file in files:
+        rel_path = _safe_changed_file(raw_file)
+        target = (root / rel_path).resolve()
+        if target != root and root not in target.parents:
+            raise ValueError(f"Changed file path escapes workdir: {raw_file}")
+        if _git_file_is_tracked(root, rel_path):
+            proc = subprocess.run(
+                ["git", "-C", str(root), "restore", "--source=HEAD", "--worktree", "--staged", "--", rel_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if proc.returncode != 0:
+                raise ValueError(proc.stderr.strip() or f"Failed to restore {rel_path}")
+        elif target.exists():
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        reverted.append(rel_path)
+    return {"ok": True, "reverted_files": reverted}
+
+
 class ChatRequest(BaseModel):
     message: str
     workdir: str | None = None
@@ -576,6 +625,11 @@ class ConsoleStateRequest(BaseModel):
     actions: list[dict[str, object]] = []
     handoffs: list[dict[str, object]] = []
     debugEntries: list[dict[str, object]] = []
+
+
+class ChangeReviewRevertRequest(BaseModel):
+    workdir: str
+    files: list[str]
 
 
 @app.get("/api/health")
@@ -1591,6 +1645,20 @@ async def project_info(path: str) -> dict[str, object]:
         "branch": _git_branch(root) if is_git else None,
         "file_count": _file_count(root),
     }
+
+
+@app.post("/api/change-review/revert")
+async def revert_change_review(req: ChangeReviewRevertRequest) -> dict[str, object]:
+    try:
+        result = _revert_changed_files(req.workdir, req.files)
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    app_log.write(
+        "change_review.revert",
+        workdir=req.workdir,
+        file_count=len(result.get("reverted_files") or []),
+    )
+    return result
 
 
 @app.post("/api/codex/stream")

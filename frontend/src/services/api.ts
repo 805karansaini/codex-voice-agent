@@ -149,6 +149,19 @@ export async function pickFolder(): Promise<{ path: string | null; cancelled: bo
   return res.json();
 }
 
+export async function revertChangeReview(workdir: string, files: string[]): Promise<{ ok: boolean; reverted_files: string[] }> {
+  const res = await fetch(`${API_BASE}/api/change-review/revert`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ workdir, files }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || "Failed to revert changes");
+  }
+  return res.json();
+}
+
 export interface StreamOptions {
   task?: string;
   message?: string;
