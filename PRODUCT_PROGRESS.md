@@ -126,6 +126,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added live-region support for streaming chat responses.
   - Commit: Add streaming response accessibility status
   - Partially covers review item: Q7
+- [x] Added focus trapping and focus restoration to modal dialogs.
+  - Commit: Improve modal focus handling
+  - Partially covers review item: Q7
 
 ### P2 Quality, Tests, And Repo Hygiene
 
@@ -224,7 +227,7 @@ This file tracks what has been completed from the product review and what still 
 
 - [ ] Continue accessibility improvements.
   - Review item: Q7
-  - Remaining examples: focus management and chat switcher keyboard flow.
+  - Remaining examples: chat switcher keyboard flow.
 - [ ] Expand the test suite beyond the current backend-focused coverage.
   - Review item: Q1
   - Remaining examples: frontend SSE framing, artifact dedupe, prompting sanitizers, and frontend store merge behavior.
@@ -277,3 +280,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Extract chat action modals |
 | 2026-06-13 | current commit | Remove unused frontend lint warnings |
 | 2026-06-13 | current commit | Resolve frontend hook lint warnings |
+| 2026-06-13 | current commit | Improve modal focus handling |

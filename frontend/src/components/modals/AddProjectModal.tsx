@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useRef } from "react";
 import { FolderOpen, AlertCircle, X } from "lucide-react";
 import { Project } from "../../types";
 import * as api from "../../services/api";
+import { useDialogFocus } from "./useDialogFocus";
 
 const PROJECT_COLORS = ["#c8f23a", "#f3b85a", "#7fd1c4", "#8ab4ff", "#ff9f7a", "#c79bff"];
 
@@ -33,12 +34,8 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
   const [picking, setPicking] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(dialogRef, onClose);
 
   const browse = async () => {
     setError("");
@@ -92,15 +89,18 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface-0/60 backdrop-blur-sm p-4"
     >
       <div
+        ref={dialogRef}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         className="relative w-[95vw] sm:w-full max-w-lg rounded-xl border border-line bg-surface-1 p-5 sm:p-6 shadow-xl flex flex-col gap-5 animate-in fade-in duration-200"
       >
         {/* Close Button */}
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-fg-dim hover:text-fg hover:bg-surface-2 p-1 rounded-md transition-colors"
+          aria-label="Close"
         >
           <X className="h-4 w-4" />
         </button>

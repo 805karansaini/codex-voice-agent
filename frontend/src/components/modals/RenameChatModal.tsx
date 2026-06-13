@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { X } from "lucide-react";
+
+import { useDialogFocus } from "./useDialogFocus";
 
 export type RenameDialogState = {
   projectId: string;
@@ -18,12 +20,8 @@ export default function RenameChatModal({
 }) {
   const [title, setTitle] = useState(dialog.initialTitle);
   const cleanTitle = title.trim();
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(dialogRef, onClose);
 
   const submit = () => {
     if (!cleanTitle) return;
@@ -37,9 +35,11 @@ export default function RenameChatModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface-0/60 p-4 backdrop-blur-sm"
     >
       <div
+        ref={dialogRef}
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         className="relative flex w-[95vw] max-w-sm flex-col gap-4 rounded-xl border border-line bg-surface-1 p-5 shadow-xl"
       >
         <button
