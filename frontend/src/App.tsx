@@ -41,9 +41,7 @@ import { appendArtifacts } from "./utils/artifacts";
 import AddProjectModal from "./components/modals/AddProjectModal";
 import ConfirmModal from "./components/modals/ConfirmModal";
 import RenameChatModal from "./components/modals/RenameChatModal";
-import ChatTopBar from "./components/chat/ChatTopBar";
-import ComposerFooter from "./components/chat/ComposerFooter";
-import ChatStream from "./components/chat/ChatStream";
+import ChatPanel from "./components/chat/ChatPanel";
 import ConsolePanel from "./components/console/ConsolePanel";
 import ActivityRail from "./components/layout/ActivityRail";
 import WorkspaceSidebar from "./components/layout/WorkspaceSidebar";
@@ -773,60 +771,46 @@ export function App() {
 
         {/* Column 3: ChatPanel */}
         {(!isMobile || mobileView === "chat") && (
-          <main className="flex flex-1 min-w-0 min-h-0 flex-col bg-surface-0 relative">
-            <ChatTopBar
-              isMobile={isMobile}
-              title={store.activeChat?.title || "No Thread Selected"}
-              messageCount={store.messages.length}
-              mode={mode}
-              onModeChange={setMode}
-              onExport={handleExportChat}
-              exportDisabled={!store.activeChatId || store.messages.length === 0}
-              voiceSupported={liveVoice.supported}
-              voiceActive={voiceActive}
-              voiceDisabled={!store.activeProject}
-              onToggleVoice={toggleVoice}
-            />
-            <ChatStream
-              isMobile={isMobile}
-              busy={busy}
-              mode={mode}
-              activeProject={store.activeProject}
-              messages={store.messages}
-              suggestions={suggestions}
-              messageEndRef={messageEndRef}
-              onAddProject={() => setShowAdd(true)}
-              onSuggestion={(suggestion) => void send(suggestion)}
-              onCommitChangeReview={confirmCommitChangeReview}
-              onRevertChangeReview={confirmRevertChangeReview}
-            />
-
-            <ComposerFooter
-              isMobile={isMobile}
-              liveStatusText={liveStatusText}
-              streamingStatusText={streamingStatusText}
-              voiceActive={voiceActive}
-              voiceTitle={voiceTitle}
-              voiceMessage={liveVoice.message}
-              voiceContextLabel={voiceContextLabel}
-              voiceTranscriptPreview={liveVoice.transcriptPreview}
-              voiceMuted={liveVoice.muted}
-              voiceSupported={liveVoice.supported}
-              voiceInputMode={voiceInputMode}
-              input={input}
-              busy={busy}
-              hasActiveProject={Boolean(store.activeProject)}
-              error={error}
-              textareaRef={textareaRef}
-              onInputChange={onComposerInput}
-              onSubmit={() => void send()}
-              onCancelTask={handleCancelTask}
-              onToggleVoice={toggleVoice}
-              onToggleMute={liveVoice.toggleMute}
-              onHoldToTalk={holdToTalk}
-              onReleaseToMute={releaseToMute}
-            />
-          </main>
+          <ChatPanel
+            isMobile={isMobile}
+            title={store.activeChat?.title || "No Thread Selected"}
+            messageCount={store.messages.length}
+            mode={mode}
+            onModeChange={setMode}
+            onExport={handleExportChat}
+            exportDisabled={!store.activeChatId || store.messages.length === 0}
+            voiceSupported={liveVoice.supported}
+            voiceActive={voiceActive}
+            voiceDisabled={!store.activeProject}
+            onToggleVoice={toggleVoice}
+            busy={busy}
+            activeProject={store.activeProject}
+            messages={store.messages}
+            suggestions={suggestions}
+            messageEndRef={messageEndRef}
+            onAddProject={() => setShowAdd(true)}
+            onSuggestion={(suggestion) => void send(suggestion)}
+            onCommitChangeReview={confirmCommitChangeReview}
+            onRevertChangeReview={confirmRevertChangeReview}
+            liveStatusText={liveStatusText}
+            streamingStatusText={streamingStatusText}
+            voiceTitle={voiceTitle}
+            voiceMessage={liveVoice.message}
+            voiceContextLabel={voiceContextLabel}
+            voiceTranscriptPreview={liveVoice.transcriptPreview}
+            voiceMuted={liveVoice.muted}
+            voiceInputMode={voiceInputMode}
+            input={input}
+            hasActiveProject={Boolean(store.activeProject)}
+            error={error}
+            textareaRef={textareaRef}
+            onInputChange={onComposerInput}
+            onSubmit={() => void send()}
+            onCancelTask={handleCancelTask}
+            onToggleMute={liveVoice.toggleMute}
+            onHoldToTalk={holdToTalk}
+            onReleaseToMute={releaseToMute}
+          />
         )}
 
         {/* Column 3 Resizer Handle */}
