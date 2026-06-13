@@ -1,25 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ChevronRight,
   Folder,
   FolderPlus,
   GitBranch,
-  Moon,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Pencil,
   Plus,
   Search,
-  Settings,
   Sparkles,
   SquareTerminal,
-  Sun,
-  Trash2,
   Zap,
-  MoreHorizontal,
 } from "lucide-react";
 
 import { useProjectStore } from "./hooks/useProjectStore";
@@ -57,6 +50,7 @@ import ConsoleVoicePanel from "./components/console/ConsoleVoicePanel";
 import ConsoleStatsFooter from "./components/console/ConsoleStatsFooter";
 import ConsoleHeader from "./components/console/ConsoleHeader";
 import ActivityRail from "./components/layout/ActivityRail";
+import WorkspaceSidebar from "./components/layout/WorkspaceSidebar";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -1532,228 +1526,55 @@ export function App() {
 
         {/* Column 2: ExplorerPanel (Resizable Sidebar) */}
         {(!isMobile ? railOpen : mobileView === "explorer") && (
-          <aside
-            style={isMobile ? { width: "100%" } : { width: `${railWidth}px` }}
-            className={cn(
-              "flex h-full min-h-0 flex-col bg-surface-1 shrink-0",
-              !isMobile ? "border-r border-line" : "w-full",
-            )}
-          >
-            <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5 shrink-0">
-              <span className="label">Workspace</span>
-              <button
-                title="Add Project"
-                onClick={() => setShowAdd(true)}
-                className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
-              >
-                <FolderPlus className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <nav className="flex-1 overflow-y-auto py-1" aria-label="Workspace chats">
-              {store.projects.length === 0 ? (
-                <div className="p-4 text-center">
-                  <p className="text-[12.5px] text-fg-dim">No projects yet.</p>
-                  <button
-                    onClick={() => setShowAdd(true)}
-                    className="mt-2 text-[12px] text-accent hover:underline flex items-center gap-1 mx-auto"
-                  >
-                    <Plus className="h-3 w-3" /> Add folder
-                  </button>
-                </div>
-              ) : (
-                store.projects.map((p) => {
-                  const isActive = p.id === store.activeId;
-                  const isExpanded =
-                    expandedProjects[p.id] !== undefined ? expandedProjects[p.id] : isActive;
-                  const pChats = store.chats[p.id] || [];
-                  const activeChatId = store.activeChatByProject[p.id] || "";
-
-                  const getChatLimit = (
-                    projectId: string,
-                    chatsList: typeof pChats,
-                    activeId: string,
-                  ) => {
-                    const userLimit = visibleChatsCount[projectId] || 5;
-                    if (!activeId) return userLimit;
-                    const activeIdx = chatsList.findIndex((c) => c.id === activeId);
-                    if (activeIdx === -1) return userLimit;
-                    if (activeIdx >= userLimit) {
-                      return Math.ceil((activeIdx + 1) / 5) * 5;
-                    }
-                    return userLimit;
-                  };
-
-                  const chatLimit = getChatLimit(p.id, pChats, activeChatId);
-                  const visibleChats = pChats.slice(0, chatLimit);
-
-                  return (
-                    <div key={p.id} className="px-1">
-                      <div
-                        className={cn(
-                          "group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors",
-                          isActive
-                            ? "bg-surface-2 text-fg"
-                            : "text-fg-muted hover:bg-surface-2/60 hover:text-fg",
-                        )}
-                      >
-                        <button
-                          onClick={() => {
-                            setExpandedProjects((prev) => ({
-                              ...prev,
-                              [p.id]: !isExpanded,
-                            }));
-                          }}
-                          className="flex items-center gap-1.5 flex-1 min-w-0"
-                        >
-                          <ChevronRight
-                            className={cn(
-                              "h-3.5 w-3.5 text-fg-dim transition-transform shrink-0",
-                              isExpanded && "rotate-90",
-                            )}
-                          />
-                          <span
-                            className="h-2 w-2 rounded-sm shrink-0"
-                            style={{ background: p.color }}
-                          />
-                          <span className="truncate text-[13px] font-medium">{p.name}</span>
-                        </button>
-
-                        <button
-                          title="New chat"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            store.createChat(p.id);
-                            setExpandedProjects((prev) => ({
-                              ...prev,
-                              [p.id]: true,
-                            }));
-                            if (isMobile) {
-                              setMobileView("chat");
-                            }
-                          }}
-                          className={cn(
-                            "p-0.5 rounded hover:bg-surface-3 hover:text-accent text-fg-dim transition-all shrink-0",
-                            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                          )}
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </button>
-
-                        <button
-                          title="Remove Project"
-                          onClick={() => handleRemoveProject(p.id, p.name)}
-                          className={cn(
-                            "p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
-                            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                          )}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-
-                      {isExpanded && (
-                        <div className="ml-5 mt-0.5 mb-1 border-l border-line-soft pl-2">
-                          {visibleChats.map((c) => {
-                            const isChatActive = c.id === activeChatId;
-                            return (
-                              <div
-                                key={c.id}
-                                className={cn(
-                                  "group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition-colors",
-                                  isChatActive
-                                    ? "bg-accent/10 text-fg"
-                                    : "text-fg-muted hover:bg-surface-2 hover:text-fg",
-                                )}
-                              >
-                                <button
-                                  data-chat-switcher
-                                  aria-current={isChatActive ? "page" : undefined}
-                                  onClick={() => {
-                                    store.selectChat(p.id, c.id);
-                                    if (isMobile) {
-                                      setMobileView("chat");
-                                    }
-                                  }}
-                                  onKeyDown={handleChatSwitcherKeyDown}
-                                  className="flex items-center gap-1.5 flex-1 min-w-0"
-                                  title={c.title}
-                                >
-                                  <span className="truncate">{c.title}</span>
-                                </button>
-
-                                <button
-                                  title="Rename chat"
-                                  onClick={() => handleRenameChat(p.id, c.id, c.title)}
-                                  className={cn(
-                                    "p-0.5 rounded hover:bg-surface-3 hover:text-fg text-fg-dim transition-all shrink-0",
-                                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                                  )}
-                                >
-                                  <Pencil className="h-3 w-3" />
-                                </button>
-                                <button
-                                  title="Delete chat"
-                                  onClick={() => handleRemoveChat(p.id, c.id)}
-                                  className={cn(
-                                    "p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
-                                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                                  )}
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </div>
-                            );
-                          })}
-                          {pChats.length > chatLimit && (
-                            <button
-                              onClick={() => {
-                                setVisibleChatsCount((prev) => ({
-                                  ...prev,
-                                  [p.id]: (prev[p.id] || 5) + 5,
-                                }));
-                              }}
-                              className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-fg-dim hover:bg-surface-2 hover:text-accent font-medium border border-dashed border-line-soft/60"
-                              title="Show more chats"
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </nav>
-
-            {isMobile && (
-              <div className="border-t border-line bg-surface-2 p-3 flex items-center justify-between gap-3 shrink-0">
-                <button
-                  onClick={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
-                  className="flex items-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface-3 flex-1 justify-center"
-                >
-                  {store.theme === "dark" ? (
-                    <Sun className="h-4 w-4" />
-                  ) : (
-                    <Moon className="h-4 w-4" />
-                  )}
-                  <span>{store.theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setMobileView("console");
-                    setActiveConsoleTab("voice");
-                  }}
-                  className="flex items-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface-3 flex-1 justify-center"
-                >
-                  <Settings className="h-4 w-4" />
-                  <span>Voice Settings</span>
-                </button>
-              </div>
-            )}
-          </aside>
+          <WorkspaceSidebar
+            isMobile={isMobile}
+            width={railWidth}
+            projects={store.projects}
+            chats={store.chats}
+            activeProjectId={store.activeId}
+            activeChatByProject={store.activeChatByProject}
+            expandedProjects={expandedProjects}
+            visibleChatsCount={visibleChatsCount}
+            theme={store.theme}
+            onAddProject={() => setShowAdd(true)}
+            onToggleProject={(projectId, expanded) => {
+              setExpandedProjects((prev) => ({
+                ...prev,
+                [projectId]: !expanded,
+              }));
+            }}
+            onCreateChat={(projectId) => {
+              store.createChat(projectId);
+              setExpandedProjects((prev) => ({
+                ...prev,
+                [projectId]: true,
+              }));
+              if (isMobile) {
+                setMobileView("chat");
+              }
+            }}
+            onRemoveProject={handleRemoveProject}
+            onSelectChat={(projectId, chatId) => {
+              store.selectChat(projectId, chatId);
+              if (isMobile) {
+                setMobileView("chat");
+              }
+            }}
+            onRenameChat={handleRenameChat}
+            onRemoveChat={handleRemoveChat}
+            onShowMoreChats={(projectId) => {
+              setVisibleChatsCount((prev) => ({
+                ...prev,
+                [projectId]: (prev[projectId] || 5) + 5,
+              }));
+            }}
+            onToggleTheme={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
+            onOpenVoiceSettings={() => {
+              setMobileView("console");
+              setActiveConsoleTab("voice");
+            }}
+            onChatKeyDown={handleChatSwitcherKeyDown}
+          />
         )}
 
         {/* Column 2 Resizer Handle */}

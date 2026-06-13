@@ -123,6 +123,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved the activity rail out of the large `App.tsx` file.
   - Commit: Extract activity rail component
   - Partially covers review item: A5
+- [x] Moved the workspace project/chat sidebar out of the large `App.tsx` file.
+  - Commit: Extract workspace sidebar component
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -275,7 +278,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, composer footer, activity rail, console header, console tabs, all console tab panels, and console stats footer; chat stream, sidebar/explorer layout, and streaming logic still need follow-up passes.
+  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, composer footer, activity rail, workspace sidebar, console header, console tabs, all console tab panels, and console stats footer; chat stream and streaming logic still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.
@@ -365,3 +368,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Extract console stats footer component |
 | 2026-06-13 | current commit | Extract console header component |
 | 2026-06-13 | current commit | Extract activity rail component |
+| 2026-06-13 | current commit | Extract workspace sidebar component |
