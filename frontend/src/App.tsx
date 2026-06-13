@@ -57,6 +57,7 @@ import ConsoleTabs, { ConsoleTabId } from "./components/console/ConsoleTabs";
 import ConsoleStreamPanel from "./components/console/ConsoleStreamPanel";
 import ConsoleHandoffsPanel from "./components/console/ConsoleHandoffsPanel";
 import ConsoleActionsPanel from "./components/console/ConsoleActionsPanel";
+import ConsoleVoicePanel from "./components/console/ConsoleVoicePanel";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -74,11 +75,6 @@ const PREFERRED_VOICE_NAMES = [
 ];
 
 type VoiceInputMode = "open" | "push";
-
-const VOICE_INPUT_MODES: { id: VoiceInputMode; label: string }[] = [
-  { id: "open", label: "Open mic" },
-  { id: "push", label: "Push to talk" },
-];
 
 function appendCodexEvent(
   events: CodexTimelineEvent[] | undefined,
@@ -2109,114 +2105,22 @@ export function App() {
               {activeConsoleTab === "handoffs" && <ConsoleHandoffsPanel handoffs={handoffs} />}
 
               {activeConsoleTab === "voice" && (
-                <div
-                  id="console-panel-voice"
-                  role="tabpanel"
-                  aria-labelledby="console-tab-voice"
-                  className="space-y-4 text-xs"
-                >
-                  <div className="panel p-3 bg-surface-2 border border-line">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="label font-semibold">Setup doctor</span>
-                      <button
-                        onClick={refreshDoctor}
-                        className="rounded border border-line bg-surface-3 px-2 py-1 font-mono text-[10px] uppercase text-fg-dim hover:text-fg"
-                      >
-                        Refresh
-                      </button>
-                    </div>
-                    <div className="space-y-2">
-                      {doctorChecks.length === 0 ? (
-                        <p className="text-[11.5px] text-fg-dim">No setup report available.</p>
-                      ) : (
-                        doctorChecks.map((check) => (
-                          <div
-                            key={check.name}
-                            className="rounded border border-line-soft bg-surface-1 px-2.5 py-2"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={cn(
-                                  "h-2 w-2 rounded-full",
-                                  check.ok ? "bg-success" : "bg-danger",
-                                )}
-                              />
-                              <span className="font-semibold text-fg">{check.name}</span>
-                              <span className="ml-auto text-[10px] font-mono uppercase text-fg-dim">
-                                {check.ok ? "ready" : "needs setup"}
-                              </span>
-                            </div>
-                            <p className="mt-1 text-[11.5px] text-fg-muted">{check.message}</p>
-                            {!check.ok && check.fix && (
-                              <p className="mt-1 text-[11px] text-accent">{check.fix}</p>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="panel p-3 bg-surface-2 border border-line">
-                    <label className="label mb-2 block font-semibold">Microphone mode</label>
-                    <div className="grid grid-cols-2 gap-1 rounded-md border border-line bg-surface-1 p-1">
-                      {VOICE_INPUT_MODES.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          onClick={() => {
-                            setVoiceInputMode(option.id);
-                            if (voiceActive) {
-                              liveVoice.setMuted(option.id === "push");
-                            }
-                          }}
-                          className={cn(
-                            "rounded px-2 py-1.5 text-[11.5px] font-semibold transition-colors",
-                            voiceInputMode === option.id
-                              ? "bg-surface-3 text-fg shadow-sm"
-                              : "text-fg-dim hover:text-fg",
-                          )}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="panel p-3 bg-surface-2 border border-line">
-                    <label className="label mb-2 block font-semibold">Fallback TTS Voice</label>
-                    <select
-                      className="w-full rounded-md border border-line bg-surface-3 px-2 py-1.5 text-[12.5px] focus:border-accent focus:outline-none text-fg"
-                      value={selectedVoiceURI}
-                      onChange={(e) => setSelectedVoiceURI(e.target.value)}
-                      disabled={voices.length === 0}
-                    >
-                      {voices.length === 0 && <option value="">Browser default</option>}
-                      {voices.map((v) => (
-                        <option value={v.voiceURI} key={v.voiceURI}>
-                          {v.name} ({v.lang})
-                        </option>
-                      ))}
-                    </select>
-                    <p className="mt-2 text-[10.5px] text-fg-dim leading-relaxed">
-                      Used if Gemini Gateway doesn't return direct audio chunks, synthesized on this
-                      browser.
-                    </p>
-                  </div>
-
-                  {pendingAudioUrl && (
-                    <div className="panel p-3 bg-danger/5 border border-danger/20 rounded-md">
-                      <p className="text-danger font-semibold text-[11px] mb-2">
-                        Browser autoplay was blocked.
-                      </p>
-                      <button
-                        onClick={() => void playResponseAudio(pendingAudioUrl)}
-                        className="w-full bg-danger text-white rounded py-1 px-3 hover:brightness-110 font-semibold text-[11.5px]"
-                      >
-                        Play Response Audio
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <ConsoleVoicePanel
+                  doctorChecks={doctorChecks}
+                  voices={voices}
+                  selectedVoiceURI={selectedVoiceURI}
+                  voiceInputMode={voiceInputMode}
+                  pendingAudioUrl={pendingAudioUrl}
+                  onRefreshDoctor={refreshDoctor}
+                  onSelectedVoiceChange={setSelectedVoiceURI}
+                  onVoiceInputModeChange={(nextMode) => {
+                    setVoiceInputMode(nextMode);
+                    if (voiceActive) {
+                      liveVoice.setMuted(nextMode === "push");
+                    }
+                  }}
+                  onPlayResponseAudio={(audioUrl) => void playResponseAudio(audioUrl)}
+                />
               )}
             </div>
 
