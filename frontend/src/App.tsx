@@ -27,6 +27,7 @@ import { useChatExport } from "./hooks/useChatExport";
 import { useChatActionDialogs } from "./hooks/useChatActionDialogs";
 import { useChatDisplayState } from "./hooks/useChatDisplayState";
 import { useMessageAutoScroll } from "./hooks/useMessageAutoScroll";
+import { useComposerInput } from "./hooks/useComposerInput";
 import * as api from "./services/api";
 import { Project, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
@@ -66,7 +67,6 @@ function appendCodexEvent(
 export function App() {
   const store = useProjectStore();
 
-  const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"agent" | "codex">("agent");
@@ -81,7 +81,7 @@ export function App() {
   const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const { input, textareaRef, resetComposer, onComposerInput } = useComposerInput();
 
   const {
     railOpen,
@@ -455,10 +455,7 @@ export function App() {
         createdChatForSend = true;
       }
 
-      setInput("");
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
+      resetComposer();
       setError("");
       setBusy(true);
 
@@ -486,7 +483,7 @@ export function App() {
         setBusy(false);
       }
     },
-    [busy, input, mode, store, streamAgent, streamCodex],
+    [busy, input, mode, resetComposer, store, streamAgent, streamCodex],
   );
 
   const handleCancelTask = useCallback(() => {
@@ -532,12 +529,6 @@ export function App() {
     clearConsoleState();
     setError("");
     api.deleteConsoleState(chatId).catch(() => {});
-  };
-
-  const onComposerInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    e.target.style.height = "auto";
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 168)}px`;
   };
 
   const openSearchResult = (result: SearchResult) => {
