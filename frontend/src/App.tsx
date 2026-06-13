@@ -26,6 +26,7 @@ import { useBackendStatus } from "./hooks/useBackendStatus";
 import { useChatExport } from "./hooks/useChatExport";
 import { useChatActionDialogs } from "./hooks/useChatActionDialogs";
 import { useChatDisplayState } from "./hooks/useChatDisplayState";
+import { useMessageAutoScroll } from "./hooks/useMessageAutoScroll";
 import * as api from "./services/api";
 import { Project, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
@@ -118,14 +119,11 @@ export function App() {
 
   useEffect(() => saveJSON("cva.voiceInputMode.v1", voiceInputMode), [voiceInputMode]);
 
-  // Scroll messages
-  const scrollToBottom = () => {
-    messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [store.messages.length, busy]);
+  useMessageAutoScroll({
+    messageEndRef,
+    messageCount: store.messages.length,
+    busy,
+  });
 
   const {
     debugEntries,
