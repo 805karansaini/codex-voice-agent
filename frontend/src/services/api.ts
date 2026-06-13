@@ -162,6 +162,23 @@ export async function revertChangeReview(workdir: string, files: string[]): Prom
   return res.json();
 }
 
+export async function commitChangeReview(
+  workdir: string,
+  files: string[],
+  message: string
+): Promise<{ ok: boolean; commit: string; committed_files: string[]; message: string }> {
+  const res = await fetch(`${API_BASE}/api/change-review/commit`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ workdir, files, message }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || "Failed to commit changes");
+  }
+  return res.json();
+}
+
 export interface StreamOptions {
   task?: string;
   message?: string;

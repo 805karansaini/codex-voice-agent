@@ -592,6 +592,61 @@ def _revert_changed_files(workdir: str, files: list[str]) -> dict[str, object]:
     return {"ok": True, "reverted_files": reverted}
 
 
+def _commit_changed_files(workdir: str, files: list[str], message: str) -> dict[str, object]:
+    if not files:
+        raise ValueError("No changed files were provided")
+    commit_message = _compact_commit_message(message)
+    if not commit_message:
+        raise ValueError("Commit message is required")
+    root = resolve_workdir(workdir)
+    if not (root / ".git").exists() and not _git_output(root, ["rev-parse", "--show-toplevel"]):
+        raise ValueError("Workdir is not inside a git repository")
+
+    safe_files = [_safe_changed_file(raw_file) for raw_file in files]
+    for rel_path in safe_files:
+        target = (root / rel_path).resolve()
+        if target != root and root not in target.parents:
+            raise ValueError(f"Changed file path escapes workdir: {rel_path}")
+
+    add_proc = subprocess.run(
+        ["git", "-C", str(root), "add", "--", *safe_files],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if add_proc.returncode != 0:
+        raise ValueError(add_proc.stderr.strip() or "Failed to stage changed files")
+
+    diff_proc = subprocess.run(
+        ["git", "-C", str(root), "diff", "--cached", "--quiet", "--", *safe_files],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if diff_proc.returncode == 0:
+        raise ValueError("No staged changes to commit")
+    if diff_proc.returncode not in (0, 1):
+        raise ValueError(diff_proc.stderr.strip() or "Failed to inspect staged changes")
+
+    commit_proc = subprocess.run(
+        ["git", "-C", str(root), "commit", "-m", commit_message, "--", *safe_files],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if commit_proc.returncode != 0:
+        raise ValueError(commit_proc.stderr.strip() or "Failed to commit changed files")
+    commit_id = _git_output(root, ["rev-parse", "--short", "HEAD"])
+    return {"ok": True, "commit": commit_id, "committed_files": safe_files, "message": commit_message}
+
+
+def _compact_commit_message(message: str) -> str:
+    value = " ".join(str(message or "").split())
+    if len(value) > 72:
+        return value[:69].rstrip() + "..."
+    return value
+
+
 class ChatRequest(BaseModel):
     message: str
     workdir: str | None = None
@@ -630,6 +685,12 @@ class ConsoleStateRequest(BaseModel):
 class ChangeReviewRevertRequest(BaseModel):
     workdir: str
     files: list[str]
+
+
+class ChangeReviewCommitRequest(BaseModel):
+    workdir: str
+    files: list[str]
+    message: str
 
 
 @app.get("/api/health")
@@ -1657,6 +1718,21 @@ async def revert_change_review(req: ChangeReviewRevertRequest) -> dict[str, obje
         "change_review.revert",
         workdir=req.workdir,
         file_count=len(result.get("reverted_files") or []),
+    )
+    return result
+
+
+@app.post("/api/change-review/commit")
+async def commit_change_review(req: ChangeReviewCommitRequest) -> dict[str, object]:
+    try:
+        result = _commit_changed_files(req.workdir, req.files, req.message)
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    app_log.write(
+        "change_review.commit",
+        workdir=req.workdir,
+        file_count=len(result.get("committed_files") or []),
+        commit=result.get("commit"),
     )
     return result
 

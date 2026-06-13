@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.app.main import _revert_changed_files
+from backend.app.main import _commit_changed_files, _revert_changed_files
 
 
 def _git(root: Path, *args: str) -> None:
@@ -11,6 +11,47 @@ def _git(root: Path, *args: str) -> None:
 
 
 class ChangeReviewTests(unittest.TestCase):
+    def test_commit_changed_files_commits_only_selected_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _git(root, "init", "-b", "main")
+            _git(root, "config", "user.email", "test@example.com")
+            _git(root, "config", "user.name", "Test User")
+            (root / "app.py").write_text("print('original')\n", encoding="utf-8")
+            (root / "notes.md").write_text("original\n", encoding="utf-8")
+            _git(root, "add", "app.py", "notes.md")
+            _git(root, "commit", "-m", "Initial")
+
+            (root / "app.py").write_text("print('changed')\n", encoding="utf-8")
+            (root / "notes.md").write_text("changed\n", encoding="utf-8")
+
+            result = _commit_changed_files(str(root), ["app.py"], "Apply Codex changes")
+
+            self.assertEqual(result["committed_files"], ["app.py"])
+            self.assertTrue(result["commit"])
+            status = subprocess.run(
+                ["git", "status", "--short"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            self.assertIn(" M notes.md", status)
+            self.assertNotIn("app.py", status)
+
+    def test_commit_changed_files_rejects_empty_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _git(root, "init", "-b", "main")
+            _git(root, "config", "user.email", "test@example.com")
+            _git(root, "config", "user.name", "Test User")
+            (root / "app.py").write_text("print('original')\n", encoding="utf-8")
+            _git(root, "add", "app.py")
+            _git(root, "commit", "-m", "Initial")
+
+            with self.assertRaises(ValueError):
+                _commit_changed_files(str(root), ["app.py"], "No changes")
+
     def test_revert_changed_files_restores_tracked_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

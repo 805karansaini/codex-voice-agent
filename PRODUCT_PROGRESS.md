@@ -188,6 +188,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added a Change Review revert action for changed files.
   - Commit: Add change review revert action
   - Partially covers review feature: F1
+- [x] Added a Change Review commit action for changed files.
+  - Commit: Add change review commit action
+  - Partially covers review feature: F1
 - [x] Added project briefing context for voice/session startup.
   - Commit: `19dda8a` - Add project briefing context
   - Covers review feature: F5
@@ -230,8 +233,8 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A4
 - [ ] Complete the Change Review feature.
   - Review feature: F1
-  - Done so far: diff artifacts are captured and surfaced, and changed files can be reverted from the review chip.
-  - Remaining: approval flow, commit action, and optional auto-checkpoint before Codex turns.
+  - Done so far: diff artifacts are captured and surfaced, and changed files can be committed or reverted from the review chip.
+  - Remaining: approval flow and optional auto-checkpoint before Codex turns.
 
 ### Product Features
 
@@ -299,3 +302,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Add frontend history merge tests |
 | 2026-06-13 | current commit | Add prompting sanitizer tests |
 | 2026-06-13 | current commit | Add change review revert action |
+| 2026-06-13 | current commit | Add change review commit action |
