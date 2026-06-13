@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { FolderOpen, AlertCircle, X } from "lucide-react";
 import { Project } from "../../types";
 import * as api from "../../services/api";
@@ -33,7 +33,6 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
   const [picking, setPicking] = useState(false);
-  const pathRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();

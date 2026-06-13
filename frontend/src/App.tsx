@@ -141,7 +141,6 @@ export function App() {
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"agent" | "codex">("agent");
   const [status, setStatus] = useState("Checking backend");
-  const [model, setModel] = useState("Gemini Live");
 
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
@@ -256,7 +255,6 @@ export function App() {
     api.fetchHealth()
       .then((data) => {
         setStatus(data.has_google_api_key ? "Ready" : "Missing Google API key");
-        setModel(data.gemini_model || "Gemini Live");
       })
       .catch(() => setStatus("Backend offline"));
   }, []);
@@ -1214,9 +1212,6 @@ export function App() {
     if (isMobile) setMobileView("chat");
   };
 
-  const statusClass =
-    status === "Ready" ? "ready" : status === "Backend offline" ? "offline" : "warn";
-
   const formatElapsed = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -1818,7 +1813,7 @@ export function App() {
                   </div>
                 </div>
               ) : (
-                store.messages.map((m, idx) => {
+                store.messages.map((m) => {
                   const isUser = m.role === "user";
                   if (isUser) {
                     return (
