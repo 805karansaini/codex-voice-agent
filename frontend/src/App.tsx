@@ -59,6 +59,13 @@ const PREFERRED_VOICE_NAMES = [
   "Zira",
 ];
 
+type VoiceInputMode = "open" | "push";
+
+const VOICE_INPUT_MODES: { id: VoiceInputMode; label: string }[] = [
+  { id: "open", label: "Open mic" },
+  { id: "push", label: "Push to talk" },
+];
+
 
 async function readSseStream(res: Response, onEvent: (evt: any) => void) {
   if (!res.body) return;
@@ -416,6 +423,9 @@ export function App() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
   const [pendingAudioUrl, setPendingAudioUrl] = useState("");
+  const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>(() =>
+    loadJSON<VoiceInputMode>("cva.voiceInputMode.v1", "open")
+  );
 
   const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
   const [handoffs, setHandoffs] = useState<Handoff[]>([]);
@@ -486,6 +496,7 @@ export function App() {
   // Persist layout sizing
   useEffect(() => saveJSON("cva.railWidth.v2", railWidth), [railWidth]);
   useEffect(() => saveJSON("cva.panelWidth.v2", panelWidth), [panelWidth]);
+  useEffect(() => saveJSON("cva.voiceInputMode.v1", voiceInputMode), [voiceInputMode]);
 
   // Scroll messages
   const scrollToBottom = () => {
@@ -1376,6 +1387,16 @@ export function App() {
     liveVoice.cancelTask();
   }, [liveVoice]);
 
+  const holdToTalk = useCallback(() => {
+    if (voiceInputMode !== "push" || !voiceActive) return;
+    liveVoice.setMuted(false);
+  }, [liveVoice, voiceActive, voiceInputMode]);
+
+  const releaseToMute = useCallback(() => {
+    if (voiceInputMode !== "push" || !voiceActive) return;
+    liveVoice.setMuted(true);
+  }, [liveVoice, voiceActive, voiceInputMode]);
+
   const toggleVoice = () => {
     primeAudioPlayback();
     activeUserVoiceMsgIdRef.current = null;
@@ -1388,6 +1409,9 @@ export function App() {
       const chatId = store.activeChatId || store.createChat(store.activeProject.id).id;
       voiceCtxRef.current = { project: store.activeProject, chatId };
       liveVoice.start();
+      if (voiceInputMode === "push") {
+        liveVoice.setMuted(true);
+      }
     }
   };
 
@@ -2169,19 +2193,44 @@ export function App() {
 
                   {/* Action buttons */}
                   <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={liveVoice.toggleMute}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
-                        liveVoice.muted
-                          ? "border-danger/30 bg-danger/10 text-danger"
-                          : "border-line bg-surface-3 text-fg-muted hover:text-fg"
-                      )}
-                    >
-                      {liveVoice.muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                      {!isMobile && <span>{liveVoice.muted ? "Unmute" : "Mute"}</span>}
-                    </button>
+                    {voiceInputMode === "push" ? (
+                      <button
+                        type="button"
+                        onPointerDown={holdToTalk}
+                        onPointerUp={releaseToMute}
+                        onPointerCancel={releaseToMute}
+                        onPointerLeave={releaseToMute}
+                        onKeyDown={(e) => {
+                          if (e.key === " " || e.key === "Enter") holdToTalk();
+                        }}
+                        onKeyUp={(e) => {
+                          if (e.key === " " || e.key === "Enter") releaseToMute();
+                        }}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11.5px] font-semibold transition-colors",
+                          liveVoice.muted
+                            ? "border-accent/30 bg-accent/10 text-accent"
+                            : "border-success/30 bg-success/10 text-success"
+                        )}
+                      >
+                        {liveVoice.muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                        {!isMobile && <span>{liveVoice.muted ? "Hold to talk" : "Listening"}</span>}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={liveVoice.toggleMute}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
+                          liveVoice.muted
+                            ? "border-danger/30 bg-danger/10 text-danger"
+                            : "border-line bg-surface-3 text-fg-muted hover:text-fg"
+                        )}
+                      >
+                        {liveVoice.muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                        {!isMobile && <span>{liveVoice.muted ? "Unmute" : "Mute"}</span>}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={toggleVoice}
@@ -2518,6 +2567,32 @@ export function App() {
                         </div>
                       ))
                     )}
+                  </div>
+                </div>
+
+                <div className="panel p-3 bg-surface-2 border border-line">
+                  <label className="label mb-2 block font-semibold">Microphone mode</label>
+                  <div className="grid grid-cols-2 gap-1 rounded-md border border-line bg-surface-1 p-1">
+                    {VOICE_INPUT_MODES.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => {
+                          setVoiceInputMode(option.id);
+                          if (voiceActive) {
+                            liveVoice.setMuted(option.id === "push");
+                          }
+                        }}
+                        className={cn(
+                          "rounded px-2 py-1.5 text-[11.5px] font-semibold transition-colors",
+                          voiceInputMode === option.id
+                            ? "bg-surface-3 text-fg shadow-sm"
+                            : "text-fg-dim hover:text-fg"
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 

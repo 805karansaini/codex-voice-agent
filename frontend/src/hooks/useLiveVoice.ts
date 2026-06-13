@@ -265,6 +265,12 @@ export function useLiveVoice({
 
   const log = useCallback((text: string) => cbRef.current.onDebug(text), []);
 
+  const setInputMuted = useCallback((next: boolean) => {
+    mutedRef.current = next;
+    setMuted(next);
+    log(next ? "Microphone muted — Gemini will not be interrupted by background audio." : "Microphone unmuted.");
+  }, [log]);
+
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       const next = !m;
@@ -660,6 +666,7 @@ export function useLiveVoice({
     message,
     transcriptPreview: userPreview || assistantPreview,
     muted,
+    setMuted: setInputMuted,
     toggleMute,
     start,
     stop,

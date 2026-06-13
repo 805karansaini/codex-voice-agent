@@ -155,6 +155,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Supported project-scoped monorepo subpaths for Codex work.
   - Commit: Support project subpath workdirs
   - Covers review feature: F6
+- [x] Added a push-to-talk microphone mode for voice sessions.
+  - Commit: Add push-to-talk voice mode
+  - Covers review feature: F6
 
 ## Still Remaining Or Pending
 
@@ -180,8 +183,6 @@ This file tracks what has been completed from the product review and what still 
   - Review feature: F2
 - [ ] Persist Codex threads across server restarts.
   - Review feature: F3
-- [ ] Add mobile wake-word or push-to-talk mode.
-  - Review feature: F6
 - [ ] Add Gemini Live usage and cost estimates.
   - Review feature: F6
   - Current status: Codex token usage is visible; Gemini Live token/audio usage and pricing are still pending.
@@ -239,3 +240,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Show Codex token usage |
 | 2026-06-13 | current commit | Add onboarding doctor |
 | 2026-06-13 | current commit | Support project subpath workdirs |
+| 2026-06-13 | current commit | Add push-to-talk voice mode |
