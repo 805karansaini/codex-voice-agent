@@ -24,14 +24,15 @@ import { useSetupDoctor } from "./hooks/useSetupDoctor";
 import { useChangeReviewActions } from "./hooks/useChangeReviewActions";
 import { useBackendStatus } from "./hooks/useBackendStatus";
 import { useChatExport } from "./hooks/useChatExport";
+import { useChatActionDialogs } from "./hooks/useChatActionDialogs";
 import * as api from "./services/api";
 import { Project, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 import { appendArtifacts } from "./utils/artifacts";
 
 import AddProjectModal from "./components/modals/AddProjectModal";
-import ConfirmModal, { ConfirmDialogState } from "./components/modals/ConfirmModal";
-import RenameChatModal, { RenameDialogState } from "./components/modals/RenameChatModal";
+import ConfirmModal from "./components/modals/ConfirmModal";
+import RenameChatModal from "./components/modals/RenameChatModal";
 import ChatTopBar from "./components/chat/ChatTopBar";
 import ComposerFooter from "./components/chat/ComposerFooter";
 import ChatStream from "./components/chat/ChatStream";
@@ -73,8 +74,6 @@ export function App() {
   );
 
   const [showAdd, setShowAdd] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
-  const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [activeConsoleTab, setActiveConsoleTab] = useState<ConsoleTabId>("stream");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
@@ -103,6 +102,18 @@ export function App() {
     useWorkspaceSearch();
   const { doctorChecks, refreshDoctor } = useSetupDoctor();
   const status = useBackendStatus();
+  const {
+    confirmDialog,
+    setConfirmDialog,
+    renameDialog,
+    setRenameDialog,
+    handleRemoveProject,
+    handleRemoveChat,
+    handleRenameChat,
+  } = useChatActionDialogs({
+    removeProject: store.removeProject,
+    removeChat: store.removeChat,
+  });
 
   useEffect(() => saveJSON("cva.voiceInputMode.v1", voiceInputMode), [voiceInputMode]);
 
@@ -528,30 +539,6 @@ export function App() {
     setInput(e.target.value);
     e.target.style.height = "auto";
     e.target.style.height = `${Math.min(e.target.scrollHeight, 168)}px`;
-  };
-
-  const handleRemoveProject = (id: string, name: string) => {
-    setConfirmDialog({
-      title: "Remove project",
-      body: `Remove ${name}? This clears its chats and local history.`,
-      actionLabel: "Remove",
-      danger: true,
-      onConfirm: () => store.removeProject(id),
-    });
-  };
-
-  const handleRemoveChat = (projectId: string, chatId: string) => {
-    setConfirmDialog({
-      title: "Delete conversation",
-      body: "Delete this conversation and its local history?",
-      actionLabel: "Delete",
-      danger: true,
-      onConfirm: () => store.removeChat(projectId, chatId),
-    });
-  };
-
-  const handleRenameChat = (projectId: string, chatId: string, title: string) => {
-    setRenameDialog({ projectId, chatId, initialTitle: title });
   };
 
   const openSearchResult = (result: SearchResult) => {
