@@ -80,7 +80,9 @@ async function readSseStream(res: Response, onEvent: (evt: any) => void) {
       if (!data) continue;
       try {
         onEvent(JSON.parse(data.trim()));
-      } catch {}
+      } catch {
+        // Ignore malformed stream frames and keep reading the stream.
+      }
     }
   }
 }
@@ -1001,7 +1003,6 @@ export function App() {
       activeAbortControllerRef.current = controller;
 
       let finalText = "";
-      let cancelled = false;
 
       try {
         const res = await api.postCodexStream({
@@ -1073,7 +1074,6 @@ export function App() {
         await readSseStream(res, handle);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          cancelled = true;
           store.updateMessage(chatId, assistantId, (m) => ({
             ...m,
             streaming: false,
@@ -1093,7 +1093,7 @@ export function App() {
       store.updateMessage(chatId, assistantId, (m) =>
         m.streaming ? { ...m, streaming: false } : m
       );
-      if (!cancelled && finalText) speak(finalText);
+      if (finalText) speak(finalText);
     },
     [addAction, addHandoff, speak, store.appendMessage, store.updateMessage, updateAction]
   );
@@ -1105,7 +1105,6 @@ export function App() {
 
       const controller = new AbortController();
       activeAbortControllerRef.current = controller;
-      let cancelled = false;
       let finalText = "";
       let finalAudioUrl = "";
       let usedCodex = false;
@@ -1219,11 +1218,10 @@ export function App() {
         store.updateMessage(chatId, assistantId, (m) =>
           m.streaming ? { ...m, streaming: false } : m
         );
-        if (!cancelled && finalAudioUrl) await playResponseAudio(finalAudioUrl);
-        else if (!cancelled && finalText) speak(finalText);
+        if (finalAudioUrl) await playResponseAudio(finalAudioUrl);
+        else if (finalText) speak(finalText);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          cancelled = true;
           store.updateMessage(chatId, assistantId, (m) => ({
             ...m,
             streaming: false,

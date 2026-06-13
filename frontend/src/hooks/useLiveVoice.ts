@@ -107,7 +107,9 @@ class AudioStreamPlayer {
     this.activeSources.forEach((source) => {
       try {
         source.stop();
-      } catch {}
+      } catch {
+        // Some browsers throw if a source already stopped.
+      }
     });
     this.activeSources = [];
     this.nextPlayTime = 0;
@@ -530,7 +532,9 @@ export function useLiveVoice({
     hasStreamedAudioRef.current = false;
     try {
       getAudioPlayer();
-    } catch {}
+    } catch {
+      // Audio context creation can be blocked until the user interacts again.
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({

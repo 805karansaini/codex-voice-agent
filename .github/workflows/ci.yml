@@ -25,12 +25,17 @@ jobs:
 
       - name: Compile backend and run tests
         run: |
+          uv run ruff check .
           uv run python -m compileall backend/app run.py tests
           uv run python -m unittest discover -s tests
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
 
       - name: Build frontend
         working-directory: frontend

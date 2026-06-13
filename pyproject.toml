@@ -19,3 +19,19 @@ dependencies = [
 
 [tool.uv]
 compile-bytecode = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["backend"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.17",
+]

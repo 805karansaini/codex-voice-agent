@@ -13,7 +13,9 @@ export function loadJSON<T>(key: string, fallback: T): T {
 export function saveJSON(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
+  } catch {
+    // Ignore storage failures from private mode or exhausted quota.
+  }
 }
 
 export function chatTitleFrom(text: string): string {

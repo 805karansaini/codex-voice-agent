@@ -129,7 +129,7 @@ async def _evict_idle_sessions_locked() -> list[_ThreadSession]:
             ((key, session) for key, session in _sessions.items() if session.active_turn is None),
             key=lambda item: item[1].last_used or now,
         )
-        for key, session in idle[: max(0, len(_sessions) - _SESSION_LIMIT)]:
+        for key, _session in idle[: max(0, len(_sessions) - _SESSION_LIMIT)]:
             stale.append(_sessions.pop(key))
     return stale
 
