@@ -56,6 +56,7 @@ import ComposerFooter from "./components/chat/ComposerFooter";
 import ConsoleTabs, { ConsoleTabId } from "./components/console/ConsoleTabs";
 import ConsoleStreamPanel from "./components/console/ConsoleStreamPanel";
 import ConsoleHandoffsPanel from "./components/console/ConsoleHandoffsPanel";
+import ConsoleActionsPanel from "./components/console/ConsoleActionsPanel";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -2103,94 +2104,7 @@ export function App() {
             <div className="flex-1 overflow-y-auto p-3">
               {activeConsoleTab === "stream" && <ConsoleStreamPanel entries={debugEntries} />}
 
-              {activeConsoleTab === "actions" && (
-                <div
-                  id="console-panel-actions"
-                  role="tabpanel"
-                  aria-labelledby="console-tab-actions"
-                  className="space-y-2"
-                >
-                  {actions.length === 0 ? (
-                    <div className="text-center py-12 text-fg-dim italic">
-                      No operator actions logged.
-                    </div>
-                  ) : (
-                    actions.map((a) => {
-                      const hasResponse =
-                        a.streamingResponse != null && a.streamingResponse.length > 0;
-                      return (
-                        <div
-                          key={a.id}
-                          className="panel p-0 text-xs bg-surface-2 border border-line overflow-hidden"
-                        >
-                          {/* Header */}
-                          <div className="flex items-center justify-between px-3 py-2 border-b border-line-soft/40">
-                            <span className="font-mono text-[11px] text-accent font-semibold">
-                              {a.title}
-                            </span>
-                            <span
-                              className={cn(
-                                "px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase",
-                                a.status === "running"
-                                  ? "bg-accent/10 text-accent animate-pulse"
-                                  : a.status === "done"
-                                    ? "bg-success/15 text-success"
-                                    : "bg-danger/15 text-danger",
-                              )}
-                            >
-                              {a.status}
-                            </span>
-                          </div>
-                          {/* Chat timeline inside the action card */}
-                          <div className="action-chat-timeline">
-                            {/* Prompt/Request — right-aligned like a user message */}
-                            <div className="action-chat-row justify-end">
-                              <div className="action-chat-bubble-user">{a.detail}</div>
-                            </div>
-
-                            {/* Response — left-aligned like an assistant message */}
-                            {hasResponse ? (
-                              <div className="action-chat-row justify-start">
-                                <div
-                                  className={cn(
-                                    "action-chat-response-text",
-                                    a.status === "failed" && "text-danger",
-                                  )}
-                                >
-                                  <MarkdownRenderer content={a.streamingResponse || ""} />
-                                  {a.status === "running" && <span className="caret" />}
-                                </div>
-                              </div>
-                            ) : a.status === "running" ? (
-                              <div className="action-chat-row justify-start">
-                                <div className="action-chat-response-text">
-                                  <div className="flex flex-col gap-1.5 py-1 w-full">
-                                    <span className="h-1.5 bg-fg-dim/15 rounded w-full animate-pulse" />
-                                    <span className="h-1.5 bg-fg-dim/15 rounded w-4/5 animate-pulse" />
-                                    <span className="h-1.5 bg-fg-dim/15 rounded w-3/5 animate-pulse" />
-                                  </div>
-                                </div>
-                              </div>
-                            ) : a.status === "failed" ? (
-                              <div className="action-chat-row justify-start">
-                                <div className="action-chat-response-text text-danger font-medium">
-                                  Failed to execute operator action.
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                          {a.workdir && (
-                            <div className="px-3 py-1.5 text-[9px] text-fg-dim font-mono border-t border-line-soft/40 flex items-center gap-1">
-                              <Folder className="h-2.5 w-2.5" />
-                              <span className="truncate">{a.workdir}</span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
+              {activeConsoleTab === "actions" && <ConsoleActionsPanel actions={actions} />}
 
               {activeConsoleTab === "handoffs" && <ConsoleHandoffsPanel handoffs={handoffs} />}
 
