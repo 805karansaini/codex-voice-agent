@@ -37,6 +37,7 @@ import { useLiveVoice } from "./hooks/useLiveVoice";
 import * as api from "./services/api";
 import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo, CodexTimelineEvent, ChatArtifact, SearchResult, DoctorCheck } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
+import { appendArtifacts, changeArtifacts } from "./utils/artifacts";
 import { readSseStream } from "./utils/sse";
 
 import AddProjectModal from "./components/modals/AddProjectModal";
@@ -78,24 +79,6 @@ function appendCodexEvent(events: CodexTimelineEvent[] | undefined, event: Codex
   const existing = new Set(current.map((e) => `${e.method}:${e.item_id || ""}:${e.turn_id || ""}`));
   if (existing.has(key)) return current;
   return [...current, event].slice(-80);
-}
-
-function appendArtifact(artifacts: ChatArtifact[] | undefined, artifact: ChatArtifact | null | undefined): ChatArtifact[] {
-  if (!artifact?.id) return artifacts || [];
-  const current = artifacts || [];
-  if (current.some((item) => item.id === artifact.id)) return current;
-  return [...current, artifact];
-}
-
-function appendArtifacts(
-  artifacts: ChatArtifact[] | undefined,
-  ...items: (ChatArtifact | null | undefined)[]
-): ChatArtifact[] {
-  return items.reduce((current, item) => appendArtifact(current, item), artifacts || []);
-}
-
-function changeArtifacts(artifacts: ChatArtifact[] | undefined): ChatArtifact[] {
-  return (artifacts || []).filter((artifact) => artifact.content_type === "diff" || artifact.source === "git_diff");
 }
 
 function codexTokenTotal(messages: { codexEvents?: CodexTimelineEvent[] }[]): number {
