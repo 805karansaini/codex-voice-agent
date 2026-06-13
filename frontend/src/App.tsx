@@ -21,6 +21,7 @@ import { useAppLayout } from "./hooks/useAppLayout";
 import { useProjectInfo } from "./hooks/useProjectInfo";
 import { useWorkspaceSearch } from "./hooks/useWorkspaceSearch";
 import { useSetupDoctor } from "./hooks/useSetupDoctor";
+import { useChangeReviewActions } from "./hooks/useChangeReviewActions";
 import * as api from "./services/api";
 import { Project, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
@@ -431,6 +432,13 @@ export function App() {
     setError,
   });
 
+  const { confirmCommitChangeReview, confirmRevertChangeReview } = useChangeReviewActions({
+    addAction,
+    updateAction,
+    setConfirmDialog,
+    setError,
+  });
+
   const send = useCallback(
     async (raw?: string, projectOverride?: Project, chatOverride?: string) => {
       const text = (raw ?? input).trim();
@@ -551,84 +559,6 @@ export function App() {
 
   const handleRenameChat = (projectId: string, chatId: string, title: string) => {
     setRenameDialog({ projectId, chatId, initialTitle: title });
-  };
-
-  const handleRevertChangeReview = async (artifact: ChatArtifact) => {
-    const files = artifact.changed_files || [];
-    if (!artifact.workdir || files.length === 0) {
-      setError("This change review artifact does not include files to revert.");
-      return;
-    }
-    const actionId = addAction({
-      title: "Revert Codex changes",
-      status: "running",
-      detail: files.join(", "),
-      workdir: artifact.workdir,
-    });
-    try {
-      const result = await api.revertChangeReview(artifact.workdir, files);
-      updateAction(actionId, {
-        status: "done",
-        streamingResponse: `Reverted ${result.reverted_files.length} file${result.reverted_files.length === 1 ? "" : "s"}.`,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to revert changes";
-      updateAction(actionId, { status: "failed", streamingResponse: message });
-      setError(message);
-    }
-  };
-
-  const commitMessageForChangeReview = (artifact: ChatArtifact) => {
-    const files = artifact.changed_files || [];
-    if (files.length === 1) return `Apply Codex changes to ${files[0]}`;
-    return `Apply Codex changes to ${files.length} files`;
-  };
-
-  const handleCommitChangeReview = async (artifact: ChatArtifact) => {
-    const files = artifact.changed_files || [];
-    if (!artifact.workdir || files.length === 0) {
-      setError("This change review artifact does not include files to commit.");
-      return;
-    }
-    const message = commitMessageForChangeReview(artifact);
-    const actionId = addAction({
-      title: "Commit Codex changes",
-      status: "running",
-      detail: message,
-      workdir: artifact.workdir,
-    });
-    try {
-      const result = await api.commitChangeReview(artifact.workdir, files, message);
-      updateAction(actionId, {
-        status: "done",
-        streamingResponse: `Committed ${result.committed_files.length} file${result.committed_files.length === 1 ? "" : "s"} as ${result.commit}.`,
-      });
-    } catch (err) {
-      const messageText = err instanceof Error ? err.message : "Failed to commit changes";
-      updateAction(actionId, { status: "failed", streamingResponse: messageText });
-      setError(messageText);
-    }
-  };
-
-  const confirmCommitChangeReview = (artifact: ChatArtifact) => {
-    const files = artifact.changed_files || [];
-    setConfirmDialog({
-      title: "Commit Codex changes?",
-      body: `Stage and commit ${files.length} changed file${files.length === 1 ? "" : "s"} from this turn. Other local files will not be staged.`,
-      actionLabel: "Commit",
-      onConfirm: () => void handleCommitChangeReview(artifact),
-    });
-  };
-
-  const confirmRevertChangeReview = (artifact: ChatArtifact) => {
-    const files = artifact.changed_files || [];
-    setConfirmDialog({
-      title: "Revert Codex changes?",
-      body: `Restore ${files.length} changed file${files.length === 1 ? "" : "s"} from this turn back to HEAD. Untracked files in this change set will be removed.`,
-      actionLabel: "Revert",
-      danger: true,
-      onConfirm: () => void handleRevertChangeReview(artifact),
-    });
   };
 
   const handleExportChat = async () => {
