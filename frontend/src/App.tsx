@@ -54,6 +54,7 @@ import CodexTimeline from "./components/codex/CodexTimeline";
 import ChatTopBar from "./components/chat/ChatTopBar";
 import ComposerFooter from "./components/chat/ComposerFooter";
 import ConsoleTabs, { ConsoleTabId } from "./components/console/ConsoleTabs";
+import ConsoleStreamPanel from "./components/console/ConsoleStreamPanel";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -2099,30 +2100,7 @@ export function App() {
 
             {/* Console Contents */}
             <div className="flex-1 overflow-y-auto p-3">
-              {activeConsoleTab === "stream" && (
-                <div
-                  id="console-panel-stream"
-                  role="tabpanel"
-                  aria-labelledby="console-tab-stream"
-                  className="font-mono text-[11px] leading-relaxed"
-                >
-                  {debugEntries.length === 0 ? (
-                    <div className="text-center py-12 text-fg-dim italic">Waiting for events…</div>
-                  ) : (
-                    debugEntries.map((l) => (
-                      <div
-                        key={l.id}
-                        className="grid grid-cols-[82px_1fr] items-baseline gap-2 py-0.5 border-b border-line-soft/30"
-                      >
-                        <span className="text-fg-dim shrink-0">{l.time}</span>
-                        <span className="text-fg/85 break-all whitespace-pre-wrap">
-                          {l.message}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
+              {activeConsoleTab === "stream" && <ConsoleStreamPanel entries={debugEntries} />}
 
               {activeConsoleTab === "actions" && (
                 <div
