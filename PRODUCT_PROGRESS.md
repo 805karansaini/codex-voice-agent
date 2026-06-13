@@ -147,6 +147,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved workspace search query/result loading out of the large `App.tsx` file.
   - Commit: Extract workspace search hook
   - Partially covers review item: A5
+- [x] Moved setup doctor and microphone readiness checks out of the large `App.tsx` file.
+  - Commit: Extract setup doctor hook
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -299,7 +302,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, chat stream, composer footer, activity rail, workspace sidebar, console header, console tabs, all console tab panels, console stats footer, typed/Codex streaming callbacks, speech/audio playback state, console session state, layout interaction state, active project path/git status loading, and workspace search state; live voice wiring and remaining app orchestration still need follow-up passes.
+  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, chat stream, composer footer, activity rail, workspace sidebar, console header, console tabs, all console tab panels, console stats footer, typed/Codex streaming callbacks, speech/audio playback state, console session state, layout interaction state, active project path/git status loading, workspace search state, and setup doctor state; live voice wiring and remaining app orchestration still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.
