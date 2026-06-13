@@ -32,8 +32,9 @@ import { useSearchResultNavigation } from "./hooks/useSearchResultNavigation";
 import { useChatSwitcherKeyboard } from "./hooks/useChatSwitcherKeyboard";
 import { useClearThread } from "./hooks/useClearThread";
 import { useWorkspaceSidebarState } from "./hooks/useWorkspaceSidebarState";
+import { useVoiceInputMode } from "./hooks/useVoiceInputMode";
 import { Project, CodexTimelineEvent, ChatArtifact } from "./types";
-import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
+import { chatTitleFrom, cn } from "./utils";
 import { appendArtifacts } from "./utils/artifacts";
 
 import AddProjectModal from "./components/modals/AddProjectModal";
@@ -51,8 +52,6 @@ import ConsoleStatsFooter from "./components/console/ConsoleStatsFooter";
 import ConsoleHeader from "./components/console/ConsoleHeader";
 import ActivityRail from "./components/layout/ActivityRail";
 import WorkspaceSidebar from "./components/layout/WorkspaceSidebar";
-
-type VoiceInputMode = "open" | "push";
 
 function appendCodexEvent(
   events: CodexTimelineEvent[] | undefined,
@@ -74,9 +73,7 @@ export function App() {
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"agent" | "codex">("agent");
 
-  const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>(() =>
-    loadJSON<VoiceInputMode>("cva.voiceInputMode.v1", "open"),
-  );
+  const { voiceInputMode, setVoiceInputMode } = useVoiceInputMode();
 
   const [showAdd, setShowAdd] = useState(false);
   const [activeConsoleTab, setActiveConsoleTab] = useState<ConsoleTabId>("stream");
@@ -132,8 +129,6 @@ export function App() {
     removeProject: store.removeProject,
     removeChat: store.removeChat,
   });
-
-  useEffect(() => saveJSON("cva.voiceInputMode.v1", voiceInputMode), [voiceInputMode]);
 
   useMessageAutoScroll({
     messageEndRef,

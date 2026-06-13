@@ -1,7 +1,6 @@
 import type { DoctorCheck } from "../../types";
 import { cn } from "../../utils";
-
-type VoiceInputMode = "open" | "push";
+import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 
 const VOICE_INPUT_MODES: { id: VoiceInputMode; label: string }[] = [
   { id: "open", label: "Open mic" },

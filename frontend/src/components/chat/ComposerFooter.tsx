@@ -2,8 +2,7 @@ import React from "react";
 import { ArrowUp, Mic, MicOff } from "lucide-react";
 
 import { cn } from "../../utils";
-
-type VoiceInputMode = "open" | "push";
+import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 
 type ComposerFooterProps = {
   isMobile: boolean;
