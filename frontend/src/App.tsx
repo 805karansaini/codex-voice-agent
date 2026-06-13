@@ -30,7 +30,7 @@ import { useMessageAutoScroll } from "./hooks/useMessageAutoScroll";
 import { useComposerInput } from "./hooks/useComposerInput";
 import { useSearchResultNavigation } from "./hooks/useSearchResultNavigation";
 import { useChatSwitcherKeyboard } from "./hooks/useChatSwitcherKeyboard";
-import * as api from "./services/api";
+import { useClearThread } from "./hooks/useClearThread";
 import { Project, CodexTimelineEvent, ChatArtifact } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 import { appendArtifacts } from "./utils/artifacts";
@@ -451,6 +451,13 @@ export function App() {
     setError,
   });
   const handleExportChat = useChatExport({ activeChatId: store.activeChatId, setError });
+  const clearThread = useClearThread({
+    activeProjectId: store.activeProject?.id,
+    activeChatId: store.activeChatId,
+    clearChatThread: store.clearChatThread,
+    clearConsoleState,
+    setError,
+  });
 
   const send = useCallback(
     async (raw?: string, projectOverride?: Project, chatOverride?: string) => {
@@ -530,15 +537,6 @@ export function App() {
         liveVoice.setMuted(true);
       }
     }
-  };
-
-  const clearThread = () => {
-    if (!store.activeProject || !store.activeChatId) return;
-    const chatId = store.activeChatId;
-    store.clearChatThread(store.activeChatId);
-    clearConsoleState();
-    setError("");
-    api.deleteConsoleState(chatId).catch(() => {});
   };
 
   const { voiceTitle, liveStatusText, streamingStatusText, suggestions } = useChatDisplayState({
