@@ -90,6 +90,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Clarified the Codex status timing behavior.
   - Commit: `83d2b17` - Clarify Codex status timing
   - Partially covers review item: R4
+- [x] Documented the live voice status flow and fallback timing.
+  - Commit: Document live voice state flow
+  - Covers review item: R4
 - [x] Improved artifact content classification.
   - Commit: `92e0ce9` - Tighten artifact content classification
   - Covers review item: R5
@@ -198,9 +201,6 @@ This file tracks what has been completed from the product review and what still 
   - Current status: Codex token usage is visible; Gemini Live token/audio usage and pricing are still pending.
 ### Reliability And Polish
 
-- [ ] Fully document or simplify the live voice status and fallback timing state machine.
-  - Review item: R4
-  - Current status: timing behavior was clarified, but the full state machine is not fully formalized.
 - [ ] Continue accessibility improvements.
   - Review item: Q7
   - Remaining examples: focus management and chat switcher keyboard flow.
@@ -249,3 +249,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Add push-to-talk voice mode |
 | 2026-06-13 | current commit | Document Google GenAI SDK pin |
 | 2026-06-13 | current commit | Add streaming response accessibility status |
+| 2026-06-13 | current commit | Document live voice state flow |
