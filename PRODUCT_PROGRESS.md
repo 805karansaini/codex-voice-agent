@@ -152,6 +152,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added an onboarding doctor for setup checks.
   - Commit: Add onboarding doctor
   - Covers review feature: F6
+- [x] Supported project-scoped monorepo subpaths for Codex work.
+  - Commit: Support project subpath workdirs
+  - Covers review feature: F6
 
 ## Still Remaining Or Pending
 
@@ -177,8 +180,6 @@ This file tracks what has been completed from the product review and what still 
   - Review feature: F2
 - [ ] Persist Codex threads across server restarts.
   - Review feature: F3
-- [ ] Support multiple workdirs or monorepo subpaths per project.
-  - Review feature: F6
 - [ ] Add mobile wake-word or push-to-talk mode.
   - Review feature: F6
 - [ ] Add Gemini Live usage and cost estimates.
@@ -237,3 +238,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Search chats and artifacts |
 | 2026-06-13 | current commit | Show Codex token usage |
 | 2026-06-13 | current commit | Add onboarding doctor |
+| 2026-06-13 | current commit | Support project subpath workdirs |

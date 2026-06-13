@@ -1,6 +1,7 @@
 import base64
 import wave
 from io import BytesIO
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from google import genai
@@ -62,6 +63,15 @@ def _turn_input(message: str, conversation_context: str | None) -> dict[str, str
         "user_message": message,
         "conversation_so_far": conversation_context or "(start of conversation)",
     }
+
+
+def _resolve_tool_workdir(requested: object, session_workdir: str, project_root: str | None = None) -> str:
+    raw = str(requested or "").strip() or session_workdir
+    root = Path(project_root or session_workdir).expanduser().resolve(strict=True)
+    resolved = Path(raw).expanduser().resolve(strict=True)
+    if resolved != root and root not in resolved.parents:
+        raise ValueError("Tool workdir must stay inside the selected project")
+    return str(resolved)
 
 
 def _system_instruction(workdir: str | None = None, conversation_context: str | None = None) -> str:
@@ -175,6 +185,7 @@ async def ask_gemini_stream(
     cancel_token: CancellationToken = None,
     conversation_id: str | None = None,
     conversation_context: str | None = None,
+    project_root: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     if not settings.google_api_key:
         yield {"type": "error", "message": "GOOGLE_API_KEY is not set"}
@@ -281,7 +292,11 @@ async def ask_gemini_stream(
                     args = dict(call.args or {})
                     task = str(args.get("task") or message)
                     enhanced_task = improve_codex_task_prompt(task)
-                    chosen_workdir = session_workdir or settings.codex_default_workdir
+                    chosen_workdir = _resolve_tool_workdir(
+                        args.get("workdir"),
+                        session_workdir or settings.codex_default_workdir,
+                        project_root,
+                    )
                     yield {
                         "type": "tool_call",
                         "name": call.name,

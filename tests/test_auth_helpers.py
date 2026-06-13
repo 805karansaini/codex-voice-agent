@@ -3,6 +3,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from backend.app.main import (
     _artifact_content_type,
     _bearer_token,
@@ -15,7 +17,10 @@ from backend.app.main import (
     _is_local_host,
     _markdown_filename,
     _project_briefing,
+    _resolve_scoped_workdir,
 )
+import backend.app.main as main
+from backend.app.history import ProjectStore
 
 
 class AuthHelperTests(unittest.TestCase):
@@ -103,6 +108,43 @@ class AuthHelperTests(unittest.TestCase):
             {"Google API key", "API token", "Git", "Codex login", "Default work folder", "Codex SDK"}.issubset(names)
         )
         self.assertTrue(all("ok" in check and "message" in check and "fix" in check for check in checks))
+
+    def test_scoped_workdir_allows_project_subdirectories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            subdir = root / "packages" / "api"
+            subdir.mkdir(parents=True)
+            old_projects = main.projects
+            try:
+                main.projects = ProjectStore(Path(tmp) / "projects.json")
+                main.projects.upsert(
+                    {"id": "project-1", "name": "Repo", "path": str(root), "color": "blue", "createdAt": 1}
+                )
+
+                self.assertEqual(
+                    _resolve_scoped_workdir(str(subdir), project_id="project-1"),
+                    str(subdir.resolve()),
+                )
+            finally:
+                main.projects = old_projects
+
+    def test_scoped_workdir_rejects_paths_outside_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            outside = Path(tmp) / "other"
+            root.mkdir()
+            outside.mkdir()
+            old_projects = main.projects
+            try:
+                main.projects = ProjectStore(Path(tmp) / "projects.json")
+                main.projects.upsert(
+                    {"id": "project-1", "name": "Repo", "path": str(root), "color": "blue", "createdAt": 1}
+                )
+
+                with self.assertRaises(HTTPException):
+                    _resolve_scoped_workdir(str(outside), project_id="project-1")
+            finally:
+                main.projects = old_projects
 
     def test_project_briefing_summarizes_git_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -93,6 +93,34 @@ def _has_history_filter(project_id: str | None, workdir: str | None, chat_id: st
     return any(value is not None and value.strip() for value in (project_id, workdir, chat_id))
 
 
+def _project_root(project_id: str | None) -> Path | None:
+    if not project_id:
+        return None
+    project = next((item for item in projects.list() if item.get("id") == project_id), None)
+    if not project:
+        return None
+    try:
+        return resolve_workdir(str(project.get("path") or ""))
+    except Exception:
+        return None
+
+
+def _resolve_scoped_workdir(
+    requested_workdir: str | None,
+    *,
+    project_id: str | None = None,
+    fallback_workdir: str | None = None,
+) -> str:
+    raw_workdir = requested_workdir or fallback_workdir or settings.codex_default_workdir
+    resolved = resolve_workdir(raw_workdir)
+    root = _project_root(project_id)
+    if root is None:
+        return str(resolved)
+    if resolved != root and root not in resolved.parents:
+        raise HTTPException(status_code=400, detail="Workdir must be inside the selected project")
+    return str(resolved)
+
+
 def _doctor_check(name: str, ok: bool, message: str, fix: str = "") -> dict[str, object]:
     return {"name": name, "ok": ok, "message": message, "fix": fix}
 
@@ -741,8 +769,9 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Message is required")
-    workdir = req.workdir or settings.codex_default_workdir
-    conversation_context = _chat_context(req.chat_id, req.workdir)
+    workdir = _resolve_scoped_workdir(req.workdir, project_id=req.project_id)
+    project_root = str(_project_root(req.project_id) or workdir)
+    conversation_context = _chat_context(req.chat_id, workdir)
     history.append("user", text, {"workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
     app_log.write(
         "chat_stream.start",
@@ -768,10 +797,11 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             async for event in ask_gemini_stream(
                 text,
                 settings,
-                workdir=req.workdir,
+                workdir=workdir,
                 cancel_token=cancel_token,
                 conversation_id=req.chat_id,
                 conversation_context=conversation_context,
+                project_root=project_root,
             ):
                 if event.get("type") == "done":
                     final_text = str(event.get("text") or "")
@@ -903,9 +933,13 @@ async def live_voice(websocket: WebSocket) -> None:
             pending = None
             event_type = payload.get("type")
             if event_type == "config":
-                session_workdir = str(payload.get("workdir") or "").strip() or session_workdir
                 session_project_id = str(payload.get("project_id") or "").strip() or session_project_id
                 session_chat_id = str(payload.get("chat_id") or "").strip() or session_chat_id
+                session_workdir = _resolve_scoped_workdir(
+                    str(payload.get("workdir") or "").strip() or None,
+                    project_id=session_project_id,
+                    fallback_workdir=session_workdir,
+                )
                 session_conversation_context = _chat_context(session_chat_id, session_workdir)
                 live_log.write(
                     "client.config",
@@ -986,7 +1020,11 @@ async def live_voice(websocket: WebSocket) -> None:
                         args = dict(call.args or {})
                         task = str(args.get("task") or user_text or "Run the requested local task.")
                         enhanced_task = improve_codex_task_prompt(task)
-                        workdir = session_workdir or settings.codex_default_workdir
+                        workdir = _resolve_scoped_workdir(
+                            str(args.get("workdir") or "").strip() or None,
+                            project_id=session_project_id,
+                            fallback_workdir=session_workdir,
+                        )
                         live_log.write(
                             "gemini.tool_call_started",
                             chat_id=session_chat_id,
@@ -1386,9 +1424,13 @@ async def live_voice(websocket: WebSocket) -> None:
         # on connect, so we can bake the working directory into the system prompt.
         first_payload: dict | None = await websocket.receive_json()
         if first_payload.get("type") == "config":
-            session_workdir = str(first_payload.get("workdir") or "").strip() or session_workdir
             session_project_id = str(first_payload.get("project_id") or "").strip() or session_project_id
             session_chat_id = str(first_payload.get("chat_id") or "").strip() or session_chat_id
+            session_workdir = _resolve_scoped_workdir(
+                str(first_payload.get("workdir") or "").strip() or None,
+                project_id=session_project_id,
+                fallback_workdir=session_workdir,
+            )
             session_conversation_context = _chat_context(session_chat_id, session_workdir)
             live_log.write(
                 "client.initial_config",
@@ -1556,7 +1598,7 @@ async def codex_stream(req: CodexRequest) -> StreamingResponse:
     task = req.task.strip()
     if not task:
         raise HTTPException(status_code=400, detail="Task is required")
-    workdir = req.workdir or settings.codex_default_workdir
+    workdir = _resolve_scoped_workdir(req.workdir, project_id=req.project_id)
     enhanced_task = improve_codex_task_prompt(task)
     history.append("user", task, {"direct_codex": True, "workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id})
     app_log.write(
