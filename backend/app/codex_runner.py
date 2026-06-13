@@ -290,9 +290,34 @@ def _event_summary(method: str, payload: Any) -> str:
     return method
 
 
+def _find_token_usage(value: Any) -> dict[str, int] | None:
+    if isinstance(value, dict):
+        usage: dict[str, int] = {}
+        for key, amount in value.items():
+            normalized_key = str(key).replace("-", "_").lower()
+            if normalized_key in {"input_tokens", "output_tokens", "total_tokens", "cached_input_tokens"}:
+                try:
+                    usage[normalized_key] = int(amount)
+                except (TypeError, ValueError):
+                    pass
+        if usage:
+            return usage
+        for nested in value.values():
+            found = _find_token_usage(nested)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for nested in value:
+            found = _find_token_usage(nested)
+            if found:
+                return found
+    return None
+
+
 def _normalize_event(event: Any, *, include_payload: bool = True) -> dict[str, Any]:
     method = str(getattr(event, "method", "unknown"))
     payload = getattr(event, "payload", None)
+    payload_dump = _dump_model(payload)
     item = _root_item(getattr(payload, "item", None))
     turn = getattr(payload, "turn", None)
     item_id = getattr(payload, "item_id", None) or getattr(item, "id", None)
@@ -306,7 +331,11 @@ def _normalize_event(event: Any, *, include_payload: bool = True) -> dict[str, A
     # real-time streaming so the client has full detail, but callers that
     # persist events (e.g. history) should pass include_payload=False.
     if include_payload:
-        data["payload"] = _dump_model(payload)
+        data["payload"] = payload_dump
+    if method == "thread/tokenUsage/updated":
+        token_usage = _find_token_usage(payload_dump)
+        if token_usage:
+            data["token_usage"] = token_usage
     if item_id:
         data["item_id"] = item_id
     if turn_id:

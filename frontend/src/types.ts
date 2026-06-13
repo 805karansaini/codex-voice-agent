@@ -40,6 +40,12 @@ export type CodexTimelineEvent = {
   output?: string;
   exit_code?: number | null;
   text?: string;
+  token_usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    cached_input_tokens?: number;
+  };
 };
 
 export type ProjectInfo = {

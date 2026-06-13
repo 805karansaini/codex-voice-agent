@@ -145,6 +145,10 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added search across chats and artifacts.
   - Commit: Search chats and artifacts
   - Covers review feature: F6
+- [x] Added a Codex token usage meter.
+  - Commit: Show Codex token usage
+  - Partially covers review feature: F6
+  - Notes: Codex token usage events are now persisted and shown in the console footer; Gemini Live usage still needs provider-side usage capture.
 
 ## Still Remaining Or Pending
 
@@ -174,8 +178,9 @@ This file tracks what has been completed from the product review and what still 
   - Review feature: F6
 - [ ] Add mobile wake-word or push-to-talk mode.
   - Review feature: F6
-- [ ] Add a real cost and usage meter.
+- [ ] Add Gemini Live usage and cost estimates.
   - Review feature: F6
+  - Current status: Codex token usage is visible; Gemini Live token/audio usage and pricing are still pending.
 - [ ] Add an onboarding doctor for keys, Codex login, git, and microphone permissions.
   - Review feature: F6
 
@@ -230,3 +235,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Add lint and format tooling |
 | 2026-06-13 | current commit | Export chats as markdown |
 | 2026-06-13 | current commit | Search chats and artifacts |
+| 2026-06-13 | current commit | Show Codex token usage |
