@@ -18,15 +18,9 @@ import { useStreamingChat } from "./hooks/useStreamingChat";
 import { useSpeechPlayback } from "./hooks/useSpeechPlayback";
 import { useConsoleSession } from "./hooks/useConsoleSession";
 import { useAppLayout } from "./hooks/useAppLayout";
+import { useProjectInfo } from "./hooks/useProjectInfo";
 import * as api from "./services/api";
-import {
-  Project,
-  ProjectInfo,
-  CodexTimelineEvent,
-  ChatArtifact,
-  SearchResult,
-  DoctorCheck,
-} from "./types";
+import { Project, CodexTimelineEvent, ChatArtifact, SearchResult, DoctorCheck } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 import { appendArtifacts } from "./utils/artifacts";
 
@@ -77,7 +71,6 @@ export function App() {
   const [showAdd, setShowAdd] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
-  const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
   const [activeConsoleTab, setActiveConsoleTab] = useState<ConsoleTabId>("stream");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
@@ -105,6 +98,7 @@ export function App() {
     handleTouchStart,
     handleTouchEnd,
   } = useAppLayout();
+  const projectInfo = useProjectInfo(store.activeProject);
 
   useEffect(() => saveJSON("cva.voiceInputMode.v1", voiceInputMode), [voiceInputMode]);
 
@@ -167,33 +161,6 @@ export function App() {
   useEffect(() => {
     refreshDoctor();
   }, [refreshDoctor]);
-
-  // Validate path and check git statistics
-  useEffect(() => {
-    setProjectInfo(null);
-    if (!store.activeProject) return;
-    let cancelled = false;
-    api
-      .getProjectInfo(store.activeProject.path)
-      .then((info) => {
-        if (!cancelled) setProjectInfo(info);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setProjectInfo({
-            path: store.activeProject!.path,
-            name: store.activeProject!.name,
-            exists: false,
-            is_git: false,
-            branch: null,
-            file_count: null,
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [store.activeProject]);
 
   useEffect(() => {
     const query = searchQuery.trim();
