@@ -66,6 +66,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added configurable local data storage.
   - Commit: `c6950ee` - Add CI and configurable data storage
   - Partially covers review item: A7
+- [x] Replaced deprecated FastAPI startup/shutdown hooks with a lifespan context.
+  - Commit: `c6950ee` - Add CI and configurable data storage
+  - Covers review item: A6
 - [x] Removed the stale transcription path.
   - Commit: `fbc9944` - Remove stale transcription path
   - Covers review item: R9
@@ -191,8 +194,6 @@ This file tracks what has been completed from the product review and what still 
 - [ ] Fully document or simplify the live voice status and fallback timing state machine.
   - Review item: R4
   - Current status: timing behavior was clarified, but the full state machine is not fully formalized.
-- [ ] Replace deprecated FastAPI startup/shutdown hooks with a lifespan context.
-  - Review item: A6
 - [ ] Continue accessibility improvements.
   - Review item: Q7
   - Remaining examples: focus management, chat switcher keyboard flow, and live-region support for streaming responses.
