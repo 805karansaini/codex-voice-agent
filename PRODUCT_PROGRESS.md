@@ -162,6 +162,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved project/chat remove and rename dialog wiring out of the large `App.tsx` file.
   - Commit: Extract chat action dialog hook
   - Partially covers review item: A5
+- [x] Moved chat display status text and suggestion selection out of the large `App.tsx` file.
+  - Commit: Extract chat display state hook
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -314,7 +317,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, chat stream, composer footer, activity rail, workspace sidebar, console header, console tabs, all console tab panels, console stats footer, typed/Codex streaming callbacks, speech/audio playback state, console session state, layout interaction state, active project path/git status loading, workspace search state, setup doctor state, Change Review action handling, backend health status loading, chat export handling, and project/chat action dialog wiring; live voice wiring and remaining app orchestration still need follow-up passes.
+  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, chat stream, composer footer, activity rail, workspace sidebar, console header, console tabs, all console tab panels, console stats footer, typed/Codex streaming callbacks, speech/audio playback state, console session state, layout interaction state, active project path/git status loading, workspace search state, setup doctor state, Change Review action handling, backend health status loading, chat export handling, project/chat action dialog wiring, and chat display state; live voice wiring and remaining app orchestration still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.
