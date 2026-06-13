@@ -905,7 +905,7 @@ export function App() {
       );
       if (finalText) speak(finalText);
     },
-    [addAction, addHandoff, speak, store.appendMessage, store.updateMessage, updateAction]
+    [addAction, addHandoff, speak, store, updateAction]
   );
 
   const streamAgent = useCallback(
@@ -1050,7 +1050,7 @@ export function App() {
         activeAbortControllerRef.current = null;
       }
     },
-    [addAction, addHandoff, playResponseAudio, speak, store.appendMessage, store.updateMessage, updateAction]
+    [addAction, addHandoff, playResponseAudio, speak, store, updateAction]
   );
 
   const send = useCallback(

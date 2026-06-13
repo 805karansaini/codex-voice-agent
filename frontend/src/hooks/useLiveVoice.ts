@@ -641,7 +641,7 @@ export function useLiveVoice({
       setState("error");
       setMessage(err instanceof Error ? err.message : "Could not start live voice.");
     }
-  }, [clearToolResultFallback, connectSocket, state, stopMicrophone]);
+  }, [clearToolResultFallback, connectSocket, log, state, stopMicrophone]);
 
   const cancelTask = useCallback(() => {
     if (websocketRef.current?.readyState === WebSocket.OPEN) {

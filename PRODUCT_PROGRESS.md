@@ -146,6 +146,10 @@ This file tracks what has been completed from the product review and what still 
   - Commit: Remove unused frontend lint warnings
   - Partially covers review item: Q2
   - Notes: frontend lint warnings dropped from seven to three; the remaining warnings are hook dependency follow-ups.
+- [x] Resolved the remaining frontend hook dependency lint warnings.
+  - Commit: Resolve frontend hook lint warnings
+  - Partially covers review item: Q2
+  - Notes: `npm run lint` now completes with no frontend warnings.
 - [x] Documented why the Google GenAI SDK stays pinned.
   - Commit: Document Google GenAI SDK pin
   - Covers review item: Q5
@@ -226,7 +230,7 @@ This file tracks what has been completed from the product review and what still 
   - Remaining examples: frontend SSE framing, artifact dedupe, prompting sanitizers, and frontend store merge behavior.
 - [ ] Tighten code quality gates further.
   - Follow-up to review item: Q2
-  - Remaining examples: resolve remaining hook dependency warnings, enforce a full Prettier check after a formatting-only pass, consider type-aware linting, and add pyright or mypy if the codebase is ready for it.
+  - Remaining examples: enforce a full Prettier check after a formatting-only pass, consider type-aware linting, and add pyright or mypy if the codebase is ready for it.
 - [ ] Finish README and repo hygiene cleanup.
   - Review items: Q4, Q8
   - Remaining examples: archive old planning docs, ignore local data directories, remove bundled/duplicate app artifacts, and keep docs aligned with current storage paths.
@@ -272,3 +276,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Extract change review chip component |
 | 2026-06-13 | current commit | Extract chat action modals |
 | 2026-06-13 | current commit | Remove unused frontend lint warnings |
+| 2026-06-13 | current commit | Resolve frontend hook lint warnings |
