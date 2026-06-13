@@ -138,6 +138,10 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added backend tests for auth, history, cancellation, and log rotation.
   - Commits: `4a99bc4`, `d169667`, `06970b5`, `086a19e`
   - Partially covers review item: Q1
+- [x] Added focused frontend tests for SSE stream framing.
+  - Commit: Add frontend SSE parser tests
+  - Partially covers review item: Q1
+  - Notes: covers split chunks, multiline data frames, and malformed-frame recovery.
 - [x] Added GitHub Actions CI.
   - Commit: `c6950ee` - Add CI and configurable data storage
   - Covers review item: Q3
@@ -229,7 +233,7 @@ This file tracks what has been completed from the product review and what still 
 ### Reliability And Polish
 - [ ] Expand the test suite beyond the current backend-focused coverage.
   - Review item: Q1
-  - Remaining examples: frontend SSE framing, artifact dedupe, prompting sanitizers, and frontend store merge behavior.
+  - Remaining examples: artifact dedupe, prompting sanitizers, and frontend store merge behavior.
 - [ ] Tighten code quality gates further.
   - Follow-up to review item: Q2
   - Remaining examples: enforce a full Prettier check after a formatting-only pass, consider type-aware linting, and add pyright or mypy if the codebase is ready for it.
@@ -281,3 +285,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Resolve frontend hook lint warnings |
 | 2026-06-13 | current commit | Improve modal focus handling |
 | 2026-06-13 | current commit | Improve chat switcher keyboard flow |
+| 2026-06-13 | current commit | Add frontend SSE parser tests |
