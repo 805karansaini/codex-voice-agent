@@ -191,6 +191,8 @@ export function useLiveVoice({
   const audioPlayerRef = useRef<AudioStreamPlayer | null>(null);
   const hasStreamedAudioRef = useRef(false);
   const reconnectNoticeSentRef = useRef(false);
+  const connectSocketRef = useRef<(() => WebSocket | undefined) | null>(null);
+  const stopRef = useRef<(() => Promise<void>) | null>(null);
 
   const clearToolResultFallback = useCallback(() => {
     if (toolResultFallbackTimerRef.current) {
@@ -409,7 +411,7 @@ export function useLiveVoice({
                 setTimeout(checkAndStop, 200);
               } else {
                 setTimeout(() => {
-                  void stop();
+                  void stopRef.current?.();
                 }, 300);
               }
             };
@@ -526,7 +528,7 @@ export function useLiveVoice({
         if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = window.setTimeout(() => {
           reconnectTimerRef.current = null;
-          connectSocket();
+          connectSocketRef.current?.();
         }, RECONNECT_DELAY_MS);
         return;
       }
@@ -535,7 +537,15 @@ export function useLiveVoice({
     };
 
     return websocket;
-  }, [clearToolResultFallback, flushBufferedAudio, log, sendSessionConfig, stopMicrophone, stop]);
+  }, [clearToolResultFallback, flushBufferedAudio, log, sendSessionConfig, stopMicrophone]);
+
+  useEffect(() => {
+    connectSocketRef.current = connectSocket;
+  }, [connectSocket]);
+
+  useEffect(() => {
+    stopRef.current = stop;
+  }, [stop]);
 
   const start = useCallback(async () => {
     if (state === "connecting" || state === "live" || state === "thinking" || state === "working")

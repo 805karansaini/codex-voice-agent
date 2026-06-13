@@ -54,6 +54,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added project path conflict handling instead of silently deleting a matching project.
   - Commit: `4a99bc4` - Harden local agent access and fix review bugs
   - Covers review item: B9
+- [x] Removed the stale reconnect callback hazard in the live voice hook.
+  - Commit: Stabilize live voice reconnect callbacks
+  - Covers review item: B10
 
 ### P1 Architecture And Cleanup
 
@@ -313,3 +316,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Add change review commit action |
 | 2026-06-13 | current commit | Add backend pyright check |
 | 2026-06-13 | current commit | Enforce frontend prettier check |
+| 2026-06-13 | current commit | Stabilize live voice reconnect callbacks |
