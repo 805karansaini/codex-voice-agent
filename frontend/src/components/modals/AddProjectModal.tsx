@@ -51,7 +51,7 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
       setError(
         err instanceof Error && /not available/i.test(err.message)
           ? err.message
-          : "Couldn’t open the native folder picker. Paste the absolute path instead."
+          : "Couldn’t open the native folder picker. Paste the absolute path instead.",
       );
     } finally {
       setPicking(false);
@@ -74,7 +74,9 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
       onCreate({ name: cleanName, path: resolved, color });
     } catch (err) {
       if (err instanceof Error && err.message.includes("404")) {
-        setError("That directory does not exist. Paste the full absolute path to an existing folder.");
+        setError(
+          "That directory does not exist. Paste the full absolute path to an existing folder.",
+        );
       } else {
         setError("That directory does not exist. Check the path or is the backend running?");
       }
@@ -107,10 +109,12 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
 
         {/* Header */}
         <div className="flex flex-col gap-1.5 pr-6">
-          <h3 className="text-base font-semibold tracking-tight text-fg">Add a Project Workspace</h3>
+          <h3 className="text-base font-semibold tracking-tight text-fg">
+            Add a Project Workspace
+          </h3>
           <p className="text-[12.5px] text-fg-muted leading-relaxed">
-            Scope the operator to an existing directory on your disk.
-            Nothing is copied or duplicated — changes are made <strong>directly in place</strong>.
+            Scope the operator to an existing directory on your disk. Nothing is copied or
+            duplicated — changes are made <strong>directly in place</strong>.
           </p>
         </div>
 
@@ -118,7 +122,10 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
         <div className="flex flex-col gap-4 py-1">
           {/* Project Name */}
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="pName" className="font-mono text-[10.5px] uppercase tracking-wider text-fg-dim font-bold">
+            <label
+              htmlFor="pName"
+              className="font-mono text-[10.5px] uppercase tracking-wider text-fg-dim font-bold"
+            >
               Project Name
             </label>
             <input
@@ -127,14 +134,19 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. My Awesome App"
-              onKeyDown={(e) => e.key === "Enter" && (document.getElementById("pPath") as HTMLInputElement)?.focus()}
+              onKeyDown={(e) =>
+                e.key === "Enter" && (document.getElementById("pPath") as HTMLInputElement)?.focus()
+              }
               className="w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-[13.5px] text-fg focus:border-accent focus:outline-none placeholder:text-fg-dim"
             />
           </div>
 
           {/* Absolute Directory Path */}
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="pPath" className="font-mono text-[10.5px] uppercase tracking-wider text-fg-dim font-bold">
+            <label
+              htmlFor="pPath"
+              className="font-mono text-[10.5px] uppercase tracking-wider text-fg-dim font-bold"
+            >
               Absolute Directory Path
             </label>
             <div className="flex gap-2">
@@ -160,7 +172,8 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
               </button>
             </div>
             <p className="text-[11px] text-fg-dim leading-normal mt-0.5">
-              Paste the full absolute path, or click <strong>Browse</strong> to select via your operating system directory dialog.
+              Paste the full absolute path, or click <strong>Browse</strong> to select via your
+              operating system directory dialog.
             </p>
           </div>
 
@@ -176,7 +189,9 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
                   type="button"
                   onClick={() => setColor(c)}
                   className={`w-6 h-6 rounded-full transition-all border-2 ${
-                    c === color ? "border-fg scale-110 shadow-sm" : "border-transparent opacity-85 hover:opacity-100 hover:scale-105"
+                    c === color
+                      ? "border-fg scale-110 shadow-sm"
+                      : "border-transparent opacity-85 hover:opacity-100 hover:scale-105"
                   }`}
                   style={{ background: c }}
                   aria-label={`Color swatch ${c}`}

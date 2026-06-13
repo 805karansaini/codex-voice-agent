@@ -173,6 +173,10 @@ This file tracks what has been completed from the product review and what still 
   - Commit: Add backend pyright check
   - Partially covers review item: Q2
   - Notes: Pyright now checks `backend/app` and `tests`, and the current backend passes with zero reported issues.
+- [x] Enforced frontend Prettier checks in CI.
+  - Commit: Enforce frontend prettier check
+  - Partially covers review item: Q2
+  - Notes: tracked frontend source and config files have been formatted, and CI now runs `npm run format:check` before frontend lint.
 - [x] Documented why the Google GenAI SDK stays pinned.
   - Commit: Document Google GenAI SDK pin
   - Covers review item: Q5
@@ -252,7 +256,7 @@ This file tracks what has been completed from the product review and what still 
 ### Reliability And Polish
 - [ ] Tighten code quality gates further.
   - Follow-up to review item: Q2
-  - Remaining examples: enforce a full Prettier check after a formatting-only pass and consider type-aware frontend linting.
+  - Remaining examples: consider type-aware frontend linting.
 - [ ] Finish README and repo hygiene cleanup.
   - Review items: Q4, Q8
   - Remaining examples: archive old planning docs, ignore local data directories, remove bundled/duplicate app artifacts, and keep docs aligned with current storage paths.
@@ -308,3 +312,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Add change review revert action |
 | 2026-06-13 | current commit | Add change review commit action |
 | 2026-06-13 | current commit | Add backend pyright check |
+| 2026-06-13 | current commit | Enforce frontend prettier check |

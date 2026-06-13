@@ -35,7 +35,17 @@ import {
 import { useProjectStore } from "./hooks/useProjectStore";
 import { useLiveVoice } from "./hooks/useLiveVoice";
 import * as api from "./services/api";
-import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo, CodexTimelineEvent, ChatArtifact, SearchResult, DoctorCheck } from "./types";
+import {
+  Project,
+  ActionEntry,
+  Handoff,
+  DebugEntry,
+  ProjectInfo,
+  CodexTimelineEvent,
+  ChatArtifact,
+  SearchResult,
+  DoctorCheck,
+} from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 import { appendArtifacts, changeArtifacts } from "./utils/artifacts";
 import { readSseStream } from "./utils/sse";
@@ -70,8 +80,10 @@ const VOICE_INPUT_MODES: { id: VoiceInputMode; label: string }[] = [
   { id: "push", label: "Push to talk" },
 ];
 
-
-function appendCodexEvent(events: CodexTimelineEvent[] | undefined, event: CodexTimelineEvent): CodexTimelineEvent[] {
+function appendCodexEvent(
+  events: CodexTimelineEvent[] | undefined,
+  event: CodexTimelineEvent,
+): CodexTimelineEvent[] {
   const current = events || [];
   // Dedup on method + item_id (unique per Codex item). Avoid including summary
   // in the key since different items can share the same summary text.
@@ -102,7 +114,7 @@ export function App() {
   const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
   const [pendingAudioUrl, setPendingAudioUrl] = useState("");
   const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>(() =>
-    loadJSON<VoiceInputMode>("cva.voiceInputMode.v1", "open")
+    loadJSON<VoiceInputMode>("cva.voiceInputMode.v1", "open"),
   );
 
   const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
@@ -115,7 +127,9 @@ export function App() {
   const [railOpen, setRailOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
 
-  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" ? window.innerWidth < 768 : false);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 768 : false,
+  );
   const [mobileView, setMobileView] = useState<"explorer" | "chat" | "console">("chat");
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
@@ -124,7 +138,9 @@ export function App() {
   const [panelWidth, setPanelWidth] = useState(() => loadJSON<number>("cva.panelWidth.v2", 380));
   const [isDragging, setIsDragging] = useState(false);
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
-  const [activeConsoleTab, setActiveConsoleTab] = useState<"stream" | "actions" | "handoffs" | "voice">("stream");
+  const [activeConsoleTab, setActiveConsoleTab] = useState<
+    "stream" | "actions" | "handoffs" | "voice"
+  >("stream");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
   const [searchQuery, setSearchQuery] = useState("");
@@ -193,9 +209,10 @@ export function App() {
       setVoices(browserVoices);
       setSelectedVoiceURI((current) => {
         if (current || browserVoices.length === 0) return current;
-        const preferred = PREFERRED_VOICE_NAMES.map((n) =>
-          browserVoices.find((v) => v.name.toLowerCase().includes(n.toLowerCase()))
-        ).find(Boolean) ||
+        const preferred =
+          PREFERRED_VOICE_NAMES.map((n) =>
+            browserVoices.find((v) => v.name.toLowerCase().includes(n.toLowerCase())),
+          ).find(Boolean) ||
           browserVoices.find((v) => v.lang.toLowerCase().startsWith("en")) ||
           browserVoices[0];
         return preferred?.voiceURI || "";
@@ -208,7 +225,8 @@ export function App() {
 
   // Fetch backend health status
   useEffect(() => {
-    api.fetchHealth()
+    api
+      .fetchHealth()
       .then((data) => {
         setStatus(data.has_google_api_key ? "Ready" : "Missing Google API key");
       })
@@ -216,13 +234,16 @@ export function App() {
   }, []);
 
   const refreshDoctor = useCallback(() => {
-    api.fetchDoctor()
+    api
+      .fetchDoctor()
       .then(async (report) => {
         const canRequestMic = typeof navigator.mediaDevices?.getUserMedia === "function";
         let micCheck: DoctorCheck = {
           name: "Microphone permission",
           ok: canRequestMic,
-          message: canRequestMic ? "Browser can request microphone access" : "Microphone API unavailable",
+          message: canRequestMic
+            ? "Browser can request microphone access"
+            : "Microphone API unavailable",
           fix: "Use a browser with microphone support and allow microphone access when prompted.",
         };
         try {
@@ -236,8 +257,8 @@ export function App() {
                 status.state === "granted"
                   ? "Allowed"
                   : status.state === "prompt"
-                  ? "Will ask when voice starts"
-                  : "Blocked",
+                    ? "Will ask when voice starts"
+                    : "Blocked",
               fix: "Allow microphone access in the browser or system privacy settings.",
             };
           }
@@ -308,7 +329,6 @@ export function App() {
     touchStartY.current = null;
   };
 
-
   useEffect(() => {
     const chatId = store.activeChatId;
     consoleLoadedChatRef.current = "";
@@ -317,7 +337,8 @@ export function App() {
     setDebugEntries([]);
     if (!chatId) return;
     let cancelled = false;
-    api.fetchConsoleState(chatId)
+    api
+      .fetchConsoleState(chatId)
       .then((state) => {
         if (cancelled) return;
         setActions(state.actions || []);
@@ -352,7 +373,8 @@ export function App() {
     setProjectInfo(null);
     if (!store.activeProject) return;
     let cancelled = false;
-    api.getProjectInfo(store.activeProject.path)
+    api
+      .getProjectInfo(store.activeProject.path)
       .then((info) => {
         if (!cancelled) setProjectInfo(info);
       })
@@ -368,7 +390,9 @@ export function App() {
           });
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [store.activeProject]);
 
   useEffect(() => {
@@ -381,7 +405,8 @@ export function App() {
     let cancelled = false;
     setSearching(true);
     const timer = window.setTimeout(() => {
-      api.searchContent(query)
+      api
+        .searchContent(query)
         .then((results) => {
           if (!cancelled) setSearchResults(results);
         })
@@ -404,7 +429,9 @@ export function App() {
       minute: "2-digit",
       second: "2-digit",
     });
-    setDebugEntries((current) => [{ id: crypto.randomUUID(), time, message }, ...current].slice(0, 40));
+    setDebugEntries((current) =>
+      [{ id: crypto.randomUUID(), time, message }, ...current].slice(0, 40),
+    );
   }, []);
 
   const addHandoff = useCallback((name: string, summary: string) => {
@@ -418,10 +445,7 @@ export function App() {
   }, []);
 
   const updateAction = useCallback(
-    (
-      id: string,
-      patch: Partial<ActionEntry> | ((prev: ActionEntry) => Partial<ActionEntry>)
-    ) => {
+    (id: string, patch: Partial<ActionEntry> | ((prev: ActionEntry) => Partial<ActionEntry>)) => {
       setActions((current) =>
         current.map((action) => {
           if (action.id === id) {
@@ -429,20 +453,23 @@ export function App() {
             return { ...action, ...resolvedPatch };
           }
           return action;
-        })
+        }),
       );
     },
-    []
+    [],
   );
 
-  const stopActiveVoiceHandoff = useCallback((detail = "Stopped before completion.") => {
-    if (!activeVoiceActionIdRef.current) return;
-    updateAction(activeVoiceActionIdRef.current, {
-      status: "failed",
-      detail,
-    });
-    activeVoiceActionIdRef.current = null;
-  }, [updateAction]);
+  const stopActiveVoiceHandoff = useCallback(
+    (detail = "Stopped before completion.") => {
+      if (!activeVoiceActionIdRef.current) return;
+      updateAction(activeVoiceActionIdRef.current, {
+        status: "failed",
+        detail,
+      });
+      activeVoiceActionIdRef.current = null;
+    },
+    [updateAction],
+  );
 
   const speak = useCallback(
     (text: string) => {
@@ -450,9 +477,14 @@ export function App() {
       let spokenText = text.trim();
       if (spokenText.length > 500) {
         const preview = spokenText.slice(0, 500);
-        const sentenceEnd = Math.max(preview.lastIndexOf("."), preview.lastIndexOf("!"), preview.lastIndexOf("?"));
+        const sentenceEnd = Math.max(
+          preview.lastIndexOf("."),
+          preview.lastIndexOf("!"),
+          preview.lastIndexOf("?"),
+        );
         const wordEnd = preview.lastIndexOf(" ");
-        const cutAt = sentenceEnd > 240 ? sentenceEnd + 1 : wordEnd > 240 ? wordEnd : preview.length;
+        const cutAt =
+          sentenceEnd > 240 ? sentenceEnd + 1 : wordEnd > 240 ? wordEnd : preview.length;
         spokenText = preview.slice(0, cutAt).trim();
       }
       const utterance = new SpeechSynthesisUtterance(spokenText);
@@ -463,7 +495,7 @@ export function App() {
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
     },
-    [selectedVoiceURI, voices]
+    [selectedVoiceURI, voices],
   );
 
   const primeAudioPlayback = useCallback(() => {
@@ -488,15 +520,18 @@ export function App() {
 
   // Voice websocket configs triggers
   const voiceCtxRef = useRef<{ project: Project; chatId: string } | null>(null);
-  const getWorkdir = useCallback(() => voiceCtxRef.current?.project.path ?? store.activeProject?.path, [
-    store.activeProject,
-  ]);
-  const getProjectId = useCallback(() => voiceCtxRef.current?.project.id ?? store.activeProject?.id, [
-    store.activeProject,
-  ]);
-  const getChatId = useCallback(() => voiceCtxRef.current?.chatId || store.activeChatId, [
-    store.activeChatId,
-  ]);
+  const getWorkdir = useCallback(
+    () => voiceCtxRef.current?.project.path ?? store.activeProject?.path,
+    [store.activeProject],
+  );
+  const getProjectId = useCallback(
+    () => voiceCtxRef.current?.project.id ?? store.activeProject?.id,
+    [store.activeProject],
+  );
+  const getChatId = useCallback(
+    () => voiceCtxRef.current?.chatId || store.activeChatId,
+    [store.activeChatId],
+  );
 
   const activeVoiceActionIdRef = useRef<string | null>(null);
   const activeUserVoiceMsgIdRef = useRef<string | null>(null);
@@ -771,12 +806,15 @@ export function App() {
       let finalText = "";
 
       try {
-        const res = await api.postCodexStream({
-          task,
-          workdir: project.path,
-          projectId: project.id,
-          chatId,
-        }, controller.signal);
+        const res = await api.postCodexStream(
+          {
+            task,
+            workdir: project.path,
+            projectId: project.id,
+            chatId,
+          },
+          controller.signal,
+        );
 
         if (!res.ok || !res.body) {
           const payload = await res.json().catch(() => ({}));
@@ -821,7 +859,7 @@ export function App() {
               artifacts: appendArtifacts(
                 m.artifacts,
                 evt.artifact as ChatArtifact | undefined,
-                evt.change_artifact as ChatArtifact | undefined
+                evt.change_artifact as ChatArtifact | undefined,
               ),
             }));
             updateAction(actionId, {
@@ -832,7 +870,10 @@ export function App() {
             addHandoff("run_codex_task", finalText.slice(0, 160));
           } else if (evt.type === "error") {
             store.updateMessage(chatId, assistantId, (m) => ({ ...m, streaming: false }));
-            updateAction(actionId, { status: "failed", streamingResponse: String(evt.message || "Codex failed") });
+            updateAction(actionId, {
+              status: "failed",
+              streamingResponse: String(evt.message || "Codex failed"),
+            });
             setError(String(evt.message || "Codex failed"));
           }
         };
@@ -857,17 +898,22 @@ export function App() {
       }
 
       store.updateMessage(chatId, assistantId, (m) =>
-        m.streaming ? { ...m, streaming: false } : m
+        m.streaming ? { ...m, streaming: false } : m,
       );
       if (finalText) speak(finalText);
     },
-    [addAction, addHandoff, speak, store, updateAction]
+    [addAction, addHandoff, speak, store, updateAction],
   );
 
   const streamAgent = useCallback(
     async (message: string, project: Project, chatId: string) => {
       const assistantId = crypto.randomUUID();
-      store.appendMessage(chatId, { id: assistantId, role: "assistant", text: "", streaming: true });
+      store.appendMessage(chatId, {
+        id: assistantId,
+        role: "assistant",
+        text: "",
+        streaming: true,
+      });
 
       const controller = new AbortController();
       activeAbortControllerRef.current = controller;
@@ -877,12 +923,15 @@ export function App() {
       let activeActionId = "";
 
       try {
-        const res = await api.postChatStream({
-          message,
-          workdir: project.path,
-          projectId: project.id,
-          chatId,
-        }, controller.signal);
+        const res = await api.postChatStream(
+          {
+            message,
+            workdir: project.path,
+            projectId: project.id,
+            chatId,
+          },
+          controller.signal,
+        );
 
         if (!res.ok || !res.body) {
           const payload = await res.json().catch(() => ({}));
@@ -941,7 +990,7 @@ export function App() {
               artifacts: appendArtifacts(
                 m.artifacts,
                 evt.artifact as ChatArtifact | undefined,
-                evt.change_artifact as ChatArtifact | undefined
+                evt.change_artifact as ChatArtifact | undefined,
               ),
             }));
             if (activeActionId) {
@@ -982,7 +1031,7 @@ export function App() {
         });
 
         store.updateMessage(chatId, assistantId, (m) =>
-          m.streaming ? { ...m, streaming: false } : m
+          m.streaming ? { ...m, streaming: false } : m,
         );
         if (finalAudioUrl) await playResponseAudio(finalAudioUrl);
         else if (finalText) speak(finalText);
@@ -1006,7 +1055,7 @@ export function App() {
         activeAbortControllerRef.current = null;
       }
     },
-    [addAction, addHandoff, playResponseAudio, speak, store, updateAction]
+    [addAction, addHandoff, playResponseAudio, speak, store, updateAction],
   );
 
   const send = useCallback(
@@ -1053,7 +1102,7 @@ export function App() {
         setBusy(false);
       }
     },
-    [busy, input, mode, store, streamAgent, streamCodex]
+    [busy, input, mode, store, streamAgent, streamCodex],
   );
 
   const handleCancelTask = useCallback(() => {
@@ -1249,7 +1298,9 @@ export function App() {
   const handleChatSwitcherKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
     if (!keys.includes(event.key)) return;
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-chat-switcher]"));
+    const buttons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("[data-chat-switcher]"),
+    );
     if (buttons.length === 0) return;
     const currentIndex = buttons.indexOf(event.currentTarget);
     if (currentIndex === -1) return;
@@ -1258,10 +1309,10 @@ export function App() {
       event.key === "Home"
         ? 0
         : event.key === "End"
-        ? buttons.length - 1
-        : event.key === "ArrowUp"
-        ? Math.max(0, currentIndex - 1)
-        : Math.min(buttons.length - 1, currentIndex + 1);
+          ? buttons.length - 1
+          : event.key === "ArrowUp"
+            ? Math.max(0, currentIndex - 1)
+            : Math.min(buttons.length - 1, currentIndex + 1);
     buttons[nextIndex]?.focus();
   };
 
@@ -1275,14 +1326,14 @@ export function App() {
     liveVoice.state === "connecting"
       ? "Connecting…"
       : liveVoice.state === "live"
-      ? "Live conversation"
-      : liveVoice.state === "thinking"
-      ? "Gemini is responding"
-      : liveVoice.state === "working"
-      ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
-      : liveVoice.state === "error"
-      ? "Voice needs attention"
-      : "Live voice";
+        ? "Live conversation"
+        : liveVoice.state === "thinking"
+          ? "Gemini is responding"
+          : liveVoice.state === "working"
+            ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
+            : liveVoice.state === "error"
+              ? "Voice needs attention"
+              : "Live voice";
   const liveStatusText = [
     voiceActive ? voiceTitle : "",
     voiceActive ? liveVoice.message : "",
@@ -1296,8 +1347,8 @@ export function App() {
   const streamingStatusText = activeStreamingMessage?.text
     ? `Assistant response update: ${activeStreamingMessage.text.slice(-500)}`
     : busy
-    ? "Assistant response in progress"
-    : "";
+      ? "Assistant response in progress"
+      : "";
 
   const suggestions =
     mode === "codex"
@@ -1320,7 +1371,7 @@ export function App() {
       onTouchEnd={handleTouchEnd}
       className={cn(
         "flex h-screen w-screen flex-col overflow-hidden bg-surface-0 text-fg",
-        isDragging && "select-none"
+        isDragging && "select-none",
       )}
     >
       {/* TitleBar */}
@@ -1339,7 +1390,9 @@ export function App() {
             {store.activeChat && (
               <>
                 <span className="text-fg-dim">/</span>
-                <span className="px-1 text-[12.5px] text-fg truncate max-w-[240px]">{store.activeChat.title}</span>
+                <span className="px-1 text-[12.5px] text-fg truncate max-w-[240px]">
+                  {store.activeChat.title}
+                </span>
               </>
             )}
             {projectInfo?.is_git && projectInfo.branch && (
@@ -1356,7 +1409,7 @@ export function App() {
           <div className="ml-auto flex items-center gap-2">
             <div className="relative">
               <div className="flex items-center gap-2 rounded-md border border-line bg-surface-2 px-2.5 py-1 text-[11.5px] text-fg-muted">
-              <Search className="h-3.5 w-3.5" />
+                <Search className="h-3.5 w-3.5" />
                 <input
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
@@ -1367,7 +1420,9 @@ export function App() {
               {searchQuery.trim().length >= 2 && (
                 <div className="absolute right-0 top-8 z-30 w-80 overflow-hidden rounded-md border border-line bg-surface-1 shadow-xl">
                   <div className="border-b border-line-soft px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-fg-dim">
-                    {searching ? "Searching" : `${searchResults.length} result${searchResults.length === 1 ? "" : "s"}`}
+                    {searching
+                      ? "Searching"
+                      : `${searchResults.length} result${searchResults.length === 1 ? "" : "s"}`}
                   </div>
                   <div className="max-h-80 overflow-y-auto py-1">
                     {!searching && searchResults.length === 0 ? (
@@ -1404,10 +1459,14 @@ export function App() {
                 "grid h-7 w-7 place-items-center rounded-md border transition-colors",
                 railOpen
                   ? "border-line bg-surface-3 text-fg"
-                  : "border-line bg-surface-2 text-fg-muted hover:text-fg hover:bg-surface-3"
+                  : "border-line bg-surface-2 text-fg-muted hover:text-fg hover:bg-surface-3",
               )}
             >
-              {railOpen ? <PanelLeftClose className="h-3.5 w-3.5" /> : <PanelLeftOpen className="h-3.5 w-3.5" />}
+              {railOpen ? (
+                <PanelLeftClose className="h-3.5 w-3.5" />
+              ) : (
+                <PanelLeftOpen className="h-3.5 w-3.5" />
+              )}
             </button>
             <button
               title={panelOpen ? "Hide console panel" : "Show console panel"}
@@ -1418,10 +1477,14 @@ export function App() {
                 "grid h-7 w-7 place-items-center rounded-md border transition-colors",
                 panelOpen
                   ? "border-line bg-surface-3 text-fg"
-                  : "border-line bg-surface-2 text-fg-muted hover:text-fg hover:bg-surface-3"
+                  : "border-line bg-surface-2 text-fg-muted hover:text-fg hover:bg-surface-3",
               )}
             >
-              {panelOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
+              {panelOpen ? (
+                <PanelRightClose className="h-3.5 w-3.5" />
+              ) : (
+                <PanelRightOpen className="h-3.5 w-3.5" />
+              )}
             </button>
           </div>
         </header>
@@ -1431,7 +1494,7 @@ export function App() {
             onClick={() => setMobileView(mobileView === "explorer" ? "chat" : "explorer")}
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface-2 text-fg-muted",
-              mobileView === "explorer" && "bg-surface-3 text-accent border-accent/30"
+              mobileView === "explorer" && "bg-surface-3 text-accent border-accent/30",
             )}
           >
             <Menu className="h-4.5 w-4.5" />
@@ -1439,7 +1502,11 @@ export function App() {
 
           <div className="flex flex-col items-center min-w-0">
             <span className="text-[13px] font-semibold tracking-tight truncate max-w-[200px]">
-              {mobileView === "explorer" ? "Workspace" : mobileView === "console" ? "Console" : (store.activeProject?.name || "No Project")}
+              {mobileView === "explorer"
+                ? "Workspace"
+                : mobileView === "console"
+                  ? "Console"
+                  : store.activeProject?.name || "No Project"}
             </span>
             {mobileView === "chat" && store.activeChat && (
               <span className="text-[10px] text-fg-dim truncate max-w-[200px] leading-tight">
@@ -1452,7 +1519,7 @@ export function App() {
             onClick={() => setMobileView(mobileView === "console" ? "chat" : "console")}
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface-2 text-fg-muted relative",
-              mobileView === "console" && "bg-surface-3 text-accent border-accent/30"
+              mobileView === "console" && "bg-surface-3 text-accent border-accent/30",
             )}
           >
             <SquareTerminal className="h-4.5 w-4.5" />
@@ -1465,7 +1532,6 @@ export function App() {
 
       {/* Main Container */}
       <div className="flex flex-1 min-h-0 min-w-0">
-
         {/* Column 1: ActivityRail */}
         {!isMobile && (
           <div className="w-14 shrink-0 flex flex-col justify-between items-center border-r border-line bg-surface-1 py-3">
@@ -1476,7 +1542,9 @@ export function App() {
               >
                 <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-accent" />
                 <SquareTerminal className="h-4.5 w-4.5" />
-                <span className="font-mono text-[9px] uppercase tracking-wider scale-90">Chats</span>
+                <span className="font-mono text-[9px] uppercase tracking-wider scale-90">
+                  Chats
+                </span>
               </button>
               <button
                 title="Files coming soon"
@@ -1484,7 +1552,9 @@ export function App() {
                 className="group flex h-11 w-full cursor-not-allowed flex-col items-center justify-center gap-0.5 rounded-md text-fg-dim opacity-35"
               >
                 <FileCode2 className="h-4.5 w-4.5" />
-                <span className="font-mono text-[9px] uppercase tracking-wider scale-90">Files</span>
+                <span className="font-mono text-[9px] uppercase tracking-wider scale-90">
+                  Files
+                </span>
               </button>
               <button
                 title="Runs coming soon"
@@ -1517,7 +1587,11 @@ export function App() {
                 onClick={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
                 className="grid h-9 w-9 place-items-center rounded-md text-fg-dim hover:bg-surface-2 hover:text-fg"
               >
-                {store.theme === "dark" ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
+                {store.theme === "dark" ? (
+                  <Sun className="h-4.5 w-4.5" />
+                ) : (
+                  <Moon className="h-4.5 w-4.5" />
+                )}
               </button>
               <button
                 title="Console Settings"
@@ -1540,7 +1614,7 @@ export function App() {
             style={isMobile ? { width: "100%" } : { width: `${railWidth}px` }}
             className={cn(
               "flex h-full min-h-0 flex-col bg-surface-1 shrink-0",
-              !isMobile ? "border-r border-line" : "w-full"
+              !isMobile ? "border-r border-line" : "w-full",
             )}
           >
             <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5 shrink-0">
@@ -1568,11 +1642,16 @@ export function App() {
               ) : (
                 store.projects.map((p) => {
                   const isActive = p.id === store.activeId;
-                  const isExpanded = expandedProjects[p.id] !== undefined ? expandedProjects[p.id] : isActive;
+                  const isExpanded =
+                    expandedProjects[p.id] !== undefined ? expandedProjects[p.id] : isActive;
                   const pChats = store.chats[p.id] || [];
                   const activeChatId = store.activeChatByProject[p.id] || "";
 
-                  const getChatLimit = (projectId: string, chatsList: typeof pChats, activeId: string) => {
+                  const getChatLimit = (
+                    projectId: string,
+                    chatsList: typeof pChats,
+                    activeId: string,
+                  ) => {
                     const userLimit = visibleChatsCount[projectId] || 5;
                     if (!activeId) return userLimit;
                     const activeIdx = chatsList.findIndex((c) => c.id === activeId);
@@ -1588,10 +1667,14 @@ export function App() {
 
                   return (
                     <div key={p.id} className="px-1">
-                      <div className={cn(
-                        "group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors",
-                        isActive ? "bg-surface-2 text-fg" : "text-fg-muted hover:bg-surface-2/60 hover:text-fg"
-                      )}>
+                      <div
+                        className={cn(
+                          "group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors",
+                          isActive
+                            ? "bg-surface-2 text-fg"
+                            : "text-fg-muted hover:bg-surface-2/60 hover:text-fg",
+                        )}
+                      >
                         <button
                           onClick={() => {
                             setExpandedProjects((prev) => ({
@@ -1602,7 +1685,10 @@ export function App() {
                           className="flex items-center gap-1.5 flex-1 min-w-0"
                         >
                           <ChevronRight
-                            className={cn("h-3.5 w-3.5 text-fg-dim transition-transform shrink-0", isExpanded && "rotate-90")}
+                            className={cn(
+                              "h-3.5 w-3.5 text-fg-dim transition-transform shrink-0",
+                              isExpanded && "rotate-90",
+                            )}
                           />
                           <span
                             className="h-2 w-2 rounded-sm shrink-0"
@@ -1626,7 +1712,7 @@ export function App() {
                           }}
                           className={cn(
                             "p-0.5 rounded hover:bg-surface-3 hover:text-accent text-fg-dim transition-all shrink-0",
-                            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                           )}
                         >
                           <Plus className="h-3.5 w-3.5" />
@@ -1637,7 +1723,7 @@ export function App() {
                           onClick={() => handleRemoveProject(p.id, p.name)}
                           className={cn(
                             "p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
-                            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                           )}
                         >
                           <Trash2 className="h-3 w-3" />
@@ -1653,7 +1739,9 @@ export function App() {
                                 key={c.id}
                                 className={cn(
                                   "group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition-colors",
-                                  isChatActive ? "bg-accent/10 text-fg" : "text-fg-muted hover:bg-surface-2 hover:text-fg"
+                                  isChatActive
+                                    ? "bg-accent/10 text-fg"
+                                    : "text-fg-muted hover:bg-surface-2 hover:text-fg",
                                 )}
                               >
                                 <button
@@ -1677,7 +1765,7 @@ export function App() {
                                   onClick={() => handleRenameChat(p.id, c.id, c.title)}
                                   className={cn(
                                     "p-0.5 rounded hover:bg-surface-3 hover:text-fg text-fg-dim transition-all shrink-0",
-                                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                                   )}
                                 >
                                   <Pencil className="h-3 w-3" />
@@ -1687,7 +1775,7 @@ export function App() {
                                   onClick={() => handleRemoveChat(p.id, c.id)}
                                   className={cn(
                                     "p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
-                                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                                   )}
                                 >
                                   <Trash2 className="h-3 w-3" />
@@ -1723,7 +1811,11 @@ export function App() {
                   onClick={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
                   className="flex items-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface-3 flex-1 justify-center"
                 >
-                  {store.theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  {store.theme === "dark" ? (
+                    <Sun className="h-4 w-4" />
+                  ) : (
+                    <Moon className="h-4 w-4" />
+                  )}
                   <span>{store.theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
                 </button>
 
@@ -1739,7 +1831,6 @@ export function App() {
                 </button>
               </div>
             )}
-
           </aside>
         )}
 
@@ -1754,12 +1845,13 @@ export function App() {
         {/* Column 3: ChatPanel */}
         {(!isMobile || mobileView === "chat") && (
           <main className="flex flex-1 min-w-0 min-h-0 flex-col bg-surface-0 relative">
-
             {/* Main Topbar */}
-            <div className={cn(
-              "flex items-center border-b border-line bg-surface-1/40 shrink-0",
-              isMobile ? "justify-center gap-4 px-3 py-2" : "justify-between px-5 py-2.5"
-            )}>
+            <div
+              className={cn(
+                "flex items-center border-b border-line bg-surface-1/40 shrink-0",
+                isMobile ? "justify-center gap-4 px-3 py-2" : "justify-between px-5 py-2.5",
+              )}
+            >
               {!isMobile && (
                 <div className="flex min-w-0 items-center gap-3">
                   <h2 className="truncate text-[14px] font-semibold tracking-tight">
@@ -1782,7 +1874,7 @@ export function App() {
                       onClick={() => setMode(m)}
                       className={cn(
                         "rounded px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider transition-colors",
-                        mode === m ? "bg-surface-3 text-fg" : "text-fg-dim hover:text-fg"
+                        mode === m ? "bg-surface-3 text-fg" : "text-fg-dim hover:text-fg",
                       )}
                     >
                       {m}
@@ -1809,7 +1901,7 @@ export function App() {
                       "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed",
                       voiceActive
                         ? "border-accent bg-accent/15 text-accent glow-accent"
-                        : "border-line bg-surface-2 text-fg-muted hover:text-fg"
+                        : "border-line bg-surface-2 text-fg-muted hover:text-fg",
                     )}
                   >
                     <Circle className={cn("h-2 w-2 fill-current", voiceActive && "pulse-dot")} />
@@ -1818,643 +1910,749 @@ export function App() {
                 )}
               </div>
             </div>
-           {/* Messages Stream */}
-          <section
-            aria-busy={busy || store.messages.some((message) => message.streaming)}
-            aria-label="Chat conversation"
-            className={cn("flex-1 overflow-y-auto scroll-smooth", isMobile ? "px-3 py-4" : "px-5 py-6")}
-          >
-            <div className="mx-auto flex max-w-[760px] flex-col gap-6">
-
-              {!store.activeProject ? (
-                <div className="text-center py-20 px-4 max-w-md mx-auto">
-                  <div className="w-12 h-12 rounded-xl bg-accent/15 text-accent flex items-center justify-center mx-auto mb-4 border border-accent/25">
-                    <FolderPlus className="h-6 w-6" />
-                  </div>
-                  <h3 className="text-base font-semibold">Connect a Project</h3>
-                  <p className="text-[13px] text-fg-muted mt-1.5 leading-relaxed">
-                    A project links the agent to a folder on your system.
-                    It can read files, write code, run commands, and execute tests directly in place.
-                  </p>
-                  <button
-                    onClick={() => setShowAdd(true)}
-                    className="mt-5 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-xs font-semibold text-accent-foreground hover:brightness-110 transition-all glow-accent"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add project
-                  </button>
-                </div>
-              ) : store.messages.length === 0 ? (
-                <div className="py-12 px-4 text-center max-w-xl mx-auto">
-                  <div className="w-10 h-10 rounded-lg bg-surface-2 border border-line flex items-center justify-center mx-auto mb-4 text-fg-muted">
-                    <SquareTerminal className="h-5 w-5" />
-                  </div>
-                  <h3 className="text-sm font-semibold tracking-tight">{store.activeProject.name}</h3>
-                  <p className="text-[12.5px] font-mono text-accent mt-1 truncate max-w-md mx-auto">{store.activeProject.path}</p>
-                  <p className="text-[13px] text-fg-muted mt-2">
-                    Enter a prompt below or start a live voice session.
-                  </p>
-
-                  <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left max-w-lg mx-auto">
-                    {suggestions.map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => void send(s)}
-                        className="flex items-center gap-2 p-3 text-[12.5px] rounded-lg border border-line bg-surface-1 hover:bg-surface-2 transition-all group"
-                      >
-                        <Zap className="h-3.5 w-3.5 text-accent shrink-0 group-hover:scale-110 transition-transform" />
-                        <span className="truncate text-fg-muted group-hover:text-fg">{s}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                store.messages.map((m) => {
-                  const isUser = m.role === "user";
-                  if (isUser) {
-                    return (
-                      <article
-                        key={m.id}
-                        className="flex w-full justify-end animate-in fade-in duration-200"
-                      >
-                        <div className={cn("rounded-xl px-4 py-3 text-[13.5px] leading-relaxed shadow-sm bg-surface-2 border border-line text-fg", isMobile ? "max-w-[90%]" : "max-w-[80%]")}>
-                          {m.text ? <MarkdownRenderer content={m.text} /> : null}
-                        </div>
-                      </article>
-                    );
-                  } else {
-                    const diffs = changeArtifacts(m.artifacts);
-                    return (
-                      <article
-                        key={m.id}
-                        className="flex w-full justify-start animate-in fade-in duration-200"
-                      >
-                        <div className={cn("flex-1 text-[13.5px] leading-relaxed text-fg/95 px-1 py-1", isMobile ? "max-w-[98%]" : "max-w-[90%]")}>
-                          {m.text ? (
-                            <MarkdownRenderer content={m.text} />
-                          ) : (
-                            m.streaming && (
-                              <div className="flex flex-col gap-1.5 py-1">
-                                <span className="h-2 bg-fg-dim/15 rounded w-full animate-pulse" />
-                                <span className="h-2 bg-fg-dim/15 rounded w-4/5 animate-pulse" />
-                                <span className="h-2 bg-fg-dim/15 rounded w-3/5 animate-pulse" />
-                              </div>
-                            )
-                          )}
-                          {m.streaming && m.text && <span className="caret animate-pulse" />}
-                          {diffs.length > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {diffs.map((artifact) => (
-                                <ChangeReviewChip
-                                  key={artifact.id}
-                                  artifact={artifact}
-                                  onCommit={confirmCommitChangeReview}
-                                  onRevert={confirmRevertChangeReview}
-                                />
-                              ))}
-                            </div>
-                          )}
-                          {m.artifacts && m.artifacts.length > 0 && (
-                            <div className="mt-3 flex flex-col gap-2">
-                              {m.artifacts.map((artifact) => (
-                                <ArtifactCard key={artifact.id} artifact={artifact} defaultOpen={artifact.content_type === "diff"} />
-                              ))}
-                            </div>
-                          )}
-                          {(m.usedCodex || (m.codexEvents && m.codexEvents.length > 0)) && (
-                            <CodexTimeline events={m.codexEvents} status={m.codexStatus} />
-                          )}
-                        </div>
-                      </article>
-                    );
-                  }
-                })
+            {/* Messages Stream */}
+            <section
+              aria-busy={busy || store.messages.some((message) => message.streaming)}
+              aria-label="Chat conversation"
+              className={cn(
+                "flex-1 overflow-y-auto scroll-smooth",
+                isMobile ? "px-3 py-4" : "px-5 py-6",
               )}
-
-              {busy && mode === "agent" && !store.messages.some((m) => m.streaming) && (
-                <article className="flex justify-start w-full">
-                  <div className={cn("flex-1 px-1 py-1", isMobile ? "max-w-[98%]" : "max-w-[90%]")}>
-                    <div className="flex flex-col gap-1.5 py-1">
-                      <span className="h-2 bg-fg-dim/15 rounded w-full animate-pulse" />
-                      <span className="h-2 bg-fg-dim/15 rounded w-5/6 animate-pulse" />
-                      <span className="h-2 bg-fg-dim/15 rounded w-2/3 animate-pulse" />
+            >
+              <div className="mx-auto flex max-w-[760px] flex-col gap-6">
+                {!store.activeProject ? (
+                  <div className="text-center py-20 px-4 max-w-md mx-auto">
+                    <div className="w-12 h-12 rounded-xl bg-accent/15 text-accent flex items-center justify-center mx-auto mb-4 border border-accent/25">
+                      <FolderPlus className="h-6 w-6" />
                     </div>
-                  </div>
-                </article>
-              )}
-
-              <div ref={messageEndRef} />
-            </div>
-          </section>
-
-          {/* Composer Footer */}
-          <footer className={cn("border-t border-line bg-surface-1/40 shrink-0", isMobile ? "px-3 py-2.5" : "px-5 py-3")}>
-            <div className="mx-auto max-w-[760px]">
-              <div className="sr-only" aria-live="polite" aria-atomic="true">
-                {liveStatusText}
-              </div>
-              <div className="sr-only" aria-live="polite" aria-atomic="false">
-                {streamingStatusText}
-              </div>
-              {voiceActive && (
-                <div className="mb-3 rounded-lg border border-accent/25 bg-surface-2 p-3.5 shadow-lg flex items-center gap-3.5 animate-in slide-in-from-bottom-2 duration-200">
-                  {/* Equalizer */}
-                  <div className={cn("equalizer shrink-0", liveVoice.muted && "paused")}>
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                  </div>
-
-                  {/* Body Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[12.5px] font-semibold text-fg tracking-tight leading-none flex items-center gap-2">
-                      <span className="h-1.5 w-1.5 rounded-full bg-accent pulse-dot" />
-                      {voiceTitle}
+                    <h3 className="text-base font-semibold">Connect a Project</h3>
+                    <p className="text-[13px] text-fg-muted mt-1.5 leading-relaxed">
+                      A project links the agent to a folder on your system. It can read files, write
+                      code, run commands, and execute tests directly in place.
                     </p>
-                    <p className="text-[11.5px] text-fg-muted mt-1 truncate">{liveVoice.message}</p>
-                    {voiceContextLabel && (
-                      <p className="text-[10.5px] text-fg-dim mt-1 truncate">
-                        Attached to {voiceContextLabel}
-                      </p>
-                    )}
-                    {liveVoice.transcriptPreview && (
-                      <p className="text-[11.5px] text-accent font-mono italic mt-1 truncate bg-accent/5 border border-accent/10 rounded px-1.5 py-0.5 max-w-full">
-                        "{liveVoice.transcriptPreview}"
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Action buttons */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    {voiceInputMode === "push" ? (
-                      <button
-                        type="button"
-                        onPointerDown={holdToTalk}
-                        onPointerUp={releaseToMute}
-                        onPointerCancel={releaseToMute}
-                        onPointerLeave={releaseToMute}
-                        onKeyDown={(e) => {
-                          if (e.key === " " || e.key === "Enter") holdToTalk();
-                        }}
-                        onKeyUp={(e) => {
-                          if (e.key === " " || e.key === "Enter") releaseToMute();
-                        }}
-                        className={cn(
-                          "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11.5px] font-semibold transition-colors",
-                          liveVoice.muted
-                            ? "border-accent/30 bg-accent/10 text-accent"
-                            : "border-success/30 bg-success/10 text-success"
-                        )}
-                      >
-                        {liveVoice.muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                        {!isMobile && <span>{liveVoice.muted ? "Hold to talk" : "Listening"}</span>}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={liveVoice.toggleMute}
-                        className={cn(
-                          "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
-                          liveVoice.muted
-                            ? "border-danger/30 bg-danger/10 text-danger"
-                            : "border-line bg-surface-3 text-fg-muted hover:text-fg"
-                        )}
-                      >
-                        {liveVoice.muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                        {!isMobile && <span>{liveVoice.muted ? "Unmute" : "Mute"}</span>}
-                      </button>
-                    )}
                     <button
-                      type="button"
-                      onClick={toggleVoice}
-                      className="flex items-center gap-1.5 rounded-md bg-danger text-white px-3 py-1.5 text-[11.5px] font-semibold hover:brightness-110 transition-colors shadow-sm"
+                      onClick={() => setShowAdd(true)}
+                      className="mt-5 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-xs font-semibold text-accent-foreground hover:brightness-110 transition-all glow-accent"
                     >
-                      <MicOff className="h-3.5 w-3.5" />
-                      {!isMobile && <span>End</span>}
+                      <Plus className="h-3.5 w-3.5" />
+                      Add project
                     </button>
                   </div>
-                </div>
-              )}
-
-              <div className="rounded-lg border border-line bg-surface-1 ring-accent-focus transition-all overflow-hidden">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={onComposerInput}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void send();
-                    }
-                  }}
-                  disabled={!store.activeProject || busy}
-                  rows={2}
-                  placeholder={
-                    !store.activeProject
-                      ? (isMobile ? "Select a project to start…" : "Create or select a project folder to start…")
-                      : (isMobile ? "Ask or describe changes…" : "Type operator commands, ask questions, or describe changes…")
-                  }
-                  className="block w-full resize-none bg-transparent px-3.5 py-3 text-[13.5px] leading-relaxed text-fg placeholder:text-fg-dim focus:outline-none disabled:opacity-50"
-                />
-
-                <div className="flex items-center justify-between border-t border-line-soft px-2 py-1.5 bg-surface-1/80">
-                  <div className="flex items-center gap-0.5">
-                    {liveVoice.supported && (
-                      <button
-                        title={voiceTitle}
-                        onClick={toggleVoice}
-                        disabled={!store.activeProject}
-                        className={cn(
-                          "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11.5px] disabled:opacity-40 transition-colors",
-                          voiceActive
-                            ? "bg-accent/15 text-accent font-semibold"
-                            : "text-fg-muted hover:bg-surface-2 hover:text-fg"
-                        )}
-                      >
-                        {liveVoice.muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                        <span>Voice</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {busy && (
-                      <button
-                        onClick={handleCancelTask}
-                        className="rounded px-2.5 py-1 text-[11px] font-mono uppercase bg-danger/10 hover:bg-danger/25 text-danger font-semibold border border-danger/20 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                    <button
-                      onClick={() => void send()}
-                      disabled={!input.trim() || !store.activeProject || busy}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold transition-all",
-                        input.trim() && store.activeProject && !busy
-                          ? "bg-accent text-accent-foreground hover:brightness-110 shadow-sm"
-                          : "bg-surface-2 text-fg-dim cursor-not-allowed"
-                      )}
-                    >
-                      <span>Send</span>
-                      <ArrowUp className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {error && (
-                <div className="mt-2 text-xs text-danger flex items-center gap-1.5 font-mono px-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-danger inline-block animate-ping" />
-                  <span>{error}</span>
-                </div>
-              )}
-            </div>
-          </footer>
-        </main>
-      )}
-
-      {/* Column 3 Resizer Handle */}
-      {!isMobile && panelOpen && (
-        <div
-          className="w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent transition-colors bg-line-soft shrink-0"
-          onMouseDown={startPanelDrag}
-        />
-      )}
-
-      {/* Column 4: ConsolePanel (Resizable Sidebar) */}
-      {(!isMobile ? panelOpen : mobileView === "console") && (
-        <aside
-          style={isMobile ? { width: "100%" } : { width: `${panelWidth}px` }}
-          className={cn(
-            "flex h-full min-h-0 flex-col bg-surface-1 shrink-0",
-            !isMobile ? "border-l border-line" : "w-full"
-          )}
-        >
-          {/* Console Header */}
-          <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5 shrink-0">
-            <div className="flex items-center gap-2">
-              <SquareTerminal className="h-3.5 w-3.5 text-accent" />
-              <span className="text-[12.5px] font-semibold tracking-tight">Console</span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {!isMobile ? (
-                <button
-                  title="Hide console panel"
-                  onClick={() => setPanelOpen(false)}
-                  className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : (
-                <button
-                  title="Go back to chat"
-                  onClick={() => setMobileView("chat")}
-                  className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-
-              <button
-                onClick={clearThread}
-                disabled={!store.activeChatId}
-                className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded border border-line bg-surface-2 text-fg-dim hover:text-fg hover:border-fg-muted disabled:opacity-40"
-              >
-                Clear
-              </button>
-
-              <span className="flex items-center gap-1.5 font-mono text-[10px] text-fg-dim">
-                <span className={cn("h-1.5 w-1.5 rounded-full pulse-dot", status === "Ready" ? "bg-success" : "bg-danger")} />
-                {status === "Ready" ? "online" : "offline"}
-              </span>
-            </div>
-          </div>
-
-          {/* Console Tabs */}
-          <div
-            className="flex items-center gap-0.5 border-b border-line-soft px-2 pt-1.5 shrink-0 overflow-x-auto"
-            role="tablist"
-            aria-label="Console views"
-          >
-            {(
-              [
-                { id: "stream", label: "Stream", icon: Activity },
-                { id: "actions", label: "Actions", icon: Zap },
-                { id: "handoffs", label: "Handoffs", icon: Cable },
-                { id: "voice", label: "Voice", icon: Waves },
-              ] as const
-            ).map((t) => {
-              const active = activeConsoleTab === t.id;
-              const Icon = t.icon;
-              return (
-                <button
-                  key={t.id}
-                  id={`console-tab-${t.id}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  aria-controls={`console-panel-${t.id}`}
-                  onClick={() => setActiveConsoleTab(t.id)}
-                  className={cn(
-                    "relative flex items-center gap-1.5 px-2.5 py-2 text-[11.5px] transition-colors shrink-0",
-                    active ? "text-fg" : "text-fg-dim hover:text-fg"
-                  )}
-                >
-                  <Icon className="h-3 w-3" />
-                  {t.label}
-                  {active && <span className="absolute inset-x-1 -bottom-px h-0.5 rounded-t bg-accent" />}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Console Contents */}
-          <div className="flex-1 overflow-y-auto p-3">
-            {activeConsoleTab === "stream" && (
-              <div
-                id="console-panel-stream"
-                role="tabpanel"
-                aria-labelledby="console-tab-stream"
-                className="font-mono text-[11px] leading-relaxed"
-              >
-                {debugEntries.length === 0 ? (
-                  <div className="text-center py-12 text-fg-dim italic">Waiting for events…</div>
-                ) : (
-                  debugEntries.map((l) => (
-                    <div key={l.id} className="grid grid-cols-[82px_1fr] items-baseline gap-2 py-0.5 border-b border-line-soft/30">
-                      <span className="text-fg-dim shrink-0">{l.time}</span>
-                      <span className="text-fg/85 break-all whitespace-pre-wrap">{l.message}</span>
+                ) : store.messages.length === 0 ? (
+                  <div className="py-12 px-4 text-center max-w-xl mx-auto">
+                    <div className="w-10 h-10 rounded-lg bg-surface-2 border border-line flex items-center justify-center mx-auto mb-4 text-fg-muted">
+                      <SquareTerminal className="h-5 w-5" />
                     </div>
-                  ))
-                )}
-              </div>
-            )}
+                    <h3 className="text-sm font-semibold tracking-tight">
+                      {store.activeProject.name}
+                    </h3>
+                    <p className="text-[12.5px] font-mono text-accent mt-1 truncate max-w-md mx-auto">
+                      {store.activeProject.path}
+                    </p>
+                    <p className="text-[13px] text-fg-muted mt-2">
+                      Enter a prompt below or start a live voice session.
+                    </p>
 
-            {activeConsoleTab === "actions" && (
-              <div id="console-panel-actions" role="tabpanel" aria-labelledby="console-tab-actions" className="space-y-2">
-                {actions.length === 0 ? (
-                  <div className="text-center py-12 text-fg-dim italic">No operator actions logged.</div>
+                    <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left max-w-lg mx-auto">
+                      {suggestions.map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => void send(s)}
+                          className="flex items-center gap-2 p-3 text-[12.5px] rounded-lg border border-line bg-surface-1 hover:bg-surface-2 transition-all group"
+                        >
+                          <Zap className="h-3.5 w-3.5 text-accent shrink-0 group-hover:scale-110 transition-transform" />
+                          <span className="truncate text-fg-muted group-hover:text-fg">{s}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ) : (
-                  actions.map((a) => {
-                    const hasResponse = a.streamingResponse != null && a.streamingResponse.length > 0;
-                    return (
-                      <div key={a.id} className="panel p-0 text-xs bg-surface-2 border border-line overflow-hidden">
-                        {/* Header */}
-                        <div className="flex items-center justify-between px-3 py-2 border-b border-line-soft/40">
-                          <span className="font-mono text-[11px] text-accent font-semibold">{a.title}</span>
-                          <span className={cn(
-                            "px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase",
-                            a.status === "running" ? "bg-accent/10 text-accent animate-pulse" :
-                            a.status === "done" ? "bg-success/15 text-success" : "bg-danger/15 text-danger"
-                          )}>
-                            {a.status}
-                          </span>
-                        </div>
-                        {/* Chat timeline inside the action card */}
-                        <div className="action-chat-timeline">
-                          {/* Prompt/Request — right-aligned like a user message */}
-                          <div className="action-chat-row justify-end">
-                            <div className="action-chat-bubble-user">
-                              {a.detail}
-                            </div>
+                  store.messages.map((m) => {
+                    const isUser = m.role === "user";
+                    if (isUser) {
+                      return (
+                        <article
+                          key={m.id}
+                          className="flex w-full justify-end animate-in fade-in duration-200"
+                        >
+                          <div
+                            className={cn(
+                              "rounded-xl px-4 py-3 text-[13.5px] leading-relaxed shadow-sm bg-surface-2 border border-line text-fg",
+                              isMobile ? "max-w-[90%]" : "max-w-[80%]",
+                            )}
+                          >
+                            {m.text ? <MarkdownRenderer content={m.text} /> : null}
                           </div>
-
-                          {/* Response — left-aligned like an assistant message */}
-                          {hasResponse ? (
-                            <div className="action-chat-row justify-start">
-                              <div className={cn(
-                                "action-chat-response-text",
-                                a.status === "failed" && "text-danger"
-                              )}>
-                                <MarkdownRenderer content={a.streamingResponse || ""} />
-                                {a.status === "running" && <span className="caret" />}
-                              </div>
-                            </div>
-                          ) : a.status === "running" ? (
-                            <div className="action-chat-row justify-start">
-                              <div className="action-chat-response-text">
-                                <div className="flex flex-col gap-1.5 py-1 w-full">
-                                  <span className="h-1.5 bg-fg-dim/15 rounded w-full animate-pulse" />
-                                  <span className="h-1.5 bg-fg-dim/15 rounded w-4/5 animate-pulse" />
-                                  <span className="h-1.5 bg-fg-dim/15 rounded w-3/5 animate-pulse" />
+                        </article>
+                      );
+                    } else {
+                      const diffs = changeArtifacts(m.artifacts);
+                      return (
+                        <article
+                          key={m.id}
+                          className="flex w-full justify-start animate-in fade-in duration-200"
+                        >
+                          <div
+                            className={cn(
+                              "flex-1 text-[13.5px] leading-relaxed text-fg/95 px-1 py-1",
+                              isMobile ? "max-w-[98%]" : "max-w-[90%]",
+                            )}
+                          >
+                            {m.text ? (
+                              <MarkdownRenderer content={m.text} />
+                            ) : (
+                              m.streaming && (
+                                <div className="flex flex-col gap-1.5 py-1">
+                                  <span className="h-2 bg-fg-dim/15 rounded w-full animate-pulse" />
+                                  <span className="h-2 bg-fg-dim/15 rounded w-4/5 animate-pulse" />
+                                  <span className="h-2 bg-fg-dim/15 rounded w-3/5 animate-pulse" />
                                 </div>
+                              )
+                            )}
+                            {m.streaming && m.text && <span className="caret animate-pulse" />}
+                            {diffs.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {diffs.map((artifact) => (
+                                  <ChangeReviewChip
+                                    key={artifact.id}
+                                    artifact={artifact}
+                                    onCommit={confirmCommitChangeReview}
+                                    onRevert={confirmRevertChangeReview}
+                                  />
+                                ))}
                               </div>
-                            </div>
-                          ) : a.status === "failed" ? (
-                            <div className="action-chat-row justify-start">
-                              <div className="action-chat-response-text text-danger font-medium">
-                                Failed to execute operator action.
+                            )}
+                            {m.artifacts && m.artifacts.length > 0 && (
+                              <div className="mt-3 flex flex-col gap-2">
+                                {m.artifacts.map((artifact) => (
+                                  <ArtifactCard
+                                    key={artifact.id}
+                                    artifact={artifact}
+                                    defaultOpen={artifact.content_type === "diff"}
+                                  />
+                                ))}
                               </div>
-                            </div>
-                          ) : null}
-                        </div>
-                        {a.workdir && (
-                          <div className="px-3 py-1.5 text-[9px] text-fg-dim font-mono border-t border-line-soft/40 flex items-center gap-1">
-                            <Folder className="h-2.5 w-2.5" />
-                            <span className="truncate">{a.workdir}</span>
+                            )}
+                            {(m.usedCodex || (m.codexEvents && m.codexEvents.length > 0)) && (
+                              <CodexTimeline events={m.codexEvents} status={m.codexStatus} />
+                            )}
                           </div>
-                        )}
-                      </div>
-                    );
+                        </article>
+                      );
+                    }
                   })
                 )}
-              </div>
-            )}
 
-            {activeConsoleTab === "handoffs" && (
-              <div id="console-panel-handoffs" role="tabpanel" aria-labelledby="console-tab-handoffs" className="space-y-2">
-                {handoffs.length === 0 ? (
-                  <div className="text-center py-12 text-fg-dim italic">No handoffs between Agent and Codex.</div>
-                ) : (
-                  handoffs.map((d, i) => (
-                    <div key={d.id} className="panel p-2.5 text-xs bg-surface-2 border border-line">
-                      <div className="flex items-center gap-2 font-mono text-[10.5px]">
-                        <span className="text-fg-muted">agent</span>
-                        <ChevronRight className="h-3 w-3 text-accent" />
-                        <span className="text-accent">codex</span>
-                        <span className="ml-auto text-fg-dim font-semibold">#{handoffs.length - i}</span>
-                      </div>
-                      <p className="mt-1.5 text-[11.5px] text-fg-muted leading-relaxed whitespace-pre-wrap">{d.summary}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            {activeConsoleTab === "voice" && (
-              <div id="console-panel-voice" role="tabpanel" aria-labelledby="console-tab-voice" className="space-y-4 text-xs">
-                <div className="panel p-3 bg-surface-2 border border-line">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="label font-semibold">Setup doctor</span>
-                    <button
-                      onClick={refreshDoctor}
-                      className="rounded border border-line bg-surface-3 px-2 py-1 font-mono text-[10px] uppercase text-fg-dim hover:text-fg"
+                {busy && mode === "agent" && !store.messages.some((m) => m.streaming) && (
+                  <article className="flex justify-start w-full">
+                    <div
+                      className={cn("flex-1 px-1 py-1", isMobile ? "max-w-[98%]" : "max-w-[90%]")}
                     >
-                      Refresh
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {doctorChecks.length === 0 ? (
-                      <p className="text-[11.5px] text-fg-dim">No setup report available.</p>
-                    ) : (
-                      doctorChecks.map((check) => (
-                        <div key={check.name} className="rounded border border-line-soft bg-surface-1 px-2.5 py-2">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={cn(
-                                "h-2 w-2 rounded-full",
-                                check.ok ? "bg-success" : "bg-danger"
-                              )}
-                            />
-                            <span className="font-semibold text-fg">{check.name}</span>
-                            <span className="ml-auto text-[10px] font-mono uppercase text-fg-dim">
-                              {check.ok ? "ready" : "needs setup"}
-                            </span>
-                          </div>
-                          <p className="mt-1 text-[11.5px] text-fg-muted">{check.message}</p>
-                          {!check.ok && check.fix && (
-                            <p className="mt-1 text-[11px] text-accent">{check.fix}</p>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
+                      <div className="flex flex-col gap-1.5 py-1">
+                        <span className="h-2 bg-fg-dim/15 rounded w-full animate-pulse" />
+                        <span className="h-2 bg-fg-dim/15 rounded w-5/6 animate-pulse" />
+                        <span className="h-2 bg-fg-dim/15 rounded w-2/3 animate-pulse" />
+                      </div>
+                    </div>
+                  </article>
+                )}
 
-                <div className="panel p-3 bg-surface-2 border border-line">
-                  <label className="label mb-2 block font-semibold">Microphone mode</label>
-                  <div className="grid grid-cols-2 gap-1 rounded-md border border-line bg-surface-1 p-1">
-                    {VOICE_INPUT_MODES.map((option) => (
+                <div ref={messageEndRef} />
+              </div>
+            </section>
+
+            {/* Composer Footer */}
+            <footer
+              className={cn(
+                "border-t border-line bg-surface-1/40 shrink-0",
+                isMobile ? "px-3 py-2.5" : "px-5 py-3",
+              )}
+            >
+              <div className="mx-auto max-w-[760px]">
+                <div className="sr-only" aria-live="polite" aria-atomic="true">
+                  {liveStatusText}
+                </div>
+                <div className="sr-only" aria-live="polite" aria-atomic="false">
+                  {streamingStatusText}
+                </div>
+                {voiceActive && (
+                  <div className="mb-3 rounded-lg border border-accent/25 bg-surface-2 p-3.5 shadow-lg flex items-center gap-3.5 animate-in slide-in-from-bottom-2 duration-200">
+                    {/* Equalizer */}
+                    <div className={cn("equalizer shrink-0", liveVoice.muted && "paused")}>
+                      <i />
+                      <i />
+                      <i />
+                      <i />
+                    </div>
+
+                    {/* Body Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12.5px] font-semibold text-fg tracking-tight leading-none flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent pulse-dot" />
+                        {voiceTitle}
+                      </p>
+                      <p className="text-[11.5px] text-fg-muted mt-1 truncate">
+                        {liveVoice.message}
+                      </p>
+                      {voiceContextLabel && (
+                        <p className="text-[10.5px] text-fg-dim mt-1 truncate">
+                          Attached to {voiceContextLabel}
+                        </p>
+                      )}
+                      {liveVoice.transcriptPreview && (
+                        <p className="text-[11.5px] text-accent font-mono italic mt-1 truncate bg-accent/5 border border-accent/10 rounded px-1.5 py-0.5 max-w-full">
+                          "{liveVoice.transcriptPreview}"
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {voiceInputMode === "push" ? (
+                        <button
+                          type="button"
+                          onPointerDown={holdToTalk}
+                          onPointerUp={releaseToMute}
+                          onPointerCancel={releaseToMute}
+                          onPointerLeave={releaseToMute}
+                          onKeyDown={(e) => {
+                            if (e.key === " " || e.key === "Enter") holdToTalk();
+                          }}
+                          onKeyUp={(e) => {
+                            if (e.key === " " || e.key === "Enter") releaseToMute();
+                          }}
+                          className={cn(
+                            "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11.5px] font-semibold transition-colors",
+                            liveVoice.muted
+                              ? "border-accent/30 bg-accent/10 text-accent"
+                              : "border-success/30 bg-success/10 text-success",
+                          )}
+                        >
+                          {liveVoice.muted ? (
+                            <MicOff className="h-3.5 w-3.5" />
+                          ) : (
+                            <Mic className="h-3.5 w-3.5" />
+                          )}
+                          {!isMobile && (
+                            <span>{liveVoice.muted ? "Hold to talk" : "Listening"}</span>
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={liveVoice.toggleMute}
+                          className={cn(
+                            "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
+                            liveVoice.muted
+                              ? "border-danger/30 bg-danger/10 text-danger"
+                              : "border-line bg-surface-3 text-fg-muted hover:text-fg",
+                          )}
+                        >
+                          {liveVoice.muted ? (
+                            <MicOff className="h-3.5 w-3.5" />
+                          ) : (
+                            <Mic className="h-3.5 w-3.5" />
+                          )}
+                          {!isMobile && <span>{liveVoice.muted ? "Unmute" : "Mute"}</span>}
+                        </button>
+                      )}
                       <button
-                        key={option.id}
                         type="button"
-                        onClick={() => {
-                          setVoiceInputMode(option.id);
-                          if (voiceActive) {
-                            liveVoice.setMuted(option.id === "push");
-                          }
-                        }}
+                        onClick={toggleVoice}
+                        className="flex items-center gap-1.5 rounded-md bg-danger text-white px-3 py-1.5 text-[11.5px] font-semibold hover:brightness-110 transition-colors shadow-sm"
+                      >
+                        <MicOff className="h-3.5 w-3.5" />
+                        {!isMobile && <span>End</span>}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-line bg-surface-1 ring-accent-focus transition-all overflow-hidden">
+                  <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={onComposerInput}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void send();
+                      }
+                    }}
+                    disabled={!store.activeProject || busy}
+                    rows={2}
+                    placeholder={
+                      !store.activeProject
+                        ? isMobile
+                          ? "Select a project to start…"
+                          : "Create or select a project folder to start…"
+                        : isMobile
+                          ? "Ask or describe changes…"
+                          : "Type operator commands, ask questions, or describe changes…"
+                    }
+                    className="block w-full resize-none bg-transparent px-3.5 py-3 text-[13.5px] leading-relaxed text-fg placeholder:text-fg-dim focus:outline-none disabled:opacity-50"
+                  />
+
+                  <div className="flex items-center justify-between border-t border-line-soft px-2 py-1.5 bg-surface-1/80">
+                    <div className="flex items-center gap-0.5">
+                      {liveVoice.supported && (
+                        <button
+                          title={voiceTitle}
+                          onClick={toggleVoice}
+                          disabled={!store.activeProject}
+                          className={cn(
+                            "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11.5px] disabled:opacity-40 transition-colors",
+                            voiceActive
+                              ? "bg-accent/15 text-accent font-semibold"
+                              : "text-fg-muted hover:bg-surface-2 hover:text-fg",
+                          )}
+                        >
+                          {liveVoice.muted ? (
+                            <MicOff className="h-3.5 w-3.5" />
+                          ) : (
+                            <Mic className="h-3.5 w-3.5" />
+                          )}
+                          <span>Voice</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {busy && (
+                        <button
+                          onClick={handleCancelTask}
+                          className="rounded px-2.5 py-1 text-[11px] font-mono uppercase bg-danger/10 hover:bg-danger/25 text-danger font-semibold border border-danger/20 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                      <button
+                        onClick={() => void send()}
+                        disabled={!input.trim() || !store.activeProject || busy}
                         className={cn(
-                          "rounded px-2 py-1.5 text-[11.5px] font-semibold transition-colors",
-                          voiceInputMode === option.id
-                            ? "bg-surface-3 text-fg shadow-sm"
-                            : "text-fg-dim hover:text-fg"
+                          "flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold transition-all",
+                          input.trim() && store.activeProject && !busy
+                            ? "bg-accent text-accent-foreground hover:brightness-110 shadow-sm"
+                            : "bg-surface-2 text-fg-dim cursor-not-allowed",
                         )}
                       >
-                        {option.label}
+                        <span>Send</span>
+                        <ArrowUp className="h-3.5 w-3.5" />
                       </button>
-                    ))}
+                    </div>
                   </div>
                 </div>
 
-                <div className="panel p-3 bg-surface-2 border border-line">
-                  <label className="label mb-2 block font-semibold">Fallback TTS Voice</label>
-                  <select
-                    className="w-full rounded-md border border-line bg-surface-3 px-2 py-1.5 text-[12.5px] focus:border-accent focus:outline-none text-fg"
-                    value={selectedVoiceURI}
-                    onChange={(e) => setSelectedVoiceURI(e.target.value)}
-                    disabled={voices.length === 0}
-                  >
-                    {voices.length === 0 && <option value="">Browser default</option>}
-                    {voices.map((v) => (
-                      <option value={v.voiceURI} key={v.voiceURI}>
-                        {v.name} ({v.lang})
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-2 text-[10.5px] text-fg-dim leading-relaxed">
-                    Used if Gemini Gateway doesn't return direct audio chunks, synthesized on this browser.
-                  </p>
-                </div>
-
-                {pendingAudioUrl && (
-                  <div className="panel p-3 bg-danger/5 border border-danger/20 rounded-md">
-                    <p className="text-danger font-semibold text-[11px] mb-2">Browser autoplay was blocked.</p>
-                    <button
-                      onClick={() => void playResponseAudio(pendingAudioUrl)}
-                      className="w-full bg-danger text-white rounded py-1 px-3 hover:brightness-110 font-semibold text-[11.5px]"
-                    >
-                      Play Response Audio
-                    </button>
+                {error && (
+                  <div className="mt-2 text-xs text-danger flex items-center gap-1.5 font-mono px-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-danger inline-block animate-ping" />
+                    <span>{error}</span>
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            </footer>
+          </main>
+        )}
 
-          {/* Stats Footer bar */}
-          <div className="grid grid-cols-3 border-t border-line-soft shrink-0 bg-surface-1/40">
-            <div className="px-3 py-1.5">
-              <div className="label text-[9px]">conversation size</div>
-              <div className="mt-0.5 flex items-baseline gap-0.5">
-                <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">{store.messages.length}</span>
-                <span className="font-mono text-[9px] text-fg-dim">turns</span>
+        {/* Column 3 Resizer Handle */}
+        {!isMobile && panelOpen && (
+          <div
+            className="w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent transition-colors bg-line-soft shrink-0"
+            onMouseDown={startPanelDrag}
+          />
+        )}
+
+        {/* Column 4: ConsolePanel (Resizable Sidebar) */}
+        {(!isMobile ? panelOpen : mobileView === "console") && (
+          <aside
+            style={isMobile ? { width: "100%" } : { width: `${panelWidth}px` }}
+            className={cn(
+              "flex h-full min-h-0 flex-col bg-surface-1 shrink-0",
+              !isMobile ? "border-l border-line" : "w-full",
+            )}
+          >
+            {/* Console Header */}
+            <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5 shrink-0">
+              <div className="flex items-center gap-2">
+                <SquareTerminal className="h-3.5 w-3.5 text-accent" />
+                <span className="text-[12.5px] font-semibold tracking-tight">Console</span>
               </div>
-            </div>
-            <div className="px-3 py-1.5 border-l border-line-soft">
-              <div className="label text-[9px]">estimated context</div>
-              <div className="mt-0.5 flex items-baseline gap-0.5">
-                <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
-                  {Math.round(store.messages.reduce((acc, m) => acc + (m.text?.length || 0), 0) / 4.2).toLocaleString()}
+
+              <div className="flex items-center gap-2">
+                {!isMobile ? (
+                  <button
+                    title="Hide console panel"
+                    onClick={() => setPanelOpen(false)}
+                    className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <button
+                    title="Go back to chat"
+                    onClick={() => setMobileView("chat")}
+                    className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+
+                <button
+                  onClick={clearThread}
+                  disabled={!store.activeChatId}
+                  className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded border border-line bg-surface-2 text-fg-dim hover:text-fg hover:border-fg-muted disabled:opacity-40"
+                >
+                  Clear
+                </button>
+
+                <span className="flex items-center gap-1.5 font-mono text-[10px] text-fg-dim">
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full pulse-dot",
+                      status === "Ready" ? "bg-success" : "bg-danger",
+                    )}
+                  />
+                  {status === "Ready" ? "online" : "offline"}
                 </span>
-                <span className="font-mono text-[9px] text-fg-dim">≈ tokens</span>
               </div>
             </div>
-            <div className="px-3 py-1.5 border-l border-line-soft">
-              <div className="label text-[9px]">codex usage</div>
-              <div className="mt-0.5 flex items-baseline gap-0.5">
-                <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
-                  {codexTokenTotal(store.messages).toLocaleString()}
-                </span>
-                <span className="font-mono text-[9px] text-fg-dim">tokens</span>
+
+            {/* Console Tabs */}
+            <div
+              className="flex items-center gap-0.5 border-b border-line-soft px-2 pt-1.5 shrink-0 overflow-x-auto"
+              role="tablist"
+              aria-label="Console views"
+            >
+              {(
+                [
+                  { id: "stream", label: "Stream", icon: Activity },
+                  { id: "actions", label: "Actions", icon: Zap },
+                  { id: "handoffs", label: "Handoffs", icon: Cable },
+                  { id: "voice", label: "Voice", icon: Waves },
+                ] as const
+              ).map((t) => {
+                const active = activeConsoleTab === t.id;
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    id={`console-tab-${t.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    aria-controls={`console-panel-${t.id}`}
+                    onClick={() => setActiveConsoleTab(t.id)}
+                    className={cn(
+                      "relative flex items-center gap-1.5 px-2.5 py-2 text-[11.5px] transition-colors shrink-0",
+                      active ? "text-fg" : "text-fg-dim hover:text-fg",
+                    )}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {t.label}
+                    {active && (
+                      <span className="absolute inset-x-1 -bottom-px h-0.5 rounded-t bg-accent" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Console Contents */}
+            <div className="flex-1 overflow-y-auto p-3">
+              {activeConsoleTab === "stream" && (
+                <div
+                  id="console-panel-stream"
+                  role="tabpanel"
+                  aria-labelledby="console-tab-stream"
+                  className="font-mono text-[11px] leading-relaxed"
+                >
+                  {debugEntries.length === 0 ? (
+                    <div className="text-center py-12 text-fg-dim italic">Waiting for events…</div>
+                  ) : (
+                    debugEntries.map((l) => (
+                      <div
+                        key={l.id}
+                        className="grid grid-cols-[82px_1fr] items-baseline gap-2 py-0.5 border-b border-line-soft/30"
+                      >
+                        <span className="text-fg-dim shrink-0">{l.time}</span>
+                        <span className="text-fg/85 break-all whitespace-pre-wrap">
+                          {l.message}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {activeConsoleTab === "actions" && (
+                <div
+                  id="console-panel-actions"
+                  role="tabpanel"
+                  aria-labelledby="console-tab-actions"
+                  className="space-y-2"
+                >
+                  {actions.length === 0 ? (
+                    <div className="text-center py-12 text-fg-dim italic">
+                      No operator actions logged.
+                    </div>
+                  ) : (
+                    actions.map((a) => {
+                      const hasResponse =
+                        a.streamingResponse != null && a.streamingResponse.length > 0;
+                      return (
+                        <div
+                          key={a.id}
+                          className="panel p-0 text-xs bg-surface-2 border border-line overflow-hidden"
+                        >
+                          {/* Header */}
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-line-soft/40">
+                            <span className="font-mono text-[11px] text-accent font-semibold">
+                              {a.title}
+                            </span>
+                            <span
+                              className={cn(
+                                "px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase",
+                                a.status === "running"
+                                  ? "bg-accent/10 text-accent animate-pulse"
+                                  : a.status === "done"
+                                    ? "bg-success/15 text-success"
+                                    : "bg-danger/15 text-danger",
+                              )}
+                            >
+                              {a.status}
+                            </span>
+                          </div>
+                          {/* Chat timeline inside the action card */}
+                          <div className="action-chat-timeline">
+                            {/* Prompt/Request — right-aligned like a user message */}
+                            <div className="action-chat-row justify-end">
+                              <div className="action-chat-bubble-user">{a.detail}</div>
+                            </div>
+
+                            {/* Response — left-aligned like an assistant message */}
+                            {hasResponse ? (
+                              <div className="action-chat-row justify-start">
+                                <div
+                                  className={cn(
+                                    "action-chat-response-text",
+                                    a.status === "failed" && "text-danger",
+                                  )}
+                                >
+                                  <MarkdownRenderer content={a.streamingResponse || ""} />
+                                  {a.status === "running" && <span className="caret" />}
+                                </div>
+                              </div>
+                            ) : a.status === "running" ? (
+                              <div className="action-chat-row justify-start">
+                                <div className="action-chat-response-text">
+                                  <div className="flex flex-col gap-1.5 py-1 w-full">
+                                    <span className="h-1.5 bg-fg-dim/15 rounded w-full animate-pulse" />
+                                    <span className="h-1.5 bg-fg-dim/15 rounded w-4/5 animate-pulse" />
+                                    <span className="h-1.5 bg-fg-dim/15 rounded w-3/5 animate-pulse" />
+                                  </div>
+                                </div>
+                              </div>
+                            ) : a.status === "failed" ? (
+                              <div className="action-chat-row justify-start">
+                                <div className="action-chat-response-text text-danger font-medium">
+                                  Failed to execute operator action.
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                          {a.workdir && (
+                            <div className="px-3 py-1.5 text-[9px] text-fg-dim font-mono border-t border-line-soft/40 flex items-center gap-1">
+                              <Folder className="h-2.5 w-2.5" />
+                              <span className="truncate">{a.workdir}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              {activeConsoleTab === "handoffs" && (
+                <div
+                  id="console-panel-handoffs"
+                  role="tabpanel"
+                  aria-labelledby="console-tab-handoffs"
+                  className="space-y-2"
+                >
+                  {handoffs.length === 0 ? (
+                    <div className="text-center py-12 text-fg-dim italic">
+                      No handoffs between Agent and Codex.
+                    </div>
+                  ) : (
+                    handoffs.map((d, i) => (
+                      <div
+                        key={d.id}
+                        className="panel p-2.5 text-xs bg-surface-2 border border-line"
+                      >
+                        <div className="flex items-center gap-2 font-mono text-[10.5px]">
+                          <span className="text-fg-muted">agent</span>
+                          <ChevronRight className="h-3 w-3 text-accent" />
+                          <span className="text-accent">codex</span>
+                          <span className="ml-auto text-fg-dim font-semibold">
+                            #{handoffs.length - i}
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-[11.5px] text-fg-muted leading-relaxed whitespace-pre-wrap">
+                          {d.summary}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {activeConsoleTab === "voice" && (
+                <div
+                  id="console-panel-voice"
+                  role="tabpanel"
+                  aria-labelledby="console-tab-voice"
+                  className="space-y-4 text-xs"
+                >
+                  <div className="panel p-3 bg-surface-2 border border-line">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="label font-semibold">Setup doctor</span>
+                      <button
+                        onClick={refreshDoctor}
+                        className="rounded border border-line bg-surface-3 px-2 py-1 font-mono text-[10px] uppercase text-fg-dim hover:text-fg"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {doctorChecks.length === 0 ? (
+                        <p className="text-[11.5px] text-fg-dim">No setup report available.</p>
+                      ) : (
+                        doctorChecks.map((check) => (
+                          <div
+                            key={check.name}
+                            className="rounded border border-line-soft bg-surface-1 px-2.5 py-2"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  "h-2 w-2 rounded-full",
+                                  check.ok ? "bg-success" : "bg-danger",
+                                )}
+                              />
+                              <span className="font-semibold text-fg">{check.name}</span>
+                              <span className="ml-auto text-[10px] font-mono uppercase text-fg-dim">
+                                {check.ok ? "ready" : "needs setup"}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11.5px] text-fg-muted">{check.message}</p>
+                            {!check.ok && check.fix && (
+                              <p className="mt-1 text-[11px] text-accent">{check.fix}</p>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="panel p-3 bg-surface-2 border border-line">
+                    <label className="label mb-2 block font-semibold">Microphone mode</label>
+                    <div className="grid grid-cols-2 gap-1 rounded-md border border-line bg-surface-1 p-1">
+                      {VOICE_INPUT_MODES.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => {
+                            setVoiceInputMode(option.id);
+                            if (voiceActive) {
+                              liveVoice.setMuted(option.id === "push");
+                            }
+                          }}
+                          className={cn(
+                            "rounded px-2 py-1.5 text-[11.5px] font-semibold transition-colors",
+                            voiceInputMode === option.id
+                              ? "bg-surface-3 text-fg shadow-sm"
+                              : "text-fg-dim hover:text-fg",
+                          )}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="panel p-3 bg-surface-2 border border-line">
+                    <label className="label mb-2 block font-semibold">Fallback TTS Voice</label>
+                    <select
+                      className="w-full rounded-md border border-line bg-surface-3 px-2 py-1.5 text-[12.5px] focus:border-accent focus:outline-none text-fg"
+                      value={selectedVoiceURI}
+                      onChange={(e) => setSelectedVoiceURI(e.target.value)}
+                      disabled={voices.length === 0}
+                    >
+                      {voices.length === 0 && <option value="">Browser default</option>}
+                      {voices.map((v) => (
+                        <option value={v.voiceURI} key={v.voiceURI}>
+                          {v.name} ({v.lang})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-2 text-[10.5px] text-fg-dim leading-relaxed">
+                      Used if Gemini Gateway doesn't return direct audio chunks, synthesized on this
+                      browser.
+                    </p>
+                  </div>
+
+                  {pendingAudioUrl && (
+                    <div className="panel p-3 bg-danger/5 border border-danger/20 rounded-md">
+                      <p className="text-danger font-semibold text-[11px] mb-2">
+                        Browser autoplay was blocked.
+                      </p>
+                      <button
+                        onClick={() => void playResponseAudio(pendingAudioUrl)}
+                        className="w-full bg-danger text-white rounded py-1 px-3 hover:brightness-110 font-semibold text-[11.5px]"
+                      >
+                        Play Response Audio
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Stats Footer bar */}
+            <div className="grid grid-cols-3 border-t border-line-soft shrink-0 bg-surface-1/40">
+              <div className="px-3 py-1.5">
+                <div className="label text-[9px]">conversation size</div>
+                <div className="mt-0.5 flex items-baseline gap-0.5">
+                  <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
+                    {store.messages.length}
+                  </span>
+                  <span className="font-mono text-[9px] text-fg-dim">turns</span>
+                </div>
+              </div>
+              <div className="px-3 py-1.5 border-l border-line-soft">
+                <div className="label text-[9px]">estimated context</div>
+                <div className="mt-0.5 flex items-baseline gap-0.5">
+                  <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
+                    {Math.round(
+                      store.messages.reduce((acc, m) => acc + (m.text?.length || 0), 0) / 4.2,
+                    ).toLocaleString()}
+                  </span>
+                  <span className="font-mono text-[9px] text-fg-dim">≈ tokens</span>
+                </div>
+              </div>
+              <div className="px-3 py-1.5 border-l border-line-soft">
+                <div className="label text-[9px]">codex usage</div>
+                <div className="mt-0.5 flex items-baseline gap-0.5">
+                  <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
+                    {codexTokenTotal(store.messages).toLocaleString()}
+                  </span>
+                  <span className="font-mono text-[9px] text-fg-dim">tokens</span>
+                </div>
               </div>
             </div>
-          </div>
-        </aside>
-      )}
+          </aside>
+        )}
       </div>
 
       {/* Modals rendering */}
@@ -2469,7 +2667,9 @@ export function App() {
           existingPaths={store.projects.map((p) => p.path)}
         />
       )}
-      {confirmDialog && <ConfirmModal dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />}
+      {confirmDialog && (
+        <ConfirmModal dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+      )}
       {renameDialog && (
         <RenameChatModal
           dialog={renameDialog}
@@ -2477,7 +2677,6 @@ export function App() {
           onRename={store.renameChat}
         />
       )}
-
     </div>
   );
 }

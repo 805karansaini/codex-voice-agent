@@ -63,7 +63,7 @@ export default function ConfirmModal({
             }}
             className={cn(
               "rounded-md px-3 py-2 text-[12.5px] font-semibold text-white transition-all hover:brightness-110",
-              dialog.danger ? "bg-danger" : "bg-accent text-accent-foreground"
+              dialog.danger ? "bg-danger" : "bg-accent text-accent-foreground",
             )}
           >
             {dialog.actionLabel}

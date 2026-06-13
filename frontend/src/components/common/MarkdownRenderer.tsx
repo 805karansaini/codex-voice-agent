@@ -49,7 +49,11 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
       <div className="code-block-header">
         <span className="code-block-lang">{language || "text"}</span>
         <button className="code-block-copy" onClick={handleCopy} title="Copy code">
-          {copied ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? (
+            <Check className="h-3.5 w-3.5" strokeWidth={3} />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
           <span>{copied ? "Copied!" : "Copy"}</span>
         </button>
       </div>
@@ -75,7 +79,7 @@ const TextBlock: React.FC<TextBlockProps> = ({ text }) => {
       elements.push(
         <ul key={`list-${key}`} className="markdown-list">
           {...currentList}
-        </ul>
+        </ul>,
       );
       currentList = [];
     }
@@ -91,7 +95,7 @@ const TextBlock: React.FC<TextBlockProps> = ({ text }) => {
       currentList.push(
         <li key={`li-${lineIdx}`} className="markdown-list-item">
           {parseInline(content)}
-        </li>
+        </li>,
       );
     } else {
       if (inList) {
@@ -113,13 +117,55 @@ const TextBlock: React.FC<TextBlockProps> = ({ text }) => {
           const key = `h-${lineIdx}`;
           const className = `markdown-h${level}`;
           switch (level) {
-            case 1: elements.push(<h1 key={key} className={className}>{children}</h1>); break;
-            case 2: elements.push(<h2 key={key} className={className}>{children}</h2>); break;
-            case 3: elements.push(<h3 key={key} className={className}>{children}</h3>); break;
-            case 4: elements.push(<h4 key={key} className={className}>{children}</h4>); break;
-            case 5: elements.push(<h5 key={key} className={className}>{children}</h5>); break;
-            case 6: elements.push(<h6 key={key} className={className}>{children}</h6>); break;
-            default: elements.push(<p key={key} className={className}>{children}</p>); break;
+            case 1:
+              elements.push(
+                <h1 key={key} className={className}>
+                  {children}
+                </h1>,
+              );
+              break;
+            case 2:
+              elements.push(
+                <h2 key={key} className={className}>
+                  {children}
+                </h2>,
+              );
+              break;
+            case 3:
+              elements.push(
+                <h3 key={key} className={className}>
+                  {children}
+                </h3>,
+              );
+              break;
+            case 4:
+              elements.push(
+                <h4 key={key} className={className}>
+                  {children}
+                </h4>,
+              );
+              break;
+            case 5:
+              elements.push(
+                <h5 key={key} className={className}>
+                  {children}
+                </h5>,
+              );
+              break;
+            case 6:
+              elements.push(
+                <h6 key={key} className={className}>
+                  {children}
+                </h6>,
+              );
+              break;
+            default:
+              elements.push(
+                <p key={key} className={className}>
+                  {children}
+                </p>,
+              );
+              break;
           }
           return;
         }
@@ -129,7 +175,7 @@ const TextBlock: React.FC<TextBlockProps> = ({ text }) => {
       elements.push(
         <p key={`p-${lineIdx}`} className="markdown-paragraph">
           {parseInline(line)}
-        </p>
+        </p>,
       );
     }
   });

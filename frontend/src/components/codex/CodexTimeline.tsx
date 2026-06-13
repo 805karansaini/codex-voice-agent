@@ -23,7 +23,7 @@ export default function CodexTimeline({
 }) {
   const visible = useMemo(
     () => (events || []).filter((event) => TIMELINE_METHODS.has(event.method)),
-    [events]
+    [events],
   );
   if (visible.length === 0 && !status) return null;
   return (
@@ -35,8 +35,13 @@ export default function CodexTimeline({
       </div>
       <div className="codex-timeline-list">
         {visible.slice(-12).map((event, index) => (
-          <div key={`${event.method}-${event.item_id || index}-${index}`} className="codex-timeline-row">
-            <span className={cn("codex-timeline-dot", event.method === "turn/completed" && "done")} />
+          <div
+            key={`${event.method}-${event.item_id || index}-${index}`}
+            className="codex-timeline-row"
+          >
+            <span
+              className={cn("codex-timeline-dot", event.method === "turn/completed" && "done")}
+            />
             <div className="min-w-0">
               <p className="codex-timeline-summary">{event.summary || event.method}</p>
               {event.command && <p className="codex-timeline-detail">{event.command}</p>}

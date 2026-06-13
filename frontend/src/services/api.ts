@@ -1,4 +1,12 @@
-import { Project, Chat, ConsoleState, HistoryRow, ProjectInfo, SearchResult, DoctorCheck } from "../types";
+import {
+  Project,
+  Chat,
+  ConsoleState,
+  HistoryRow,
+  ProjectInfo,
+  SearchResult,
+  DoctorCheck,
+} from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const API_TOKEN = import.meta.env.VITE_API_TOKEN || "";
@@ -18,7 +26,10 @@ export function getWebSocketUrl(path: string): string {
   return `${protocol}//${window.location.host}${wsPath}`;
 }
 
-export async function fetchHealth(): Promise<{ has_google_api_key: boolean; gemini_model: string }> {
+export async function fetchHealth(): Promise<{
+  has_google_api_key: boolean;
+  gemini_model: string;
+}> {
   const res = await fetch(`${API_BASE}/api/health`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Health check failed");
   return res.json();
@@ -76,7 +87,9 @@ export async function deleteChat(chatId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete chat");
 }
 
-export async function exportChatMarkdown(chatId: string): Promise<{ blob: Blob; filename: string }> {
+export async function exportChatMarkdown(
+  chatId: string,
+): Promise<{ blob: Blob; filename: string }> {
   const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/export.md`, {
     headers: authHeaders(),
   });
@@ -90,7 +103,9 @@ export async function exportChatMarkdown(chatId: string): Promise<{ blob: Blob; 
 }
 
 export async function fetchConsoleState(chatId: string): Promise<ConsoleState> {
-  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch console state");
   return res.json();
 }
@@ -113,7 +128,9 @@ export async function deleteConsoleState(chatId: string): Promise<void> {
 }
 
 export async function fetchHistory(chatId: string): Promise<HistoryRow[]> {
-  const res = await fetch(`${API_BASE}/api/history?chat_id=${encodeURIComponent(chatId)}`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/history?chat_id=${encodeURIComponent(chatId)}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch history");
   return res.json();
 }
@@ -135,7 +152,9 @@ export async function searchContent(query: string): Promise<SearchResult[]> {
 }
 
 export async function getProjectInfo(path: string): Promise<ProjectInfo> {
-  const res = await fetch(`${API_BASE}/api/project/info?path=${encodeURIComponent(path)}`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/project/info?path=${encodeURIComponent(path)}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch project info");
   return res.json();
 }
@@ -149,7 +168,10 @@ export async function pickFolder(): Promise<{ path: string | null; cancelled: bo
   return res.json();
 }
 
-export async function revertChangeReview(workdir: string, files: string[]): Promise<{ ok: boolean; reverted_files: string[] }> {
+export async function revertChangeReview(
+  workdir: string,
+  files: string[],
+): Promise<{ ok: boolean; reverted_files: string[] }> {
   const res = await fetch(`${API_BASE}/api/change-review/revert`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
@@ -165,7 +187,7 @@ export async function revertChangeReview(workdir: string, files: string[]): Prom
 export async function commitChangeReview(
   workdir: string,
   files: string[],
-  message: string
+  message: string,
 ): Promise<{ ok: boolean; commit: string; committed_files: string[]; message: string }> {
   const res = await fetch(`${API_BASE}/api/change-review/commit`, {
     method: "POST",
@@ -187,7 +209,10 @@ export interface StreamOptions {
   chatId: string;
 }
 
-export async function postCodexStream(options: StreamOptions, signal?: AbortSignal): Promise<Response> {
+export async function postCodexStream(
+  options: StreamOptions,
+  signal?: AbortSignal,
+): Promise<Response> {
   return fetch(`${API_BASE}/api/codex/stream`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
@@ -201,7 +226,10 @@ export async function postCodexStream(options: StreamOptions, signal?: AbortSign
   });
 }
 
-export async function postChatStream(options: StreamOptions, signal?: AbortSignal): Promise<Response> {
+export async function postChatStream(
+  options: StreamOptions,
+  signal?: AbortSignal,
+): Promise<Response> {
   return fetch(`${API_BASE}/api/chat/stream`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),

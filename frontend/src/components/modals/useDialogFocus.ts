@@ -11,7 +11,7 @@ const FOCUSABLE_SELECTOR = [
 
 export function useDialogFocus<T extends HTMLElement>(
   dialogRef: RefObject<T | null>,
-  onClose: () => void
+  onClose: () => void,
 ) {
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -32,8 +32,9 @@ export function useDialogFocus<T extends HTMLElement>(
       if (event.key !== "Tab") return;
       const dialog = dialogRef.current;
       if (!dialog) return;
-      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-        .filter((element) => element.offsetParent !== null || element === document.activeElement);
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (element) => element.offsetParent !== null || element === document.activeElement,
+      );
       if (focusable.length === 0) {
         event.preventDefault();
         dialog.focus();

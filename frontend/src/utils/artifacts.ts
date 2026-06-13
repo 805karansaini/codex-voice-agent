@@ -2,7 +2,7 @@ import type { ChatArtifact } from "../types";
 
 export function appendArtifact(
   artifacts: ChatArtifact[] | undefined,
-  artifact: ChatArtifact | null | undefined
+  artifact: ChatArtifact | null | undefined,
 ): ChatArtifact[] {
   if (!artifact?.id) return artifacts || [];
   const current = artifacts || [];
@@ -19,6 +19,6 @@ export function appendArtifacts(
 
 export function changeArtifacts(artifacts: ChatArtifact[] | undefined): ChatArtifact[] {
   return (artifacts || []).filter(
-    (artifact) => artifact.content_type === "diff" || artifact.source === "git_diff"
+    (artifact) => artifact.content_type === "diff" || artifact.source === "git_diff",
   );
 }

@@ -1,7 +1,4 @@
-export async function readSseStream(
-  res: Response,
-  onEvent: (evt: any) => void
-) {
+export async function readSseStream(res: Response, onEvent: (evt: any) => void) {
   if (!res.body) return;
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

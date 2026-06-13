@@ -60,7 +60,7 @@ export default function ArtifactCard({
                 onClick={() => setRaw(false)}
                 className={cn(
                   "rounded px-2 py-1 text-[11px]",
-                  !raw ? "bg-accent text-accent-foreground" : "text-fg-muted"
+                  !raw ? "bg-accent text-accent-foreground" : "text-fg-muted",
                 )}
               >
                 Rendered
@@ -70,7 +70,7 @@ export default function ArtifactCard({
                 onClick={() => setRaw(true)}
                 className={cn(
                   "rounded px-2 py-1 text-[11px]",
-                  raw ? "bg-accent text-accent-foreground" : "text-fg-muted"
+                  raw ? "bg-accent text-accent-foreground" : "text-fg-muted",
                 )}
               >
                 Raw

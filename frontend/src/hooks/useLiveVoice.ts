@@ -136,7 +136,7 @@ interface UseLiveVoiceProps {
     userText: string,
     assistantText: string,
     usedCodex: boolean,
-    workdir?: string
+    workdir?: string,
   ) => void;
 }
 
@@ -265,17 +265,28 @@ export function useLiveVoice({
 
   const log = useCallback((text: string) => cbRef.current.onDebug(text), []);
 
-  const setInputMuted = useCallback((next: boolean) => {
-    mutedRef.current = next;
-    setMuted(next);
-    log(next ? "Microphone muted — Gemini will not be interrupted by background audio." : "Microphone unmuted.");
-  }, [log]);
+  const setInputMuted = useCallback(
+    (next: boolean) => {
+      mutedRef.current = next;
+      setMuted(next);
+      log(
+        next
+          ? "Microphone muted — Gemini will not be interrupted by background audio."
+          : "Microphone unmuted.",
+      );
+    },
+    [log],
+  );
 
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       const next = !m;
       mutedRef.current = next;
-      log(next ? "Microphone muted — Gemini will not be interrupted by background audio." : "Microphone unmuted.");
+      log(
+        next
+          ? "Microphone muted — Gemini will not be interrupted by background audio."
+          : "Microphone unmuted.",
+      );
       return next;
     });
   }, [log]);
@@ -299,21 +310,24 @@ export function useLiveVoice({
     buffered.forEach((payload) => websocket.send(payload));
   }, []);
 
-  const sendSessionConfig = useCallback((websocket: WebSocket) => {
-    const workdir = cbRef.current.getWorkdir();
-    const projectId = cbRef.current.getProjectId();
-    const chatId = cbRef.current.getChatId();
-    if (!workdir || websocket.readyState !== WebSocket.OPEN) return;
-    log(`[Config] Sending session config: chatId=${chatId}, workdir=${workdir}`);
-    websocket.send(
-      JSON.stringify({
-        type: "config",
-        workdir,
-        project_id: projectId,
-        chat_id: chatId,
-      })
-    );
-  }, [log]);
+  const sendSessionConfig = useCallback(
+    (websocket: WebSocket) => {
+      const workdir = cbRef.current.getWorkdir();
+      const projectId = cbRef.current.getProjectId();
+      const chatId = cbRef.current.getChatId();
+      if (!workdir || websocket.readyState !== WebSocket.OPEN) return;
+      log(`[Config] Sending session config: chatId=${chatId}, workdir=${workdir}`);
+      websocket.send(
+        JSON.stringify({
+          type: "config",
+          workdir,
+          project_id: projectId,
+          chat_id: chatId,
+        }),
+      );
+    },
+    [log],
+  );
 
   const stop = useCallback(async () => {
     log("[Stop] Stopping session and microphone...");
@@ -371,12 +385,14 @@ export function useLiveVoice({
           clearToolResultFallback();
           const userText = String(payload.user_text || "").trim();
           const assistantText = String(payload.assistant_text || "").trim();
-          log(`[Turn Complete] user_chars=${userText.length}, assistant_chars=${assistantText.length}, session_ended=${payload.session_ended}`);
+          log(
+            `[Turn Complete] user_chars=${userText.length}, assistant_chars=${assistantText.length}, session_ended=${payload.session_ended}`,
+          );
           cbRef.current.onTurnComplete?.(
             userText,
             assistantText,
             usedCodexRef.current,
-            payload.workdir
+            payload.workdir,
           );
           usedCodexRef.current = false;
           if (payload.audio_data_url && !hasStreamedAudioRef.current) {
@@ -429,16 +445,13 @@ export function useLiveVoice({
           cbRef.current.onHandoffStart?.(
             payload.name || "run_codex_task",
             payload.task || "",
-            payload.workdir || ""
+            payload.workdir || "",
           );
           log(`[Tool Call Started] ${payload.name || "tool"}. Task: "${payload.task || ""}"`);
         } else if (payload.type === "tool_progress") {
           setUserPreview("");
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
-          cbRef.current.onHandoffProgress?.(
-            payload.name || "run_codex_task",
-            payload.text || ""
-          );
+          cbRef.current.onHandoffProgress?.(payload.name || "run_codex_task", payload.text || "");
         } else if (payload.type === "codex_event") {
           cbRef.current.onCodexEvent?.(payload.event);
           if (payload.event?.summary) {
@@ -455,7 +468,7 @@ export function useLiveVoice({
           setAssistantPreview("");
           cbRef.current.onHandoffFailed?.(
             payload.name || "run_codex_task",
-            payload.message || "Codex task failed."
+            payload.message || "Codex task failed.",
           );
           log(`[Tool Call Failed] ${payload.name || "tool"}: ${payload.message}`);
         } else if (payload.type === "tool_result") {
@@ -467,17 +480,21 @@ export function useLiveVoice({
             payload.name || "run_codex_task",
             String(payload.result || "").trim() || "Codex task completed.",
             payload.workdir || "",
-            payload
+            payload,
           );
           clearToolResultFallback();
           toolResultFallbackTimerRef.current = window.setTimeout(() => {
             setState("live");
-            setMessage("Codex result is available in chat. Gemini did not finish a final response.");
+            setMessage(
+              "Codex result is available in chat. Gemini did not finish a final response.",
+            );
             cbRef.current.onHandoffTimeout?.();
             log("Gemini did not finish after Codex completed; surfaced the Codex result in chat.");
             toolResultFallbackTimerRef.current = null;
           }, TOOL_RESULT_FALLBACK_MS);
-          log(`[Tool Call Completed] ${payload.name || "tool"}. Result length: ${payload.result?.length || 0} chars.`);
+          log(
+            `[Tool Call Completed] ${payload.name || "tool"}. Result length: ${payload.result?.length || 0} chars.`,
+          );
         } else if (payload.type === "error") {
           setState("error");
           setMessage(payload.message || "Live voice failed.");
@@ -498,7 +515,9 @@ export function useLiveVoice({
       }
       if (streamRef.current) {
         setState("connecting");
-        setMessage("Gemini Live is reconnecting. Context is preserved up to your last completed turn.");
+        setMessage(
+          "Gemini Live is reconnecting. Context is preserved up to your last completed turn.",
+        );
         if (!reconnectNoticeSentRef.current) {
           reconnectNoticeSentRef.current = true;
           cbRef.current.onSessionRestarted?.();
@@ -519,7 +538,8 @@ export function useLiveVoice({
   }, [clearToolResultFallback, flushBufferedAudio, log, sendSessionConfig, stopMicrophone, stop]);
 
   const start = useCallback(async () => {
-    if (state === "connecting" || state === "live" || state === "thinking" || state === "working") return;
+    if (state === "connecting" || state === "live" || state === "thinking" || state === "working")
+      return;
     if (!navigator.mediaDevices?.getUserMedia || typeof window.AudioContext === "undefined") {
       setState("error");
       setMessage("This browser cannot open live microphone audio.");
@@ -544,7 +564,12 @@ export function useLiveVoice({
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
       const audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
@@ -575,7 +600,7 @@ export function useLiveVoice({
         try {
           await audioContext.audioWorklet.addModule(url);
           URL.revokeObjectURL(url);
-          micWorkletNode = new AudioWorkletNode(audioContext, 'mic-processor');
+          micWorkletNode = new AudioWorkletNode(audioContext, "mic-processor");
           processorRef.current = micWorkletNode;
 
           micWorkletNode.port.onmessage = (event) => {
@@ -593,14 +618,20 @@ export function useLiveVoice({
             }
             bufferedAudioRef.current.push(payload);
             if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
-              bufferedAudioRef.current.splice(0, bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS);
+              bufferedAudioRef.current.splice(
+                0,
+                bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS,
+              );
             }
           };
 
           source.connect(micWorkletNode);
           micWorkletNode.connect(audioContext.destination);
         } catch (workletErr) {
-          console.warn("Failed to load mic audio worklet, falling back to script processor", workletErr);
+          console.warn(
+            "Failed to load mic audio worklet, falling back to script processor",
+            workletErr,
+          );
           micWorkletNode = null;
         }
       }
@@ -625,7 +656,10 @@ export function useLiveVoice({
           }
           bufferedAudioRef.current.push(payload);
           if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
-            bufferedAudioRef.current.splice(0, bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS);
+            bufferedAudioRef.current.splice(
+              0,
+              bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS,
+            );
           }
         };
 
@@ -649,17 +683,21 @@ export function useLiveVoice({
     }
   }, []);
 
-  useEffect(() => () => {
-    clearToolResultFallback();
-    void stop();
-  }, [clearToolResultFallback, stop]);
+  useEffect(
+    () => () => {
+      clearToolResultFallback();
+      void stop();
+    },
+    [clearToolResultFallback, stop],
+  );
 
   return {
-    active: state === "connecting" || state === "live" || state === "thinking" || state === "working",
+    active:
+      state === "connecting" || state === "live" || state === "thinking" || state === "working",
     supported: Boolean(
       typeof navigator.mediaDevices?.getUserMedia === "function" &&
-        typeof window.AudioContext !== "undefined" &&
-        typeof window.WebSocket !== "undefined"
+      typeof window.AudioContext !== "undefined" &&
+      typeof window.WebSocket !== "undefined",
     ),
     state,
     elapsed,

@@ -49,20 +49,20 @@
 
 :root {
   /* Default theme is dark: Dev Tool — dark cool slate with electric accent */
-  --surface-0: oklch(0.165 0.012 260);   /* app bg */
-  --surface-1: oklch(0.195 0.012 260);   /* panels */
-  --surface-2: oklch(0.225 0.012 260);   /* cards / inputs */
-  --surface-3: oklch(0.275 0.013 260);   /* hover / chips */
-  --fg:        oklch(0.96 0.005 250);
-  --fg-muted:  oklch(0.74 0.012 250);
-  --fg-dim:    oklch(0.55 0.012 250);
-  --line:      oklch(0.30 0.012 260);
+  --surface-0: oklch(0.165 0.012 260); /* app bg */
+  --surface-1: oklch(0.195 0.012 260); /* panels */
+  --surface-2: oklch(0.225 0.012 260); /* cards / inputs */
+  --surface-3: oklch(0.275 0.013 260); /* hover / chips */
+  --fg: oklch(0.96 0.005 250);
+  --fg-muted: oklch(0.74 0.012 250);
+  --fg-dim: oklch(0.55 0.012 250);
+  --line: oklch(0.3 0.012 260);
   --line-soft: oklch(0.245 0.012 260);
-  --accent:      oklch(0.74 0.165 195);   /* electric cyan */
-  --accent-soft: oklch(0.55 0.120 195);
-  --success:   oklch(0.78 0.16 150);
-  --warn:      oklch(0.82 0.15 80);
-  --danger:    oklch(0.70 0.20 25);
+  --accent: oklch(0.74 0.165 195); /* electric cyan */
+  --accent-soft: oklch(0.55 0.12 195);
+  --success: oklch(0.78 0.16 150);
+  --warn: oklch(0.82 0.15 80);
+  --danger: oklch(0.7 0.2 25);
 
   --background: var(--surface-0);
   --foreground: var(--fg);
@@ -70,25 +70,31 @@
 
 :root[data-theme="light"] {
   /* Dev Tool — light warm paper with same electric accent */
-  --surface-0: oklch(0.985 0.003 250);   /* app bg */
-  --surface-1: oklch(0.965 0.004 250);   /* panels */
-  --surface-2: oklch(0.935 0.005 250);   /* cards / inputs */
-  --surface-3: oklch(0.895 0.006 250);   /* hover / chips */
-  --fg:        oklch(0.22 0.015 260);
-  --fg-muted:  oklch(0.42 0.014 260);
-  --fg-dim:    oklch(0.58 0.012 260);
-  --line:      oklch(0.86 0.008 260);
+  --surface-0: oklch(0.985 0.003 250); /* app bg */
+  --surface-1: oklch(0.965 0.004 250); /* panels */
+  --surface-2: oklch(0.935 0.005 250); /* cards / inputs */
+  --surface-3: oklch(0.895 0.006 250); /* hover / chips */
+  --fg: oklch(0.22 0.015 260);
+  --fg-muted: oklch(0.42 0.014 260);
+  --fg-dim: oklch(0.58 0.012 260);
+  --line: oklch(0.86 0.008 260);
   --line-soft: oklch(0.915 0.006 260);
-  --accent:      oklch(0.55 0.15 220);   /* deeper cyan-blue for contrast */
-  --accent-soft: oklch(0.70 0.12 220);
-  --success:   oklch(0.58 0.15 150);
-  --warn:      oklch(0.68 0.16 70);
-  --danger:    oklch(0.58 0.21 25);
+  --accent: oklch(0.55 0.15 220); /* deeper cyan-blue for contrast */
+  --accent-soft: oklch(0.7 0.12 220);
+  --success: oklch(0.58 0.15 150);
+  --warn: oklch(0.68 0.16 70);
+  --danger: oklch(0.58 0.21 25);
 }
 
 @layer base {
-  * { border-color: var(--color-line); }
-  html, body, #root { height: 100%; }
+  * {
+    border-color: var(--color-line);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
   body {
     background-color: var(--color-surface-0);
     color: var(--color-fg);
@@ -101,8 +107,13 @@
     background: color-mix(in oklab, var(--color-accent) 40%, transparent);
     color: var(--color-fg);
   }
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
   ::-webkit-scrollbar-thumb {
     background: color-mix(in oklab, var(--color-fg) 14%, transparent);
     border-radius: 8px;
@@ -110,7 +121,9 @@
 }
 
 @layer utilities {
-  .font-mono { font-family: var(--font-mono); }
+  .font-mono {
+    font-family: var(--font-mono);
+  }
   .label {
     font-family: var(--font-mono);
     font-size: 10.5px;
@@ -126,8 +139,16 @@
   }
   .grid-bg {
     background-image:
-      linear-gradient(to right, color-mix(in oklab, var(--color-fg) 4%, transparent) 1px, transparent 1px),
-      linear-gradient(to bottom, color-mix(in oklab, var(--color-fg) 4%, transparent) 1px, transparent 1px);
+      linear-gradient(
+        to right,
+        color-mix(in oklab, var(--color-fg) 4%, transparent) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in oklab, var(--color-fg) 4%, transparent) 1px,
+        transparent 1px
+      );
     background-size: 24px 24px;
   }
   .glow-accent {
@@ -141,15 +162,33 @@
     margin-left: 2px;
     animation: blink 1.1s steps(1) infinite;
   }
-  @keyframes blink { 50% { opacity: 0; } }
-  .pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+  @keyframes blink {
+    50% {
+      opacity: 0;
+    }
+  }
+  .pulse-dot {
+    animation: pulse-dot 1.8s ease-in-out infinite;
+  }
   @keyframes pulse-dot {
-    0%,100% { opacity: 0.45; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.25); }
+    0%,
+    100% {
+      opacity: 0.45;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.25);
+    }
   }
   @keyframes bounce-bar {
-    0%, 100% { transform: scaleY(0.18); }
-    50% { transform: scaleY(1); }
+    0%,
+    100% {
+      transform: scaleY(0.18);
+    }
+    50% {
+      transform: scaleY(1);
+    }
   }
   .animate-bounce-bar {
     animation: bounce-bar 1s ease-in-out infinite;
@@ -159,7 +198,7 @@
     border-color: var(--color-accent);
     box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 20%, transparent);
   }
-  
+
   .equalizer {
     display: flex;
     align-items: flex-end;
@@ -174,10 +213,22 @@
     transform-origin: bottom;
     animation: bounce-eq 0.8s ease-in-out infinite;
   }
-  .equalizer i:nth-child(1) { animation-delay: 0.1s; animation-duration: 0.6s; }
-  .equalizer i:nth-child(2) { animation-delay: 0.3s; animation-duration: 0.9s; }
-  .equalizer i:nth-child(3) { animation-delay: 0.2s; animation-duration: 0.7s; }
-  .equalizer i:nth-child(4) { animation-delay: 0.4s; animation-duration: 0.8s; }
+  .equalizer i:nth-child(1) {
+    animation-delay: 0.1s;
+    animation-duration: 0.6s;
+  }
+  .equalizer i:nth-child(2) {
+    animation-delay: 0.3s;
+    animation-duration: 0.9s;
+  }
+  .equalizer i:nth-child(3) {
+    animation-delay: 0.2s;
+    animation-duration: 0.7s;
+  }
+  .equalizer i:nth-child(4) {
+    animation-delay: 0.4s;
+    animation-duration: 0.8s;
+  }
 
   .equalizer.paused i {
     animation-play-state: paused;
@@ -204,7 +255,7 @@
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: .04em;
+    letter-spacing: 0.04em;
   }
 
   .codex-timeline-status {
@@ -262,8 +313,13 @@
   }
 
   @keyframes bounce-eq {
-    0%, 100% { transform: scaleY(0.2); }
-    50% { transform: scaleY(1); }
+    0%,
+    100% {
+      transform: scaleY(0.2);
+    }
+    50% {
+      transform: scaleY(1);
+    }
   }
 
   /* Action card vertical chat timeline */
@@ -331,12 +387,22 @@
     animation-duration: 200ms;
   }
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
   @keyframes slideInFromBottom2 {
-    from { opacity: 0; transform: translateY(8px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 }
 
@@ -379,17 +445,30 @@
   .markdown-link:hover {
     opacity: 0.85;
   }
-  .markdown-h1, .markdown-h2, .markdown-h3, .markdown-h4, .markdown-h5, .markdown-h6 {
+  .markdown-h1,
+  .markdown-h2,
+  .markdown-h3,
+  .markdown-h4,
+  .markdown-h5,
+  .markdown-h6 {
     font-family: var(--font-display);
     font-weight: 600;
     color: var(--color-fg);
     margin-top: 14px;
     margin-bottom: 6px;
   }
-  .markdown-h1 { font-size: 1.5em; }
-  .markdown-h2 { font-size: 1.35em; }
-  .markdown-h3 { font-size: 1.2em; }
-  .markdown-h4 { font-size: 1.1em; }
+  .markdown-h1 {
+    font-size: 1.5em;
+  }
+  .markdown-h2 {
+    font-size: 1.35em;
+  }
+  .markdown-h3 {
+    font-size: 1.2em;
+  }
+  .markdown-h4 {
+    font-size: 1.1em;
+  }
 
   .code-block-wrapper {
     margin: 12px 0;
@@ -424,7 +503,9 @@
     cursor: pointer;
     padding: 4px 8px;
     border-radius: 4px;
-    transition: color 150ms ease, background 150ms ease;
+    transition:
+      color 150ms ease,
+      background 150ms ease;
   }
   .code-block-copy:hover {
     color: var(--color-fg);

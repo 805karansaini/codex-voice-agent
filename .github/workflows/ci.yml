@@ -36,7 +36,9 @@ jobs:
 
       - name: Lint frontend
         working-directory: frontend
-        run: npm run lint
+        run: |
+          npm run format:check
+          npm run lint
 
       - name: Build frontend
         working-directory: frontend

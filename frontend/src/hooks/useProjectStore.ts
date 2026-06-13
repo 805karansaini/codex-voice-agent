@@ -50,14 +50,23 @@ function loadChatState(): ChatState {
 export function useProjectStore() {
   const [projects, setProjects] = useState<Project[]>(() => loadJSON<Project[]>(LS_PROJECTS, []));
   const [activeId, setActiveId] = useState<string>(() => loadJSON<string>(LS_ACTIVE, ""));
-  
+
   const initialChatState = useRef(loadChatState()).current;
   const [chats, setChats] = useState<Record<string, Chat[]>>(initialChatState.chats);
-  const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>(initialChatState.messages);
-  const [activeChatByProject, setActiveChatByProject] = useState<Record<string, string>>(initialChatState.activeChat);
-  const [theme, setTheme] = useState<"dark" | "light">(() => loadJSON<"dark" | "light">(LS_THEME, "dark"));
+  const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>(
+    initialChatState.messages,
+  );
+  const [activeChatByProject, setActiveChatByProject] = useState<Record<string, string>>(
+    initialChatState.activeChat,
+  );
+  const [theme, setTheme] = useState<"dark" | "light">(() =>
+    loadJSON<"dark" | "light">(LS_THEME, "dark"),
+  );
 
-  const activeProject = useMemo(() => projects.find((p) => p.id === activeId) || null, [projects, activeId]);
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === activeId) || null,
+    [projects, activeId],
+  );
   const projectChats = activeProject ? chats[activeProject.id] || [] : [];
   const activeChatId = activeProject ? activeChatByProject[activeProject.id] || "" : "";
   const activeChat = projectChats.find((c) => c.id === activeChatId) || null;
@@ -69,7 +78,7 @@ export function useProjectStore() {
   useEffect(() => saveJSON(LS_CHATS, chats), [chats]);
   useEffect(() => saveJSON(LS_MESSAGES, messagesByChat), [messagesByChat]);
   useEffect(() => saveJSON(LS_ACTIVE_CHAT, activeChatByProject), [activeChatByProject]);
-  
+
   useEffect(() => {
     saveJSON(LS_THEME, theme);
     document.documentElement.setAttribute("data-theme", theme);
@@ -78,19 +87,23 @@ export function useProjectStore() {
   // Load from backend
   useEffect(() => {
     let cancelled = false;
-    api.fetchProjects()
+    api
+      .fetchProjects()
       .then((serverProjects) => {
         if (cancelled || serverProjects.length === 0) return;
         setProjects(serverProjects);
         setActiveId((current) => current || serverProjects[0]?.id || "");
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    api.fetchChats()
+    api
+      .fetchChats()
       .then((serverChats) => {
         if (cancelled || serverChats.length === 0) return;
         const next: Record<string, Chat[]> = {};
@@ -103,41 +116,52 @@ export function useProjectStore() {
         setChats(next);
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Hydrate chat history when active chat changes
   useEffect(() => {
     if (!activeChatId) return;
     let cancelled = false;
-    api.fetchHistory(activeChatId)
+    api
+      .fetchHistory(activeChatId)
       .then((rows) => {
         if (cancelled) return;
-        setMessagesByChat((current) => ({ ...current, [activeChatId]: historyRowsToMessages(rows) }));
+        setMessagesByChat((current) => ({
+          ...current,
+          [activeChatId]: historyRowsToMessages(rows),
+        }));
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [activeChatId]);
 
-  const createChat = useCallback((projectId: string, opts?: { title?: string; activate?: boolean }) => {
-    const chat: Chat = {
-      id: crypto.randomUUID(),
-      projectId,
-      title: opts?.title || "New chat",
-      createdAt: Date.now(),
-    };
-    setChats((current) => ({
-      ...current,
-      [projectId]: [chat, ...(current[projectId] || [])],
-    }));
-    setMessagesByChat((current) => ({ ...current, [chat.id]: [] }));
-    if (opts?.activate !== false) {
-      setActiveChatByProject((current) => ({ ...current, [projectId]: chat.id }));
-      setActiveId(projectId);
-    }
-    api.saveChat(chat).catch(() => {});
-    return chat;
-  }, [setActiveId]);
+  const createChat = useCallback(
+    (projectId: string, opts?: { title?: string; activate?: boolean }) => {
+      const chat: Chat = {
+        id: crypto.randomUUID(),
+        projectId,
+        title: opts?.title || "New chat",
+        createdAt: Date.now(),
+      };
+      setChats((current) => ({
+        ...current,
+        [projectId]: [chat, ...(current[projectId] || [])],
+      }));
+      setMessagesByChat((current) => ({ ...current, [chat.id]: [] }));
+      if (opts?.activate !== false) {
+        setActiveChatByProject((current) => ({ ...current, [projectId]: chat.id }));
+        setActiveId(projectId);
+      }
+      api.saveChat(chat).catch(() => {});
+      return chat;
+    },
+    [setActiveId],
+  );
 
   useEffect(() => {
     if (!activeProject) return;
@@ -152,10 +176,13 @@ export function useProjectStore() {
     }
   }, [activeProject, chats, activeChatByProject]);
 
-  const selectChat = useCallback((projectId: string, chatId: string) => {
-    setActiveChatByProject((current) => ({ ...current, [projectId]: chatId }));
-    setActiveId(projectId);
-  }, [setActiveId]);
+  const selectChat = useCallback(
+    (projectId: string, chatId: string) => {
+      setActiveChatByProject((current) => ({ ...current, [projectId]: chatId }));
+      setActiveId(projectId);
+    },
+    [setActiveId],
+  );
 
   const renameChat = useCallback((projectId: string, chatId: string, title: string) => {
     const clean = title.trim();
@@ -179,7 +206,7 @@ export function useProjectStore() {
       [projectId]: (current[projectId] || []).filter((c) => c.id !== chatId),
     }));
     setActiveChatByProject((current) =>
-      current[projectId] === chatId ? { ...current, [projectId]: "" } : current
+      current[projectId] === chatId ? { ...current, [projectId]: "" } : current,
     );
     setMessagesByChat((current) => {
       const next = { ...current };
@@ -200,29 +227,32 @@ export function useProjectStore() {
     api.saveProject(project).catch(() => {});
   }, []);
 
-  const removeProject = useCallback((id: string) => {
-    const chatIds = new Set((chats[id] || []).map((c) => c.id));
-    setProjects((current) => current.filter((p) => p.id !== id));
-    setChats((current) => {
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-    setActiveChatByProject((current) => {
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-    setMessagesByChat((current) => {
-      const next: Record<string, Message[]> = {};
-      for (const [cid, msgs] of Object.entries(current)) {
-        if (!chatIds.has(cid)) next[cid] = msgs;
-      }
-      return next;
-    });
-    setActiveId((current) => (current === id ? "" : current));
-    api.deleteProject(id).catch(() => {});
-  }, [chats]);
+  const removeProject = useCallback(
+    (id: string) => {
+      const chatIds = new Set((chats[id] || []).map((c) => c.id));
+      setProjects((current) => current.filter((p) => p.id !== id));
+      setChats((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setActiveChatByProject((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setMessagesByChat((current) => {
+        const next: Record<string, Message[]> = {};
+        for (const [cid, msgs] of Object.entries(current)) {
+          if (!chatIds.has(cid)) next[cid] = msgs;
+        }
+        return next;
+      });
+      setActiveId((current) => (current === id ? "" : current));
+      api.deleteProject(id).catch(() => {});
+    },
+    [chats],
+  );
 
   const clearChatThread = useCallback((chatId: string) => {
     window.speechSynthesis?.cancel();
@@ -237,15 +267,18 @@ export function useProjectStore() {
     }));
   }, []);
 
-  const updateMessage = useCallback((chatId: string, id: string, patch: (m: Message) => Message) => {
-    setMessagesByChat((current) => {
-      const thread = current[chatId] || [];
-      return {
-        ...current,
-        [chatId]: thread.map((m) => (m.id === id ? patch(m) : m)),
-      };
-    });
-  }, []);
+  const updateMessage = useCallback(
+    (chatId: string, id: string, patch: (m: Message) => Message) => {
+      setMessagesByChat((current) => {
+        const thread = current[chatId] || [];
+        return {
+          ...current,
+          [chatId]: thread.map((m) => (m.id === id ? patch(m) : m)),
+        };
+      });
+    },
+    [],
+  );
 
   return {
     projects,
