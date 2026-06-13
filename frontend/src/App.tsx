@@ -41,6 +41,7 @@ import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 import AddProjectModal from "./components/modals/AddProjectModal";
 import MarkdownRenderer from "./components/common/MarkdownRenderer";
 import ArtifactCard from "./components/artifacts/ArtifactCard";
+import CodexTimeline from "./components/codex/CodexTimeline";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -140,44 +141,6 @@ function ChangeReviewChip({ artifact }: { artifact: ChatArtifact }) {
       <FileCode2 className="h-3.5 w-3.5" />
       <span>{label}</span>
       <span className="text-accent/70">Review</span>
-    </div>
-  );
-}
-
-const TIMELINE_METHODS = new Set([
-  "turn/started",
-  "item/started",
-  "item/completed",
-  "turn/completed",
-  "item/fileChange/patchUpdated",
-  "item/plan/delta",
-  "item/reasoning/summaryTextDelta",
-]);
-
-function CodexTimeline({ events, status }: { events?: CodexTimelineEvent[]; status?: string }) {
-  const visible = React.useMemo(
-    () => (events || []).filter((event) => TIMELINE_METHODS.has(event.method)),
-    [events]
-  );
-  if (visible.length === 0 && !status) return null;
-  return (
-    <div className="codex-timeline">
-      <div className="codex-timeline-title">
-        <Zap className="h-3 w-3" />
-        <span>Codex turn</span>
-        {status && <span className="codex-timeline-status">{status}</span>}
-      </div>
-      <div className="codex-timeline-list">
-        {visible.slice(-12).map((event, index) => (
-          <div key={`${event.method}-${event.item_id || index}-${index}`} className="codex-timeline-row">
-            <span className={cn("codex-timeline-dot", event.method === "turn/completed" && "done")} />
-            <div className="min-w-0">
-              <p className="codex-timeline-summary">{event.summary || event.method}</p>
-              {event.command && <p className="codex-timeline-detail">{event.command}</p>}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
