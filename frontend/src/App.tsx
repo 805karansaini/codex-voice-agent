@@ -29,6 +29,7 @@ import { useChatDisplayState } from "./hooks/useChatDisplayState";
 import { useMessageAutoScroll } from "./hooks/useMessageAutoScroll";
 import { useComposerInput } from "./hooks/useComposerInput";
 import { useSearchResultNavigation } from "./hooks/useSearchResultNavigation";
+import { useChatSwitcherKeyboard } from "./hooks/useChatSwitcherKeyboard";
 import * as api from "./services/api";
 import { Project, CodexTimelineEvent, ChatArtifact } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
@@ -105,6 +106,7 @@ export function App() {
     useWorkspaceSearch();
   const { doctorChecks, refreshDoctor } = useSetupDoctor();
   const status = useBackendStatus();
+  const handleChatSwitcherKeyDown = useChatSwitcherKeyboard();
   const openSearchResult = useSearchResultNavigation({
     chats: store.chats,
     selectChat: store.selectChat,
@@ -537,27 +539,6 @@ export function App() {
     clearConsoleState();
     setError("");
     api.deleteConsoleState(chatId).catch(() => {});
-  };
-
-  const handleChatSwitcherKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
-    if (!keys.includes(event.key)) return;
-    const buttons = Array.from(
-      document.querySelectorAll<HTMLButtonElement>("[data-chat-switcher]"),
-    );
-    if (buttons.length === 0) return;
-    const currentIndex = buttons.indexOf(event.currentTarget);
-    if (currentIndex === -1) return;
-    event.preventDefault();
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? buttons.length - 1
-          : event.key === "ArrowUp"
-            ? Math.max(0, currentIndex - 1)
-            : Math.min(buttons.length - 1, currentIndex + 1);
-    buttons[nextIndex]?.focus();
   };
 
   const { voiceTitle, liveStatusText, streamingStatusText, suggestions } = useChatDisplayState({
