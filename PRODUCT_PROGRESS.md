@@ -108,6 +108,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Improved console accessibility state.
   - Commit: `e363a85` - Improve console accessibility state
   - Partially covers review item: Q7
+- [x] Added live-region support for streaming chat responses.
+  - Commit: Add streaming response accessibility status
+  - Partially covers review item: Q7
 
 ### P2 Quality, Tests, And Repo Hygiene
 
@@ -200,7 +203,7 @@ This file tracks what has been completed from the product review and what still 
   - Current status: timing behavior was clarified, but the full state machine is not fully formalized.
 - [ ] Continue accessibility improvements.
   - Review item: Q7
-  - Remaining examples: focus management, chat switcher keyboard flow, and live-region support for streaming responses.
+  - Remaining examples: focus management and chat switcher keyboard flow.
 - [ ] Expand the test suite beyond the current backend-focused coverage.
   - Review item: Q1
   - Remaining examples: frontend SSE framing, artifact dedupe, prompting sanitizers, and frontend store merge behavior.
@@ -245,3 +248,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Support project subpath workdirs |
 | 2026-06-13 | current commit | Add push-to-talk voice mode |
 | 2026-06-13 | current commit | Document Google GenAI SDK pin |
+| 2026-06-13 | current commit | Add streaming response accessibility status |

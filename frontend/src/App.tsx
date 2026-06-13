@@ -1519,6 +1519,14 @@ export function App() {
   ]
     .filter(Boolean)
     .join(". ");
+  const activeStreamingMessage = [...store.messages]
+    .reverse()
+    .find((message) => message.streaming && message.role === "assistant");
+  const streamingStatusText = activeStreamingMessage?.text
+    ? `Assistant response update: ${activeStreamingMessage.text.slice(-500)}`
+    : busy
+    ? "Assistant response in progress"
+    : "";
 
   const suggestions =
     mode === "codex"
@@ -2037,7 +2045,11 @@ export function App() {
               </div>
             </div>
            {/* Messages Stream */}
-          <section className={cn("flex-1 overflow-y-auto scroll-smooth", isMobile ? "px-3 py-4" : "px-5 py-6")}>
+          <section
+            aria-busy={busy || store.messages.some((message) => message.streaming)}
+            aria-label="Chat conversation"
+            className={cn("flex-1 overflow-y-auto scroll-smooth", isMobile ? "px-3 py-4" : "px-5 py-6")}
+          >
             <div className="mx-auto flex max-w-[760px] flex-col gap-6">
 
               {!store.activeProject ? (
@@ -2161,6 +2173,9 @@ export function App() {
             <div className="mx-auto max-w-[760px]">
               <div className="sr-only" aria-live="polite" aria-atomic="true">
                 {liveStatusText}
+              </div>
+              <div className="sr-only" aria-live="polite" aria-atomic="false">
+                {streamingStatusText}
               </div>
               {voiceActive && (
                 <div className="mb-3 rounded-lg border border-accent/25 bg-surface-2 p-3.5 shadow-lg flex items-center gap-3.5 animate-in slide-in-from-bottom-2 duration-200">
