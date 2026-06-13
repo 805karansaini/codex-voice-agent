@@ -105,6 +105,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved the console stream panel out of the large `App.tsx` file.
   - Commit: Extract console stream panel component
   - Partially covers review item: A5
+- [x] Moved the console handoffs panel out of the large `App.tsx` file.
+  - Commit: Extract console handoffs panel component
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -257,7 +260,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, composer footer, console tabs, and console stream panel; chat stream, remaining console panels, and streaming logic still need follow-up passes.
+  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, composer footer, console tabs, console stream panel, and console handoffs panel; chat stream, remaining console panels, and streaming logic still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.
@@ -341,3 +344,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Extract composer footer component |
 | 2026-06-13 | current commit | Extract console tabs component |
 | 2026-06-13 | current commit | Extract console stream panel component |
+| 2026-06-13 | current commit | Extract console handoffs panel component |
