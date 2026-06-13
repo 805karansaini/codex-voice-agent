@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Project, Chat, Message, HistoryRow } from "../types";
+import { Project, Chat, Message } from "../types";
 import * as api from "../services/api";
 import { loadJSON, saveJSON, chatTitleFrom } from "../utils";
+import { historyRowsToMessages } from "../utils/history";
 
 const LS_PROJECTS = "cva.projects.v1";
 const LS_ACTIVE = "cva.activeProject.v1";
@@ -44,27 +45,6 @@ function loadChatState(): ChatState {
     activeChat[projectId] = id;
   }
   return { chats, messages, activeChat };
-}
-
-function historyRowsToMessages(rows: HistoryRow[]): Message[] {
-  return rows
-    .filter((row) => row.role === "user" || row.role === "assistant")
-    .map((row) => ({
-      id: row.id,
-      role: row.role,
-      text: row.text,
-      artifacts: row.meta?.artifacts || [],
-      usedCodex: Boolean(
-        row.meta?.direct_codex ||
-          (Array.isArray(row.meta?.tool_calls) && row.meta.tool_calls.length > 0) ||
-          (Array.isArray(row.meta?.codex_events) && row.meta.codex_events.length > 0)
-      ),
-      workdir: row.meta?.workdir,
-      codexEvents: row.meta?.codex_events || [],
-      codexStatus: row.meta?.codex_status,
-      codexTurnId: row.meta?.codex_turn_id,
-      codexThreadId: row.meta?.codex_thread_id,
-    }));
 }
 
 export function useProjectStore() {
