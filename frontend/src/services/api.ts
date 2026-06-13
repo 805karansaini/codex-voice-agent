@@ -1,4 +1,4 @@
-import { Project, Chat, ConsoleState, HistoryRow, ProjectInfo, SearchResult } from "../types";
+import { Project, Chat, ConsoleState, HistoryRow, ProjectInfo, SearchResult, DoctorCheck } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const API_TOKEN = import.meta.env.VITE_API_TOKEN || "";
@@ -21,6 +21,12 @@ export function getWebSocketUrl(path: string): string {
 export async function fetchHealth(): Promise<{ has_google_api_key: boolean; gemini_model: string }> {
   const res = await fetch(`${API_BASE}/api/health`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Health check failed");
+  return res.json();
+}
+
+export async function fetchDoctor(): Promise<{ ok: boolean; checks: DoctorCheck[] }> {
+  const res = await fetch(`${API_BASE}/api/doctor`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("Doctor check failed");
   return res.json();
 }
 

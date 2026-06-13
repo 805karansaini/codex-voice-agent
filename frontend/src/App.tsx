@@ -38,7 +38,7 @@ import {
 import { useProjectStore } from "./hooks/useProjectStore";
 import { useLiveVoice } from "./hooks/useLiveVoice";
 import * as api from "./services/api";
-import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
+import { Project, ActionEntry, Handoff, DebugEntry, ProjectInfo, CodexTimelineEvent, ChatArtifact, SearchResult, DoctorCheck } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
 
 import AddProjectModal from "./components/modals/AddProjectModal";
@@ -442,6 +442,7 @@ export function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
 
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleLoadedChatRef = useRef("");
@@ -525,6 +526,44 @@ export function App() {
       })
       .catch(() => setStatus("Backend offline"));
   }, []);
+
+  const refreshDoctor = useCallback(() => {
+    api.fetchDoctor()
+      .then(async (report) => {
+        const canRequestMic = typeof navigator.mediaDevices?.getUserMedia === "function";
+        let micCheck: DoctorCheck = {
+          name: "Microphone permission",
+          ok: canRequestMic,
+          message: canRequestMic ? "Browser can request microphone access" : "Microphone API unavailable",
+          fix: "Use a browser with microphone support and allow microphone access when prompted.",
+        };
+        try {
+          const permissions = navigator.permissions;
+          if (permissions?.query) {
+            const status = await permissions.query({ name: "microphone" as PermissionName });
+            micCheck = {
+              name: "Microphone permission",
+              ok: status.state === "granted" || status.state === "prompt",
+              message:
+                status.state === "granted"
+                  ? "Allowed"
+                  : status.state === "prompt"
+                  ? "Will ask when voice starts"
+                  : "Blocked",
+              fix: "Allow microphone access in the browser or system privacy settings.",
+            };
+          }
+        } catch {
+          // Some browsers do not expose microphone permission through Permissions API.
+        }
+        setDoctorChecks([...(report.checks || []), micCheck]);
+      })
+      .catch(() => setDoctorChecks([]));
+  }, []);
+
+  useEffect(() => {
+    refreshDoctor();
+  }, [refreshDoctor]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -2444,6 +2483,44 @@ export function App() {
 
             {activeConsoleTab === "voice" && (
               <div id="console-panel-voice" role="tabpanel" aria-labelledby="console-tab-voice" className="space-y-4 text-xs">
+                <div className="panel p-3 bg-surface-2 border border-line">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="label font-semibold">Setup doctor</span>
+                    <button
+                      onClick={refreshDoctor}
+                      className="rounded border border-line bg-surface-3 px-2 py-1 font-mono text-[10px] uppercase text-fg-dim hover:text-fg"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {doctorChecks.length === 0 ? (
+                      <p className="text-[11.5px] text-fg-dim">No setup report available.</p>
+                    ) : (
+                      doctorChecks.map((check) => (
+                        <div key={check.name} className="rounded border border-line-soft bg-surface-1 px-2.5 py-2">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={cn(
+                                "h-2 w-2 rounded-full",
+                                check.ok ? "bg-success" : "bg-danger"
+                              )}
+                            />
+                            <span className="font-semibold text-fg">{check.name}</span>
+                            <span className="ml-auto text-[10px] font-mono uppercase text-fg-dim">
+                              {check.ok ? "ready" : "needs setup"}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11.5px] text-fg-muted">{check.message}</p>
+                          {!check.ok && check.fix && (
+                            <p className="mt-1 text-[11px] text-accent">{check.fix}</p>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
                 <div className="panel p-3 bg-surface-2 border border-line">
                   <label className="label mb-2 block font-semibold">Fallback TTS Voice</label>
                   <select

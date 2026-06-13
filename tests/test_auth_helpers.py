@@ -8,6 +8,7 @@ from backend.app.main import (
     _bearer_token,
     _chat_export_markdown,
     _changed_files_from_status,
+    _doctor_checks,
     _has_history_filter,
     _has_file_changes,
     _is_false_tool_claim,
@@ -93,6 +94,15 @@ class AuthHelperTests(unittest.TestCase):
 
     def test_markdown_filename_is_safe(self) -> None:
         self.assertEqual(_markdown_filename("Fix login: auth/session?"), "fix-login-auth-session.md")
+
+    def test_doctor_checks_include_required_setup_items(self) -> None:
+        checks = _doctor_checks()
+        names = {str(check["name"]) for check in checks}
+
+        self.assertTrue(
+            {"Google API key", "API token", "Git", "Codex login", "Default work folder", "Codex SDK"}.issubset(names)
+        )
+        self.assertTrue(all("ok" in check and "message" in check and "fix" in check for check in checks))
 
     def test_project_briefing_summarizes_git_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

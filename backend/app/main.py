@@ -93,6 +93,103 @@ def _has_history_filter(project_id: str | None, workdir: str | None, chat_id: st
     return any(value is not None and value.strip() for value in (project_id, workdir, chat_id))
 
 
+def _doctor_check(name: str, ok: bool, message: str, fix: str = "") -> dict[str, object]:
+    return {"name": name, "ok": ok, "message": message, "fix": fix}
+
+
+def _codex_doctor_auth_check() -> dict[str, object]:
+    if shutil.which("codex") is None:
+        return _doctor_check(
+            "Codex login",
+            False,
+            "Codex CLI is missing",
+            "Install Codex CLI and run codex login.",
+        )
+    try:
+        proc = subprocess.run(
+            ["codex", "doctor", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except Exception as exc:
+        return _doctor_check(
+            "Codex login",
+            False,
+            "Unable to run codex doctor",
+            f"Run codex doctor locally. Error: {exc}",
+        )
+    if proc.returncode != 0:
+        return _doctor_check(
+            "Codex login",
+            False,
+            "Codex doctor reported a problem",
+            "Run codex doctor locally and follow its auth remediation.",
+        )
+    try:
+        report = json.loads(proc.stdout)
+    except Exception:
+        return _doctor_check(
+            "Codex login",
+            False,
+            "Codex doctor returned an unreadable report",
+            "Run codex doctor locally and check the auth section.",
+        )
+    auth = (report.get("checks") or {}).get("auth.credentials") or {}
+    ok = auth.get("status") == "ok"
+    return _doctor_check(
+        "Codex login",
+        ok,
+        str(auth.get("summary") or ("Configured" if ok else "Not configured")),
+        "" if ok else str(auth.get("remediation") or "Run codex login."),
+    )
+
+
+def _doctor_checks() -> list[dict[str, object]]:
+    checks = [
+        _doctor_check(
+            "Google API key",
+            bool(settings.google_api_key),
+            "Configured" if settings.google_api_key else "Missing",
+            "Set GOOGLE_API_KEY in the backend environment.",
+        ),
+        _doctor_check(
+            "API token",
+            bool(settings.api_token),
+            "Remote access is protected" if settings.api_token else "Localhost-only fallback is active",
+            "Set CODEX_API_TOKEN on the backend and VITE_API_TOKEN in the frontend before using LAN/mobile access.",
+        ),
+        _doctor_check(
+            "Git",
+            shutil.which("git") is not None,
+            "Available" if shutil.which("git") else "Missing",
+            "Install git so project status, diffs, and change review work correctly.",
+        ),
+        _codex_doctor_auth_check(),
+        _doctor_check(
+            "Default work folder",
+            Path(settings.codex_default_workdir).expanduser().exists(),
+            settings.codex_default_workdir,
+            "Set CODEX_DEFAULT_WORKDIR to an existing folder.",
+        ),
+    ]
+    try:
+        __import__("openai_codex")
+        codex_ok = True
+    except Exception:
+        codex_ok = False
+    checks.append(
+        _doctor_check(
+            "Codex SDK",
+            codex_ok,
+            "Available" if codex_ok else "Missing",
+            "Install backend dependencies with uv sync.",
+        )
+    )
+    return checks
+
+
 def _is_false_tool_claim(assistant_text: str, used_codex: bool) -> bool:
     if used_codex:
         return False
@@ -463,6 +560,12 @@ async def health() -> dict[str, object]:
         "has_google_api_key": bool(settings.google_api_key),
         "codex_default_workdir": settings.codex_default_workdir,
     }
+
+
+@app.get("/api/doctor")
+async def doctor() -> dict[str, object]:
+    checks = _doctor_checks()
+    return {"ok": all(bool(check["ok"]) for check in checks), "checks": checks}
 
 
 @app.get("/api/history")

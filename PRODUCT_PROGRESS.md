@@ -149,6 +149,9 @@ This file tracks what has been completed from the product review and what still 
   - Commit: Show Codex token usage
   - Partially covers review feature: F6
   - Notes: Codex token usage events are now persisted and shown in the console footer; Gemini Live usage still needs provider-side usage capture.
+- [x] Added an onboarding doctor for setup checks.
+  - Commit: Add onboarding doctor
+  - Covers review feature: F6
 
 ## Still Remaining Or Pending
 
@@ -181,9 +184,6 @@ This file tracks what has been completed from the product review and what still 
 - [ ] Add Gemini Live usage and cost estimates.
   - Review feature: F6
   - Current status: Codex token usage is visible; Gemini Live token/audio usage and pricing are still pending.
-- [ ] Add an onboarding doctor for keys, Codex login, git, and microphone permissions.
-  - Review feature: F6
-
 ### Reliability And Polish
 
 - [ ] Fully document or simplify the live voice status and fallback timing state machine.
@@ -236,3 +236,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Export chats as markdown |
 | 2026-06-13 | current commit | Search chats and artifacts |
 | 2026-06-13 | current commit | Show Codex token usage |
+| 2026-06-13 | current commit | Add onboarding doctor |

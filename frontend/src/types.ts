@@ -138,3 +138,10 @@ export type SearchResult = {
   workdir?: string;
   created_at?: string;
 };
+
+export type DoctorCheck = {
+  name: string;
+  ok: boolean;
+  message: string;
+  fix: string;
+};
