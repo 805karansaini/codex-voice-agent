@@ -22,6 +22,7 @@ import { useProjectInfo } from "./hooks/useProjectInfo";
 import { useWorkspaceSearch } from "./hooks/useWorkspaceSearch";
 import { useSetupDoctor } from "./hooks/useSetupDoctor";
 import { useChangeReviewActions } from "./hooks/useChangeReviewActions";
+import { useBackendStatus } from "./hooks/useBackendStatus";
 import * as api from "./services/api";
 import { Project, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
@@ -65,7 +66,6 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"agent" | "codex">("agent");
-  const [status, setStatus] = useState("Checking backend");
 
   const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>(() =>
     loadJSON<VoiceInputMode>("cva.voiceInputMode.v1", "open"),
@@ -101,6 +101,7 @@ export function App() {
   const { searchQuery, setSearchQuery, searchResults, searching, clearSearch } =
     useWorkspaceSearch();
   const { doctorChecks, refreshDoctor } = useSetupDoctor();
+  const status = useBackendStatus();
 
   useEffect(() => saveJSON("cva.voiceInputMode.v1", voiceInputMode), [voiceInputMode]);
 
@@ -112,16 +113,6 @@ export function App() {
   useEffect(() => {
     scrollToBottom();
   }, [store.messages.length, busy]);
-
-  // Fetch backend health status
-  useEffect(() => {
-    api
-      .fetchHealth()
-      .then((data) => {
-        setStatus(data.has_google_api_key ? "Ready" : "Missing Google API key");
-      })
-      .catch(() => setStatus("Backend offline"));
-  }, []);
 
   const {
     debugEntries,
