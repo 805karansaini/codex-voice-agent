@@ -8,6 +8,8 @@ _TOOL_CALL_PATTERNS = [
         r"run_codex_task\s*\n\s*task:\s*[^\n]+(?:\n\s*workdir:\s*[^\n]+)?",
         re.IGNORECASE,
     ),
+    # Claimed inline call: "Calling run_codex_task task: ..."
+    re.compile(r"calling\s+run_codex_task\s+task:\s*[^\n]+", re.IGNORECASE),
     # Inline: "run_codex_task task: ..."
     re.compile(r"run_codex_task\s+task:\s*[^\n]+", re.IGNORECASE),
     # Dangling: "calling run_codex_task" / "calling run_codex_"
@@ -33,12 +35,14 @@ def build_recent_conversation_context(
     relevant = []
     for row in rows[-limit:]:
         role = str(row.get("role") or "").strip()
-        text = _compact_text(str(row.get("text") or ""))
+        text = str(row.get("text") or "")
         # Sanitize assistant messages to prevent hallucinated tool-call
         # text from contaminating future prompts. Do this before the empty
         # check so messages that were *only* a hallucinated call are dropped.
         if role == "assistant":
             text = _sanitize_assistant_text(text)
+        else:
+            text = _compact_text(text)
         if role and text:
             relevant.append(f"{role}: {text}")
     return "\n".join(relevant)
