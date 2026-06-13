@@ -99,6 +99,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved the composer footer out of the large `App.tsx` file.
   - Commit: Extract composer footer component
   - Partially covers review item: A5
+- [x] Moved the console tab strip out of the large `App.tsx` file.
+  - Commit: Extract console tabs component
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -251,7 +254,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, and composer footer; chat stream, console, and streaming logic still need follow-up passes.
+  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, composer footer, and console tabs; chat stream, broader console panel, and streaming logic still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.
@@ -333,3 +336,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Prefer backend history for chat messages |
 | 2026-06-13 | current commit | Extract chat top bar component |
 | 2026-06-13 | current commit | Extract composer footer component |
+| 2026-06-13 | current commit | Extract console tabs component |

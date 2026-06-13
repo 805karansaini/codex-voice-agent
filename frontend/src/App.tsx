@@ -21,7 +21,6 @@ import {
   SquareTerminal,
   Sun,
   Trash2,
-  Waves,
   X,
   Zap,
   MoreHorizontal,
@@ -54,6 +53,7 @@ import ChangeReviewChip from "./components/artifacts/ChangeReviewChip";
 import CodexTimeline from "./components/codex/CodexTimeline";
 import ChatTopBar from "./components/chat/ChatTopBar";
 import ComposerFooter from "./components/chat/ComposerFooter";
+import ConsoleTabs, { ConsoleTabId } from "./components/console/ConsoleTabs";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -135,9 +135,7 @@ export function App() {
   const [panelWidth, setPanelWidth] = useState(() => loadJSON<number>("cva.panelWidth.v2", 380));
   const [isDragging, setIsDragging] = useState(false);
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
-  const [activeConsoleTab, setActiveConsoleTab] = useState<
-    "stream" | "actions" | "handoffs" | "voice"
-  >("stream");
+  const [activeConsoleTab, setActiveConsoleTab] = useState<ConsoleTabId>("stream");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
   const [searchQuery, setSearchQuery] = useState("");
@@ -2097,45 +2095,7 @@ export function App() {
               </div>
             </div>
 
-            {/* Console Tabs */}
-            <div
-              className="flex items-center gap-0.5 border-b border-line-soft px-2 pt-1.5 shrink-0 overflow-x-auto"
-              role="tablist"
-              aria-label="Console views"
-            >
-              {(
-                [
-                  { id: "stream", label: "Stream", icon: Activity },
-                  { id: "actions", label: "Actions", icon: Zap },
-                  { id: "handoffs", label: "Handoffs", icon: Cable },
-                  { id: "voice", label: "Voice", icon: Waves },
-                ] as const
-              ).map((t) => {
-                const active = activeConsoleTab === t.id;
-                const Icon = t.icon;
-                return (
-                  <button
-                    key={t.id}
-                    id={`console-tab-${t.id}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    aria-controls={`console-panel-${t.id}`}
-                    onClick={() => setActiveConsoleTab(t.id)}
-                    className={cn(
-                      "relative flex items-center gap-1.5 px-2.5 py-2 text-[11.5px] transition-colors shrink-0",
-                      active ? "text-fg" : "text-fg-dim hover:text-fg",
-                    )}
-                  >
-                    <Icon className="h-3 w-3" />
-                    {t.label}
-                    {active && (
-                      <span className="absolute inset-x-1 -bottom-px h-0.5 rounded-t bg-accent" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+            <ConsoleTabs activeTab={activeConsoleTab} onChange={setActiveConsoleTab} />
 
             {/* Console Contents */}
             <div className="flex-1 overflow-y-auto p-3">

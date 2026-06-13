@@ -120,7 +120,11 @@ export default function ComposerFooter({
                       : "border-success/30 bg-success/10 text-success",
                   )}
                 >
-                  {voiceMuted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                  {voiceMuted ? (
+                    <MicOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Mic className="h-3.5 w-3.5" />
+                  )}
                   {!isMobile && <span>{voiceMuted ? "Hold to talk" : "Listening"}</span>}
                 </button>
               ) : (
@@ -134,7 +138,11 @@ export default function ComposerFooter({
                       : "border-line bg-surface-3 text-fg-muted hover:text-fg",
                   )}
                 >
-                  {voiceMuted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                  {voiceMuted ? (
+                    <MicOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Mic className="h-3.5 w-3.5" />
+                  )}
                   {!isMobile && <span>{voiceMuted ? "Unmute" : "Mute"}</span>}
                 </button>
               )}
@@ -189,7 +197,11 @@ export default function ComposerFooter({
                       : "text-fg-muted hover:bg-surface-2 hover:text-fg",
                   )}
                 >
-                  {voiceMuted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                  {voiceMuted ? (
+                    <MicOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Mic className="h-3.5 w-3.5" />
+                  )}
                   <span>Voice</span>
                 </button>
               )}
