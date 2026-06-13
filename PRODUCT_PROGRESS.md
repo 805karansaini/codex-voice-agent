@@ -114,6 +114,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved the setup and voice controls panel out of the large `App.tsx` file.
   - Commit: Extract console voice panel component
   - Partially covers review item: A5
+- [x] Moved the console stats footer out of the large `App.tsx` file.
+  - Commit: Extract console stats footer component
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -266,7 +269,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, composer footer, console tabs, and all console tab panels; chat stream, sidebar/explorer layout, and streaming logic still need follow-up passes.
+  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, composer footer, console tabs, all console tab panels, and console stats footer; chat stream, sidebar/explorer layout, and streaming logic still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.
@@ -353,3 +356,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Extract console handoffs panel component |
 | 2026-06-13 | current commit | Extract console actions panel component |
 | 2026-06-13 | current commit | Extract console voice panel component |
+| 2026-06-13 | current commit | Extract console stats footer component |

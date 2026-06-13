@@ -58,6 +58,7 @@ import ConsoleStreamPanel from "./components/console/ConsoleStreamPanel";
 import ConsoleHandoffsPanel from "./components/console/ConsoleHandoffsPanel";
 import ConsoleActionsPanel from "./components/console/ConsoleActionsPanel";
 import ConsoleVoicePanel from "./components/console/ConsoleVoicePanel";
+import ConsoleStatsFooter from "./components/console/ConsoleStatsFooter";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -87,14 +88,6 @@ function appendCodexEvent(
   const existing = new Set(current.map((e) => `${e.method}:${e.item_id || ""}:${e.turn_id || ""}`));
   if (existing.has(key)) return current;
   return [...current, event].slice(-80);
-}
-
-function codexTokenTotal(messages: { codexEvents?: CodexTimelineEvent[] }[]): number {
-  return messages.reduce((total, message) => {
-    const usageEvents = (message.codexEvents || []).filter((event) => event.token_usage);
-    const latestUsage = usageEvents[usageEvents.length - 1]?.token_usage;
-    return total + (latestUsage?.total_tokens || 0);
-  }, 0);
 }
 
 export function App() {
@@ -2124,38 +2117,7 @@ export function App() {
               )}
             </div>
 
-            {/* Stats Footer bar */}
-            <div className="grid grid-cols-3 border-t border-line-soft shrink-0 bg-surface-1/40">
-              <div className="px-3 py-1.5">
-                <div className="label text-[9px]">conversation size</div>
-                <div className="mt-0.5 flex items-baseline gap-0.5">
-                  <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
-                    {store.messages.length}
-                  </span>
-                  <span className="font-mono text-[9px] text-fg-dim">turns</span>
-                </div>
-              </div>
-              <div className="px-3 py-1.5 border-l border-line-soft">
-                <div className="label text-[9px]">estimated context</div>
-                <div className="mt-0.5 flex items-baseline gap-0.5">
-                  <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
-                    {Math.round(
-                      store.messages.reduce((acc, m) => acc + (m.text?.length || 0), 0) / 4.2,
-                    ).toLocaleString()}
-                  </span>
-                  <span className="font-mono text-[9px] text-fg-dim">≈ tokens</span>
-                </div>
-              </div>
-              <div className="px-3 py-1.5 border-l border-line-soft">
-                <div className="label text-[9px]">codex usage</div>
-                <div className="mt-0.5 flex items-baseline gap-0.5">
-                  <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
-                    {codexTokenTotal(store.messages).toLocaleString()}
-                  </span>
-                  <span className="font-mono text-[9px] text-fg-dim">tokens</span>
-                </div>
-              </div>
-            </div>
+            <ConsoleStatsFooter messages={store.messages} />
           </aside>
         )}
       </div>
