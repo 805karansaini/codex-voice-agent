@@ -84,6 +84,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved the Change Review chip out of the large `App.tsx` file.
   - Commit: Extract change review chip component
   - Partially covers review item: A5
+- [x] Moved confirm and rename dialogs out of the large `App.tsx` file.
+  - Commit: Extract chat action modals
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -192,7 +195,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, and Codex timeline rendering; chat, console, composer, and streaming logic still need follow-up passes.
+  - Current status: started by extracting artifact, Change Review chip, Codex timeline, and chat action modal rendering; chat, console, composer, and streaming logic still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.
@@ -263,3 +266,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Extract artifact card component |
 | 2026-06-13 | current commit | Extract Codex timeline component |
 | 2026-06-13 | current commit | Extract change review chip component |
+| 2026-06-13 | current commit | Extract chat action modals |
