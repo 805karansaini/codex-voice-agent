@@ -4,8 +4,6 @@ import {
   ArrowUp,
   Cable,
   ChevronRight,
-  Circle,
-  Download,
   FileCode2,
   Folder,
   FolderPlus,
@@ -57,6 +55,7 @@ import MarkdownRenderer from "./components/common/MarkdownRenderer";
 import ArtifactCard from "./components/artifacts/ArtifactCard";
 import ChangeReviewChip from "./components/artifacts/ChangeReviewChip";
 import CodexTimeline from "./components/codex/CodexTimeline";
+import ChatTopBar from "./components/chat/ChatTopBar";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -1845,71 +1844,19 @@ export function App() {
         {/* Column 3: ChatPanel */}
         {(!isMobile || mobileView === "chat") && (
           <main className="flex flex-1 min-w-0 min-h-0 flex-col bg-surface-0 relative">
-            {/* Main Topbar */}
-            <div
-              className={cn(
-                "flex items-center border-b border-line bg-surface-1/40 shrink-0",
-                isMobile ? "justify-center gap-4 px-3 py-2" : "justify-between px-5 py-2.5",
-              )}
-            >
-              {!isMobile && (
-                <div className="flex min-w-0 items-center gap-3">
-                  <h2 className="truncate text-[14px] font-semibold tracking-tight">
-                    {store.activeChat?.title || "No Thread Selected"}
-                  </h2>
-                  {store.messages.length > 0 && (
-                    <span className="rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-fg-muted shrink-0">
-                      {store.messages.length} turns
-                    </span>
-                  )}
-                </div>
-              )}
-
-              <div className={cn("flex items-center gap-2", isMobile && "w-full justify-between")}>
-                {/* Mode Toggle */}
-                <div className="inline-flex items-center rounded-md border border-line bg-surface-2 p-0.5">
-                  {(["agent", "codex"] as const).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setMode(m)}
-                      className={cn(
-                        "rounded px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider transition-colors",
-                        mode === m ? "bg-surface-3 text-fg" : "text-fg-dim hover:text-fg",
-                      )}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Voice Live Button */}
-                <button
-                  onClick={handleExportChat}
-                  disabled={!store.activeChatId || store.messages.length === 0}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider text-fg-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-                  title="Export chat as markdown"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Export</span>
-                </button>
-
-                {liveVoice.supported && (
-                  <button
-                    onClick={toggleVoice}
-                    disabled={!store.activeProject}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed",
-                      voiceActive
-                        ? "border-accent bg-accent/15 text-accent glow-accent"
-                        : "border-line bg-surface-2 text-fg-muted hover:text-fg",
-                    )}
-                  >
-                    <Circle className={cn("h-2 w-2 fill-current", voiceActive && "pulse-dot")} />
-                    {voiceActive ? "Live" : "Idle"}
-                  </button>
-                )}
-              </div>
-            </div>
+            <ChatTopBar
+              isMobile={isMobile}
+              title={store.activeChat?.title || "No Thread Selected"}
+              messageCount={store.messages.length}
+              mode={mode}
+              onModeChange={setMode}
+              onExport={handleExportChat}
+              exportDisabled={!store.activeChatId || store.messages.length === 0}
+              voiceSupported={liveVoice.supported}
+              voiceActive={voiceActive}
+              voiceDisabled={!store.activeProject}
+              onToggleVoice={toggleVoice}
+            />
             {/* Messages Stream */}
             <section
               aria-busy={busy || store.messages.some((message) => message.streaming)}
