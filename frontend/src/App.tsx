@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Circle,
   Clipboard,
+  Download,
   FileCode2,
   Folder,
   FolderPlus,
@@ -1354,6 +1355,23 @@ export function App() {
     setRenameDialog({ projectId, chatId, initialTitle: title });
   };
 
+  const handleExportChat = async () => {
+    if (!store.activeChatId) return;
+    try {
+      const { blob, filename } = await api.exportChatMarkdown(store.activeChatId);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export chat");
+    }
+  };
+
   const statusClass =
     status === "Ready" ? "ready" : status === "Backend offline" ? "offline" : "warn";
 
@@ -1835,6 +1853,16 @@ export function App() {
                 </div>
 
                 {/* Voice Live Button */}
+                <button
+                  onClick={handleExportChat}
+                  disabled={!store.activeChatId || store.messages.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider text-fg-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Export chat as markdown"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Export</span>
+                </button>
+
                 {liveVoice.supported && (
                   <button
                     onClick={toggleVoice}

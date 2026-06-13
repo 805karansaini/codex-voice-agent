@@ -6,11 +6,13 @@ from pathlib import Path
 from backend.app.main import (
     _artifact_content_type,
     _bearer_token,
+    _chat_export_markdown,
     _changed_files_from_status,
     _has_history_filter,
     _has_file_changes,
     _is_false_tool_claim,
     _is_local_host,
+    _markdown_filename,
     _project_briefing,
 )
 
@@ -57,6 +59,40 @@ class AuthHelperTests(unittest.TestCase):
         self.assertTrue(_is_false_tool_claim("Calling run_codex_task.", used_codex=False))
         self.assertFalse(_is_false_tool_claim("I checked the files.", used_codex=True))
         self.assertFalse(_is_false_tool_claim("This is a general answer.", used_codex=False))
+
+    def test_chat_export_markdown_includes_messages_and_artifacts(self) -> None:
+        markdown = _chat_export_markdown(
+            chat={"id": "chat-1", "projectId": "project-1", "title": "Fix login"},
+            rows=[
+                {"role": "user", "text": "Please fix login", "meta": {}},
+                {
+                    "role": "assistant",
+                    "text": "Done.",
+                    "meta": {
+                        "artifacts": [
+                            {"title": "Patch", "summary": "Changed auth handling"},
+                        ]
+                    },
+                },
+            ],
+            artifact_rows=[
+                {
+                    "title": "Diff",
+                    "summary": "One file changed",
+                    "content": "diff --git a/app.py b/app.py\n@@ -1 +1 @@",
+                    "content_type": "diff",
+                }
+            ],
+        )
+
+        self.assertIn("# Fix login", markdown)
+        self.assertIn("### User\n\nPlease fix login", markdown)
+        self.assertIn("### Assistant\n\nDone.", markdown)
+        self.assertIn("- Artifact: **Patch**", markdown)
+        self.assertIn("```diff\ndiff --git", markdown)
+
+    def test_markdown_filename_is_safe(self) -> None:
+        self.assertEqual(_markdown_filename("Fix login: auth/session?"), "fix-login-auth-session.md")
 
     def test_project_briefing_summarizes_git_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

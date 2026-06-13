@@ -1,6 +1,7 @@
-import base64
 import asyncio
+import base64
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -11,10 +12,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
 from google import genai
 from google.genai import types
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
 
 from .codex_runner import (
     CancellationToken,
@@ -210,6 +211,72 @@ def _chat_context(chat_id: str | None, workdir: str | None = None) -> str:
         )
         parts.append("\n".join(lines))
     return "\n\n".join(part for part in parts if part.strip())
+
+
+def _markdown_title(value: object) -> str:
+    title = " ".join(str(value or "").split())
+    return title or "Chat export"
+
+
+def _markdown_filename(value: object) -> str:
+    title = _markdown_title(value).lower()
+    title = re.sub(r"[^a-z0-9._-]+", "-", title).strip(".-")
+    return f"{title or 'chat-export'}.md"
+
+
+def _chat_export_markdown(
+    *,
+    chat: dict[str, object] | None,
+    rows: list[dict[str, object]],
+    artifact_rows: list[dict[str, object]],
+) -> str:
+    title = _markdown_title(chat.get("title") if chat else None)
+    lines = [f"# {title}", ""]
+    if chat:
+        lines.extend(
+            [
+                f"- Chat ID: `{chat.get('id')}`",
+                f"- Project ID: `{chat.get('projectId')}`",
+                "",
+            ]
+        )
+
+    if rows:
+        lines.append("## Conversation")
+        lines.append("")
+        for row in rows:
+            role = str(row.get("role") or "message").strip().title()
+            text = str(row.get("text") or "").strip() or "_No text recorded._"
+            lines.extend([f"### {role}", "", text, ""])
+
+            meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+            for artifact in list(meta.get("artifacts") or []):
+                if not isinstance(artifact, dict):
+                    continue
+                artifact_title = _markdown_title(artifact.get("title"))
+                artifact_summary = str(artifact.get("summary") or "").strip()
+                lines.append(f"- Artifact: **{artifact_title}**")
+                if artifact_summary:
+                    lines.append(f"  - {artifact_summary}")
+                lines.append("")
+    else:
+        lines.extend(["## Conversation", "", "_No messages recorded._", ""])
+
+    if artifact_rows:
+        lines.extend(["## Artifacts", ""])
+        for artifact in artifact_rows:
+            artifact_title = _markdown_title(artifact.get("title"))
+            content_type = str(artifact.get("content_type") or "text")
+            summary = str(artifact.get("summary") or "").strip()
+            content = str(artifact.get("content") or "").strip()
+            lines.extend([f"### {artifact_title}", ""])
+            if summary:
+                lines.extend([summary, ""])
+            if content:
+                fence = "diff" if content_type == "diff" else ""
+                lines.extend([f"```{fence}", content, "```", ""])
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _artifact_summary(text: object, limit: int = 220) -> str:
@@ -493,6 +560,23 @@ async def save_chat(req: ChatMetaRequest) -> dict[str, object]:
         "createdAt": req.createdAt,
     }
     return chats.upsert(chat)
+
+
+@app.get("/api/chats/{chat_id}/export.md")
+async def export_chat_markdown(chat_id: str) -> Response:
+    chat = next((item for item in chats.list() if item.get("id") == chat_id), None)
+    rows = history.list(chat_id=chat_id)
+    artifact_rows = artifacts.list(chat_id=chat_id)
+    if chat is None and not rows and not artifact_rows:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    markdown = _chat_export_markdown(chat=chat, rows=rows, artifact_rows=artifact_rows)
+    filename = _markdown_filename(chat.get("title") if chat else chat_id)
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.delete("/api/chats/{chat_id}")

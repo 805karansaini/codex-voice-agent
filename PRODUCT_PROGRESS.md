@@ -139,6 +139,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Corrected false live tool claims by feeding a corrective path back into the session.
   - Commit: `e4724d1` - Correct false live tool claims
   - Covers review feature: F4
+- [x] Added chat export as markdown.
+  - Commit: Export chats as markdown
+  - Covers review feature: F6
 
 ## Still Remaining Or Pending
 
@@ -165,8 +168,6 @@ This file tracks what has been completed from the product review and what still 
 - [ ] Persist Codex threads across server restarts.
   - Review feature: F3
 - [ ] Add search across chats and artifacts.
-  - Review feature: F6
-- [ ] Add chat export as markdown.
   - Review feature: F6
 - [ ] Support multiple workdirs or monorepo subpaths per project.
   - Review feature: F6
@@ -226,3 +227,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-11 | `e4724d1` | Correct false live tool claims |
 | 2026-06-11 | `cc3f545` | Move typed chat off Live API |
 | 2026-06-13 | current commit | Add lint and format tooling |
+| 2026-06-13 | current commit | Export chats as markdown |

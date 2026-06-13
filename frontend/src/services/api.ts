@@ -70,6 +70,19 @@ export async function deleteChat(chatId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete chat");
 }
 
+export async function exportChatMarkdown(chatId: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/export.md`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to export chat");
+  const disposition = res.headers.get("content-disposition") || "";
+  const filenameMatch = disposition.match(/filename="([^"]+)"/);
+  return {
+    blob: await res.blob(),
+    filename: filenameMatch?.[1] || "chat-export.md",
+  };
+}
+
 export async function fetchConsoleState(chatId: string): Promise<ConsoleState> {
   const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch console state");
