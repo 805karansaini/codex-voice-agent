@@ -75,6 +75,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Logged when the microphone fallback path is used.
   - Commit: `c9853ad` - Log microphone fallback path
   - Partially covers review item: A6
+- [x] Moved artifact rendering out of the large `App.tsx` file.
+  - Commit: Extract artifact card component
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -183,6 +186,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
+  - Current status: started by extracting artifact rendering; chat, console, composer, timeline, and streaming logic still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.
@@ -250,3 +254,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Document Google GenAI SDK pin |
 | 2026-06-13 | current commit | Add streaming response accessibility status |
 | 2026-06-13 | current commit | Document live voice state flow |
+| 2026-06-13 | current commit | Extract artifact card component |
