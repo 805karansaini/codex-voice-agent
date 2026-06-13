@@ -1212,6 +1212,25 @@ export function App() {
     if (isMobile) setMobileView("chat");
   };
 
+  const handleChatSwitcherKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
+    if (!keys.includes(event.key)) return;
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-chat-switcher]"));
+    if (buttons.length === 0) return;
+    const currentIndex = buttons.indexOf(event.currentTarget);
+    if (currentIndex === -1) return;
+    event.preventDefault();
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+        ? buttons.length - 1
+        : event.key === "ArrowUp"
+        ? Math.max(0, currentIndex - 1)
+        : Math.min(buttons.length - 1, currentIndex + 1);
+    buttons[nextIndex]?.focus();
+  };
+
   const formatElapsed = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -1501,7 +1520,7 @@ export function App() {
               </button>
             </div>
 
-            <nav className="flex-1 overflow-y-auto py-1">
+            <nav className="flex-1 overflow-y-auto py-1" aria-label="Workspace chats">
               {store.projects.length === 0 ? (
                 <div className="p-4 text-center">
                   <p className="text-[12.5px] text-fg-dim">No projects yet.</p>
@@ -1604,12 +1623,15 @@ export function App() {
                                 )}
                               >
                                 <button
+                                  data-chat-switcher
+                                  aria-current={isChatActive ? "page" : undefined}
                                   onClick={() => {
                                     store.selectChat(p.id, c.id);
                                     if (isMobile) {
                                       setMobileView("chat");
                                     }
                                   }}
+                                  onKeyDown={handleChatSwitcherKeyDown}
                                   className="flex items-center gap-1.5 flex-1 min-w-0"
                                   title={c.title}
                                 >

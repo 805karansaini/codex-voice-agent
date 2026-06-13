@@ -129,6 +129,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added focus trapping and focus restoration to modal dialogs.
   - Commit: Improve modal focus handling
   - Partially covers review item: Q7
+- [x] Added keyboard navigation and active-state semantics to the chat switcher.
+  - Commit: Improve chat switcher keyboard flow
+  - Covers remaining review item: Q7
 
 ### P2 Quality, Tests, And Repo Hygiene
 
@@ -224,10 +227,6 @@ This file tracks what has been completed from the product review and what still 
   - Review feature: F6
   - Current status: Codex token usage is visible; Gemini Live token/audio usage and pricing are still pending.
 ### Reliability And Polish
-
-- [ ] Continue accessibility improvements.
-  - Review item: Q7
-  - Remaining examples: chat switcher keyboard flow.
 - [ ] Expand the test suite beyond the current backend-focused coverage.
   - Review item: Q1
   - Remaining examples: frontend SSE framing, artifact dedupe, prompting sanitizers, and frontend store merge behavior.
@@ -281,3 +280,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Remove unused frontend lint warnings |
 | 2026-06-13 | current commit | Resolve frontend hook lint warnings |
 | 2026-06-13 | current commit | Improve modal focus handling |
+| 2026-06-13 | current commit | Improve chat switcher keyboard flow |
