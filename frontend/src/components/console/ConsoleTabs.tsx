@@ -1,8 +1,7 @@
 import { Activity, Cable, Waves, Zap } from "lucide-react";
 
+import type { ConsoleTabId } from "../../hooks/useConsolePanelState";
 import { cn } from "../../utils";
-
-export type ConsoleTabId = "stream" | "actions" | "handoffs" | "voice";
 
 const CONSOLE_TABS: { id: ConsoleTabId; label: string; icon: typeof Activity }[] = [
   { id: "stream", label: "Stream", icon: Activity },

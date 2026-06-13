@@ -33,6 +33,7 @@ import { useChatSwitcherKeyboard } from "./hooks/useChatSwitcherKeyboard";
 import { useClearThread } from "./hooks/useClearThread";
 import { useWorkspaceSidebarState } from "./hooks/useWorkspaceSidebarState";
 import { useVoiceInputMode } from "./hooks/useVoiceInputMode";
+import { useConsolePanelState } from "./hooks/useConsolePanelState";
 import { Project, CodexTimelineEvent, ChatArtifact } from "./types";
 import { chatTitleFrom, cn } from "./utils";
 import { appendArtifacts } from "./utils/artifacts";
@@ -43,7 +44,7 @@ import RenameChatModal from "./components/modals/RenameChatModal";
 import ChatTopBar from "./components/chat/ChatTopBar";
 import ComposerFooter from "./components/chat/ComposerFooter";
 import ChatStream from "./components/chat/ChatStream";
-import ConsoleTabs, { ConsoleTabId } from "./components/console/ConsoleTabs";
+import ConsoleTabs from "./components/console/ConsoleTabs";
 import ConsoleStreamPanel from "./components/console/ConsoleStreamPanel";
 import ConsoleHandoffsPanel from "./components/console/ConsoleHandoffsPanel";
 import ConsoleActionsPanel from "./components/console/ConsoleActionsPanel";
@@ -76,7 +77,7 @@ export function App() {
   const { voiceInputMode, setVoiceInputMode } = useVoiceInputMode();
 
   const [showAdd, setShowAdd] = useState(false);
-  const [activeConsoleTab, setActiveConsoleTab] = useState<ConsoleTabId>("stream");
+  const { activeConsoleTab, setActiveConsoleTab, openVoiceTab } = useConsolePanelState();
   const {
     expandedProjects,
     visibleChatsCount,
@@ -723,7 +724,7 @@ export function App() {
             onToggleTheme={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
             onOpenConsoleSettings={() => {
               setPanelOpen(true);
-              setActiveConsoleTab("voice");
+              openVoiceTab();
             }}
           />
         )}
@@ -762,7 +763,7 @@ export function App() {
             onToggleTheme={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
             onOpenVoiceSettings={() => {
               setMobileView("console");
-              setActiveConsoleTab("voice");
+              openVoiceTab();
             }}
             onChatKeyDown={handleChatSwitcherKeyDown}
           />
