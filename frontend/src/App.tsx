@@ -16,12 +16,10 @@ import { useProjectStore } from "./hooks/useProjectStore";
 import { useLiveVoice } from "./hooks/useLiveVoice";
 import { useStreamingChat } from "./hooks/useStreamingChat";
 import { useSpeechPlayback } from "./hooks/useSpeechPlayback";
+import { useConsoleSession } from "./hooks/useConsoleSession";
 import * as api from "./services/api";
 import {
   Project,
-  ActionEntry,
-  Handoff,
-  DebugEntry,
   ProjectInfo,
   CodexTimelineEvent,
   ChatArtifact,
@@ -75,10 +73,6 @@ export function App() {
     loadJSON<VoiceInputMode>("cva.voiceInputMode.v1", "open"),
   );
 
-  const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
-  const [handoffs, setHandoffs] = useState<Handoff[]>([]);
-  const [actions, setActions] = useState<ActionEntry[]>([]);
-
   const [showAdd, setShowAdd] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
@@ -104,8 +98,6 @@ export function App() {
   const [searching, setSearching] = useState(false);
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
 
-  const consoleLoadedChatRef = useRef("");
-  const consoleSaveTimerRef = useRef<number | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -262,45 +254,6 @@ export function App() {
     touchStartY.current = null;
   };
 
-  useEffect(() => {
-    const chatId = store.activeChatId;
-    consoleLoadedChatRef.current = "";
-    setActions([]);
-    setHandoffs([]);
-    setDebugEntries([]);
-    if (!chatId) return;
-    let cancelled = false;
-    api
-      .fetchConsoleState(chatId)
-      .then((state) => {
-        if (cancelled) return;
-        setActions(state.actions || []);
-        setHandoffs(state.handoffs || []);
-        setDebugEntries(state.debugEntries || []);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) consoleLoadedChatRef.current = chatId;
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [store.activeChatId]);
-
-  useEffect(() => {
-    const chatId = store.activeChatId;
-    if (!chatId || consoleLoadedChatRef.current !== chatId) return;
-    if (consoleSaveTimerRef.current) window.clearTimeout(consoleSaveTimerRef.current);
-    consoleSaveTimerRef.current = window.setTimeout(() => {
-      // Console state is local operator telemetry; concurrent tabs may still
-      // overwrite each other, but chat switching is guarded above.
-      void api.saveConsoleState(chatId, { actions, handoffs, debugEntries }).catch(() => {});
-    }, 250);
-    return () => {
-      if (consoleSaveTimerRef.current) window.clearTimeout(consoleSaveTimerRef.current);
-    };
-  }, [actions, handoffs, debugEntries, store.activeChatId]);
-
   // Validate path and check git statistics
   useEffect(() => {
     setProjectInfo(null);
@@ -356,41 +309,16 @@ export function App() {
     };
   }, [searchQuery]);
 
-  const addDebug = useCallback((message: string) => {
-    const time = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-    setDebugEntries((current) =>
-      [{ id: crypto.randomUUID(), time, message }, ...current].slice(0, 40),
-    );
-  }, []);
-
-  const addHandoff = useCallback((name: string, summary: string) => {
-    setHandoffs((current) => [{ id: crypto.randomUUID(), name, summary }, ...current].slice(0, 12));
-  }, []);
-
-  const addAction = useCallback((action: Omit<ActionEntry, "id">) => {
-    const id = crypto.randomUUID();
-    setActions((current) => [{ id, ...action }, ...current].slice(0, 16));
-    return id;
-  }, []);
-
-  const updateAction = useCallback(
-    (id: string, patch: Partial<ActionEntry> | ((prev: ActionEntry) => Partial<ActionEntry>)) => {
-      setActions((current) =>
-        current.map((action) => {
-          if (action.id === id) {
-            const resolvedPatch = typeof patch === "function" ? patch(action) : patch;
-            return { ...action, ...resolvedPatch };
-          }
-          return action;
-        }),
-      );
-    },
-    [],
-  );
+  const {
+    debugEntries,
+    handoffs,
+    actions,
+    addDebug,
+    addHandoff,
+    addAction,
+    updateAction,
+    clearConsoleState,
+  } = useConsoleSession(store.activeChatId);
 
   const stopActiveVoiceHandoff = useCallback(
     (detail = "Stopped before completion.") => {
@@ -777,9 +705,7 @@ export function App() {
     if (!store.activeProject || !store.activeChatId) return;
     const chatId = store.activeChatId;
     store.clearChatThread(store.activeChatId);
-    setHandoffs([]);
-    setActions([]);
-    setDebugEntries([]);
+    clearConsoleState();
     setError("");
     api.deleteConsoleState(chatId).catch(() => {});
   };
