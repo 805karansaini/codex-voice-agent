@@ -21,7 +21,6 @@ import {
   SquareTerminal,
   Sun,
   Trash2,
-  X,
   Zap,
   MoreHorizontal,
 } from "lucide-react";
@@ -59,6 +58,7 @@ import ConsoleHandoffsPanel from "./components/console/ConsoleHandoffsPanel";
 import ConsoleActionsPanel from "./components/console/ConsoleActionsPanel";
 import ConsoleVoicePanel from "./components/console/ConsoleVoicePanel";
 import ConsoleStatsFooter from "./components/console/ConsoleStatsFooter";
+import ConsoleHeader from "./components/console/ConsoleHeader";
 
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
@@ -2041,51 +2041,14 @@ export function App() {
               !isMobile ? "border-l border-line" : "w-full",
             )}
           >
-            {/* Console Header */}
-            <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5 shrink-0">
-              <div className="flex items-center gap-2">
-                <SquareTerminal className="h-3.5 w-3.5 text-accent" />
-                <span className="text-[12.5px] font-semibold tracking-tight">Console</span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                {!isMobile ? (
-                  <button
-                    title="Hide console panel"
-                    onClick={() => setPanelOpen(false)}
-                    className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                ) : (
-                  <button
-                    title="Go back to chat"
-                    onClick={() => setMobileView("chat")}
-                    className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-
-                <button
-                  onClick={clearThread}
-                  disabled={!store.activeChatId}
-                  className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded border border-line bg-surface-2 text-fg-dim hover:text-fg hover:border-fg-muted disabled:opacity-40"
-                >
-                  Clear
-                </button>
-
-                <span className="flex items-center gap-1.5 font-mono text-[10px] text-fg-dim">
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full pulse-dot",
-                      status === "Ready" ? "bg-success" : "bg-danger",
-                    )}
-                  />
-                  {status === "Ready" ? "online" : "offline"}
-                </span>
-              </div>
-            </div>
+            <ConsoleHeader
+              isMobile={isMobile}
+              status={status}
+              canClear={Boolean(store.activeChatId)}
+              onHide={() => setPanelOpen(false)}
+              onBackToChat={() => setMobileView("chat")}
+              onClear={clearThread}
+            />
 
             <ConsoleTabs activeTab={activeConsoleTab} onChange={setActiveConsoleTab} />
 
