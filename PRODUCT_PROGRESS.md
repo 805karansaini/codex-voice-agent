@@ -124,6 +124,10 @@ This file tracks what has been completed from the product review and what still 
   - Commit: Add lint and format tooling
   - Covers review item: Q2
   - Notes: backend Ruff and frontend ESLint now run in CI; Prettier config and scripts are available for follow-up formatting passes.
+- [x] Documented why the Google GenAI SDK stays pinned.
+  - Commit: Document Google GenAI SDK pin
+  - Covers review item: Q5
+  - Notes: `google-genai` has newer major versions, but the app keeps the Live API client fixed until the voice-session surface is intentionally re-tested.
 - [x] Updated README around auth, data storage, and removed stale transcription references.
   - Commits: `4a99bc4`, `c6950ee`, `fbc9944`, `cc3f545`
   - Partially covers review item: Q8
@@ -206,8 +210,6 @@ This file tracks what has been completed from the product review and what still 
 - [ ] Finish README and repo hygiene cleanup.
   - Review items: Q4, Q8
   - Remaining examples: archive old planning docs, ignore local data directories, remove bundled/duplicate app artifacts, and keep docs aligned with current storage paths.
-- [ ] Review the `python-genai` pin and document or relax it.
-  - Review item: Q5
 
 ## Commit Log Used
 
@@ -242,3 +244,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Add onboarding doctor |
 | 2026-06-13 | current commit | Support project subpath workdirs |
 | 2026-06-13 | current commit | Add push-to-talk voice mode |
+| 2026-06-13 | current commit | Document Google GenAI SDK pin |
