@@ -19,6 +19,7 @@ import { useSpeechPlayback } from "./hooks/useSpeechPlayback";
 import { useConsoleSession } from "./hooks/useConsoleSession";
 import { useAppLayout } from "./hooks/useAppLayout";
 import { useProjectInfo } from "./hooks/useProjectInfo";
+import { useWorkspaceSearch } from "./hooks/useWorkspaceSearch";
 import * as api from "./services/api";
 import { Project, CodexTimelineEvent, ChatArtifact, SearchResult, DoctorCheck } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
@@ -74,9 +75,6 @@ export function App() {
   const [activeConsoleTab, setActiveConsoleTab] = useState<ConsoleTabId>("stream");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [visibleChatsCount, setVisibleChatsCount] = useState<Record<string, number>>({});
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
@@ -99,6 +97,8 @@ export function App() {
     handleTouchEnd,
   } = useAppLayout();
   const projectInfo = useProjectInfo(store.activeProject);
+  const { searchQuery, setSearchQuery, searchResults, searching, clearSearch } =
+    useWorkspaceSearch();
 
   useEffect(() => saveJSON("cva.voiceInputMode.v1", voiceInputMode), [voiceInputMode]);
 
@@ -161,34 +161,6 @@ export function App() {
   useEffect(() => {
     refreshDoctor();
   }, [refreshDoctor]);
-
-  useEffect(() => {
-    const query = searchQuery.trim();
-    if (query.length < 2) {
-      setSearchResults([]);
-      setSearching(false);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    const timer = window.setTimeout(() => {
-      api
-        .searchContent(query)
-        .then((results) => {
-          if (!cancelled) setSearchResults(results);
-        })
-        .catch(() => {
-          if (!cancelled) setSearchResults([]);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, 180);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [searchQuery]);
 
   const {
     debugEntries,
@@ -729,8 +701,7 @@ export function App() {
     }
     if (!projectId) return;
     store.selectChat(projectId, result.chat_id);
-    setSearchQuery("");
-    setSearchResults([]);
+    clearSearch();
     if (isMobile) setMobileView("chat");
   };
 
