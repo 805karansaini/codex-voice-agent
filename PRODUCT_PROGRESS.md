@@ -132,6 +132,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved the typed chat and direct Codex streaming callbacks out of the large `App.tsx` file.
   - Commit: Extract streaming chat hook
   - Partially covers review item: A5
+- [x] Moved browser speech and response-audio playback state out of the large `App.tsx` file.
+  - Commit: Extract speech playback hook
+  - Partially covers review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -284,7 +287,7 @@ This file tracks what has been completed from the product review and what still 
   - Review item: A3
 - [ ] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, chat stream, composer footer, activity rail, workspace sidebar, console header, console tabs, all console tab panels, console stats footer, and typed/Codex streaming callbacks; live voice wiring and remaining app orchestration still need follow-up passes.
+  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, chat top bar, chat stream, composer footer, activity rail, workspace sidebar, console header, console tabs, all console tab panels, console stats footer, typed/Codex streaming callbacks, and speech/audio playback state; live voice wiring and remaining app orchestration still need follow-up passes.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.

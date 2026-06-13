@@ -15,6 +15,7 @@ import {
 import { useProjectStore } from "./hooks/useProjectStore";
 import { useLiveVoice } from "./hooks/useLiveVoice";
 import { useStreamingChat } from "./hooks/useStreamingChat";
+import { useSpeechPlayback } from "./hooks/useSpeechPlayback";
 import * as api from "./services/api";
 import {
   Project,
@@ -46,21 +47,6 @@ import ConsoleHeader from "./components/console/ConsoleHeader";
 import ActivityRail from "./components/layout/ActivityRail";
 import WorkspaceSidebar from "./components/layout/WorkspaceSidebar";
 
-const SILENT_WAV =
-  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=";
-
-const PREFERRED_VOICE_NAMES = [
-  "Samantha",
-  "Karen",
-  "Moira",
-  "Tessa",
-  "Google UK English Female",
-  "Google US English",
-  "Microsoft Aria",
-  "Microsoft Jenny",
-  "Zira",
-];
-
 type VoiceInputMode = "open" | "push";
 
 function appendCodexEvent(
@@ -85,9 +71,6 @@ export function App() {
   const [mode, setMode] = useState<"agent" | "codex">("agent");
   const [status, setStatus] = useState("Checking backend");
 
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
-  const [pendingAudioUrl, setPendingAudioUrl] = useState("");
   const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>(() =>
     loadJSON<VoiceInputMode>("cva.voiceInputMode.v1", "open"),
   );
@@ -121,7 +104,6 @@ export function App() {
   const [searching, setSearching] = useState(false);
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
 
-  const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleLoadedChatRef = useRef("");
   const consoleSaveTimerRef = useRef<number | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
@@ -173,28 +155,6 @@ export function App() {
   useEffect(() => {
     scrollToBottom();
   }, [store.messages.length, busy]);
-
-  // Load browser SpeechSynthesis voices
-  useEffect(() => {
-    if (!("speechSynthesis" in window)) return;
-    const loadVoices = () => {
-      const browserVoices = window.speechSynthesis.getVoices();
-      setVoices(browserVoices);
-      setSelectedVoiceURI((current) => {
-        if (current || browserVoices.length === 0) return current;
-        const preferred =
-          PREFERRED_VOICE_NAMES.map((n) =>
-            browserVoices.find((v) => v.name.toLowerCase().includes(n.toLowerCase())),
-          ).find(Boolean) ||
-          browserVoices.find((v) => v.lang.toLowerCase().startsWith("en")) ||
-          browserVoices[0];
-        return preferred?.voiceURI || "";
-      });
-    };
-    loadVoices();
-    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
-    return () => window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
-  }, []);
 
   // Fetch backend health status
   useEffect(() => {
@@ -444,52 +404,15 @@ export function App() {
     [updateAction],
   );
 
-  const speak = useCallback(
-    (text: string) => {
-      if (!text || !("speechSynthesis" in window)) return;
-      let spokenText = text.trim();
-      if (spokenText.length > 500) {
-        const preview = spokenText.slice(0, 500);
-        const sentenceEnd = Math.max(
-          preview.lastIndexOf("."),
-          preview.lastIndexOf("!"),
-          preview.lastIndexOf("?"),
-        );
-        const wordEnd = preview.lastIndexOf(" ");
-        const cutAt =
-          sentenceEnd > 240 ? sentenceEnd + 1 : wordEnd > 240 ? wordEnd : preview.length;
-        spokenText = preview.slice(0, cutAt).trim();
-      }
-      const utterance = new SpeechSynthesisUtterance(spokenText);
-      const v = voices.find((x) => x.voiceURI === selectedVoiceURI);
-      if (v) utterance.voice = v;
-      utterance.rate = 0.94;
-      utterance.pitch = 1.05;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    },
-    [selectedVoiceURI, voices],
-  );
-
-  const primeAudioPlayback = useCallback(() => {
-    const audio = new Audio(SILENT_WAV);
-    audio.volume = 0;
-    audio.play().catch(() => undefined);
-  }, []);
-
-  const playResponseAudio = useCallback(async (audioUrl: string) => {
-    window.speechSynthesis?.cancel();
-    responseAudioRef.current?.pause();
-    const audio = new Audio(audioUrl);
-    responseAudioRef.current = audio;
-    try {
-      await audio.play();
-      setPendingAudioUrl("");
-    } catch {
-      setPendingAudioUrl(audioUrl);
-      setError("Audio is ready, but the browser blocked autoplay. Tap Play response.");
-    }
-  }, []);
+  const {
+    voices,
+    selectedVoiceURI,
+    setSelectedVoiceURI,
+    pendingAudioUrl,
+    speak,
+    primeAudioPlayback,
+    playResponseAudio,
+  } = useSpeechPlayback({ setError });
 
   // Voice websocket configs triggers
   const voiceCtxRef = useRef<{ project: Project; chatId: string } | null>(null);
