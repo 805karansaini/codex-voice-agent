@@ -2,7 +2,7 @@ import base64
 import wave
 from io import BytesIO
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 from google import genai
 from google.genai import types
@@ -92,6 +92,31 @@ def _system_instruction(workdir: str | None = None, conversation_context: str | 
 
 
 def _get_tools() -> list[types.Tool]:
+    run_codex_parameters = cast(
+        Any,
+        {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": (
+                        "The task to perform, written as a clear instruction. "
+                        "Derived from the user's request with improved grammar. "
+                        "Do not include conversation history."
+                    ),
+                },
+                "workdir": {
+                    "type": "string",
+                    "description": (
+                        "Absolute path to the working directory. "
+                        "Defaults to the session's configured directory if omitted."
+                    ),
+                },
+            },
+            "required": ["task"],
+        },
+    )
+    end_conversation_parameters = cast(Any, {"type": "object", "properties": {}})
     return [
         types.Tool(
             function_declarations=[
@@ -103,27 +128,7 @@ def _get_tools() -> list[types.Tool]:
                         "commands, tests, builds, debugging, reviews, diffs, or project inspection. "
                         "Call this tool instead of answering from memory for any local-work question."
                     ),
-                    parameters={
-                        "type": "object",
-                        "properties": {
-                            "task": {
-                                "type": "string",
-                                "description": (
-                                    "The task to perform, written as a clear instruction. "
-                                    "Derived from the user's request with improved grammar. "
-                                    "Do not include conversation history."
-                                ),
-                            },
-                            "workdir": {
-                                "type": "string",
-                                "description": (
-                                    "Absolute path to the working directory. "
-                                    "Defaults to the session's configured directory if omitted."
-                                ),
-                            },
-                        },
-                        "required": ["task"],
-                    },
+                    parameters=run_codex_parameters,
                 ),
                 types.FunctionDeclaration(
                     name="end_conversation",
@@ -133,10 +138,7 @@ def _get_tools() -> list[types.Tool]:
                         "says goodbye, or indicates they are finished/done with the voice session (e.g., \"goodbye\", "
                         "\"bye\", \"bye-bye\", \"I'm done\", \"close session\", \"that is all\", \"theek hai bye\")."
                     ),
-                    parameters={
-                        "type": "object",
-                        "properties": {},
-                    },
+                    parameters=end_conversation_parameters,
                 ),
             ]
         )
@@ -182,7 +184,7 @@ async def ask_gemini_stream(
     message: str,
     settings: Settings,
     workdir: str | None = None,
-    cancel_token: CancellationToken = None,
+    cancel_token: CancellationToken | None = None,
     conversation_id: str | None = None,
     conversation_context: str | None = None,
     project_root: str | None = None,
@@ -306,8 +308,9 @@ async def ask_gemini_stream(
                     }
                     final_response = ""
                     resolved_workdir = chosen_workdir
+                    call_name = str(call.name or "")
                     with tracing.tool_call(
-                        call.name,
+                        call_name,
                         parent=gen,
                         input={"task": enhanced_task, "workdir": chosen_workdir},
                     ) as tool_obs:

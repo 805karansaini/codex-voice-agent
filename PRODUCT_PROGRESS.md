@@ -169,6 +169,10 @@ This file tracks what has been completed from the product review and what still 
   - Commit: Resolve frontend hook lint warnings
   - Partially covers review item: Q2
   - Notes: `npm run lint` now completes with no frontend warnings.
+- [x] Added backend Pyright type checking to local verification and CI.
+  - Commit: Add backend pyright check
+  - Partially covers review item: Q2
+  - Notes: Pyright now checks `backend/app` and `tests`, and the current backend passes with zero reported issues.
 - [x] Documented why the Google GenAI SDK stays pinned.
   - Commit: Document Google GenAI SDK pin
   - Covers review item: Q5
@@ -248,7 +252,7 @@ This file tracks what has been completed from the product review and what still 
 ### Reliability And Polish
 - [ ] Tighten code quality gates further.
   - Follow-up to review item: Q2
-  - Remaining examples: enforce a full Prettier check after a formatting-only pass, consider type-aware linting, and add pyright or mypy if the codebase is ready for it.
+  - Remaining examples: enforce a full Prettier check after a formatting-only pass and consider type-aware frontend linting.
 - [ ] Finish README and repo hygiene cleanup.
   - Review items: Q4, Q8
   - Remaining examples: archive old planning docs, ignore local data directories, remove bundled/duplicate app artifacts, and keep docs aligned with current storage paths.
@@ -303,3 +307,4 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-13 | current commit | Add prompting sanitizer tests |
 | 2026-06-13 | current commit | Add change review revert action |
 | 2026-06-13 | current commit | Add change review commit action |
+| 2026-06-13 | current commit | Add backend pyright check |

@@ -9,6 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path, PurePosixPath
+from typing import Any, AsyncIterator, Protocol, TypedDict, cast
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,28 @@ from .live_logging import JsonlEventLogger, LiveSessionLogger, clip_text
 from .prompting import build_recent_conversation_context, improve_codex_task_prompt
 from .settings import get_settings
 from . import tracing
+
+
+class _LiveSession(Protocol):
+    async def send_realtime_input(self, **kwargs: Any) -> None: ...
+
+    async def send_tool_response(self, **kwargs: Any) -> None: ...
+
+    async def send_client_content(self, **kwargs: Any) -> None: ...
+
+    def receive(self) -> AsyncIterator[Any]: ...
+
+
+class _RevertResult(TypedDict):
+    ok: bool
+    reverted_files: list[str]
+
+
+class _CommitResult(TypedDict):
+    ok: bool
+    commit: str | None
+    committed_files: list[str]
+    message: str
 
 
 settings = get_settings()
@@ -374,7 +397,8 @@ def _chat_export_markdown(
             text = str(row.get("text") or "").strip() or "_No text recorded._"
             lines.extend([f"### {role}", "", text, ""])
 
-            meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+            raw_meta = row.get("meta")
+            meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
             for artifact in list(meta.get("artifacts") or []):
                 if not isinstance(artifact, dict):
                     continue
@@ -561,7 +585,7 @@ def _git_file_is_tracked(root: Path, rel_path: str) -> bool:
     return proc.returncode == 0
 
 
-def _revert_changed_files(workdir: str, files: list[str]) -> dict[str, object]:
+def _revert_changed_files(workdir: str, files: list[str]) -> _RevertResult:
     if not files:
         raise ValueError("No changed files were provided")
     root = resolve_workdir(workdir)
@@ -592,7 +616,7 @@ def _revert_changed_files(workdir: str, files: list[str]) -> dict[str, object]:
     return {"ok": True, "reverted_files": reverted}
 
 
-def _commit_changed_files(workdir: str, files: list[str], message: str) -> dict[str, object]:
+def _commit_changed_files(workdir: str, files: list[str], message: str) -> _CommitResult:
     if not files:
         raise ValueError("No changed files were provided")
     commit_message = _compact_commit_message(message)
@@ -790,7 +814,7 @@ async def delete_project(project_id: str) -> dict[str, object]:
 @app.get("/api/chats")
 async def list_chats(project_id: str | None = None) -> list[dict[str, object]]:
     stored = chats.list(project_id=project_id)
-    by_id = {str(chat.get("id")): chat for chat in stored if chat.get("id")}
+    by_id: dict[str, dict[str, Any]] = {str(chat.get("id")): dict(chat) for chat in stored if chat.get("id")}
     for summary in history.chat_summaries(project_id=project_id):
         chat_id = str(summary["chat_id"])
         if chat_id in by_id:
@@ -803,7 +827,14 @@ async def list_chats(project_id: str | None = None) -> list[dict[str, object]]:
         }
         by_id[chat_id] = recovered
         chats.upsert(recovered)
-    return sorted(by_id.values(), key=lambda chat: int(chat.get("createdAt") or 0), reverse=True)
+    def chat_created_at(chat: dict[str, Any]) -> int:
+        value = chat.get("createdAt")
+        try:
+            return int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    return sorted(by_id.values(), key=chat_created_at, reverse=True)
 
 
 @app.post("/api/chats")
@@ -1040,7 +1071,7 @@ async def live_voice(websocket: WebSocket) -> None:
     active_turn_gen = None
     session_ended_by_tool = False
 
-    async def send_client_audio(session: object, initial: dict | None = None) -> None:
+    async def send_client_audio(session: _LiveSession, initial: dict | None = None) -> None:
         nonlocal session_workdir, session_project_id, session_chat_id, session_conversation_context, current_task_cancel_token
         pending = initial
         while True:
@@ -1089,7 +1120,7 @@ async def live_voice(websocket: WebSocket) -> None:
                 live_log.write("client.close", chat_id=session_chat_id)
                 return
 
-    async def receive_gemini(session: object) -> None:
+    async def receive_gemini(session: _LiveSession) -> None:
         nonlocal audio_chunks, input_text_chunks, output_text_chunks, session_conversation_context, current_task_cancel_token, streamed_audio_this_turn
         nonlocal last_codex_events, last_codex_turn_id, last_codex_thread_id, last_codex_status, last_artifacts
         nonlocal active_turn_gen, session_ended_by_tool
@@ -1537,7 +1568,7 @@ async def live_voice(websocket: WebSocket) -> None:
     try:
         # Read the opening frame first: the client sends {type:"config", workdir}
         # on connect, so we can bake the working directory into the system prompt.
-        first_payload: dict | None = await websocket.receive_json()
+        first_payload = cast(dict[str, Any], await websocket.receive_json())
         if first_payload.get("type") == "config":
             session_project_id = str(first_payload.get("project_id") or "").strip() or session_project_id
             session_chat_id = str(first_payload.get("chat_id") or "").strip() or session_chat_id
@@ -1560,7 +1591,8 @@ async def live_voice(websocket: WebSocket) -> None:
         async with client.aio.live.connect(
             model=settings.gemini_model,
             config=live_connect_config(settings, session_workdir, session_conversation_context),
-        ) as session:
+        ) as raw_session:
+            session = cast(_LiveSession, raw_session)
             live_log.write("gemini.connected", chat_id=session_chat_id, model=settings.gemini_model)
             await websocket.send_json({"type": "debug", "message": "Connected to Gemini Live."})
             # Group every observation from this live connection under one session.
@@ -1709,7 +1741,7 @@ async def project_info(path: str) -> dict[str, object]:
 
 
 @app.post("/api/change-review/revert")
-async def revert_change_review(req: ChangeReviewRevertRequest) -> dict[str, object]:
+async def revert_change_review(req: ChangeReviewRevertRequest) -> _RevertResult:
     try:
         result = _revert_changed_files(req.workdir, req.files)
     except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
@@ -1723,7 +1755,7 @@ async def revert_change_review(req: ChangeReviewRevertRequest) -> dict[str, obje
 
 
 @app.post("/api/change-review/commit")
-async def commit_change_review(req: ChangeReviewCommitRequest) -> dict[str, object]:
+async def commit_change_review(req: ChangeReviewCommitRequest) -> _CommitResult:
     try:
         result = _commit_changed_files(req.workdir, req.files, req.message)
     except (FileNotFoundError, NotADirectoryError, ValueError) as exc:

@@ -26,6 +26,7 @@ jobs:
       - name: Compile backend and run tests
         run: |
           uv run ruff check .
+          uv run pyright
           uv run python -m compileall backend/app run.py tests
           uv run python -m unittest discover -s tests
 

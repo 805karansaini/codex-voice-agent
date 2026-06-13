@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, cast
 
 from . import tracing
 from .settings import Settings
@@ -10,6 +10,34 @@ from .settings import Settings
 
 _CODEX_STATUS_FIRST_DELAY_SECONDS = 20
 _CODEX_STATUS_REPEAT_SECONDS = 60
+
+
+class _InterruptibleTurn(Protocol):
+    async def interrupt(self) -> None: ...
+
+
+class _CodexClient(Protocol):
+    async def __aenter__(self) -> "_CodexClient": ...
+
+    async def close(self) -> None: ...
+
+    async def thread_start(self, **kwargs: Any) -> "_CodexThread": ...
+
+
+class _CodexThread(Protocol):
+    @property
+    def id(self) -> str | None: ...
+
+    async def turn(self, input: Any, **kwargs: Any) -> "_CodexTurn": ...
+
+
+class _CodexTurn(Protocol):
+    @property
+    def id(self) -> str | None: ...
+
+    async def interrupt(self) -> None: ...
+
+    def stream(self) -> AsyncIterator[Any]: ...
 
 
 @dataclass
@@ -25,7 +53,7 @@ class CodexRun:
 class CancellationToken:
     def __init__(self):
         self._is_cancelled = False
-        self._active_turn: object | None = None
+        self._active_turn: _InterruptibleTurn | None = None
 
     def cancel(self):
         self._is_cancelled = True
@@ -35,12 +63,12 @@ class CancellationToken:
     def is_cancelled(self) -> bool:
         return self._is_cancelled
 
-    def bind_turn(self, turn: object) -> None:
+    def bind_turn(self, turn: _InterruptibleTurn) -> None:
         self._active_turn = turn
         if self._is_cancelled:
             self._interrupt_active_turn()
 
-    def clear_turn(self, turn: object) -> None:
+    def clear_turn(self, turn: _InterruptibleTurn) -> None:
         if self._active_turn is turn:
             self._active_turn = None
 
@@ -55,9 +83,9 @@ class CancellationToken:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self._interrupt_safely(interrupt))
+        loop.create_task(self._interrupt_safely(cast(Callable[[], Awaitable[None]], interrupt)))
 
-    async def _interrupt_safely(self, interrupt: object) -> None:
+    async def _interrupt_safely(self, interrupt: Callable[[], Awaitable[None]]) -> None:
         try:
             await interrupt()
         except Exception:
@@ -85,13 +113,13 @@ def _codex_modes(settings: Settings):
 
 @dataclass
 class _ThreadSession:
-    codex: object
-    thread: object
+    codex: _CodexClient
+    thread: _CodexThread
     workdir: str
     approval_mode: object
     sandbox: object
     lock: asyncio.Lock
-    active_turn: object | None = None
+    active_turn: _CodexTurn | None = None
     last_used: datetime | None = None
 
 
@@ -166,9 +194,12 @@ async def _get_thread_session(workdir: str, settings: Settings, conversation_id:
     if old_session:
         await _close_session(old_session)
 
-    codex = AsyncCodex(CodexConfig(cwd=str(root)))
+    codex = cast(_CodexClient, AsyncCodex(CodexConfig(cwd=str(root))))
     await codex.__aenter__()
-    thread = await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root))
+    thread = cast(
+        _CodexThread,
+        await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root)),
+    )
     session = _ThreadSession(
         codex=codex,
         thread=thread,
@@ -373,13 +404,16 @@ async def _run_ephemeral_turn(
     root = resolve_workdir(workdir)
     approval_mode, sandbox = _codex_modes(settings)
     async with AsyncCodex(CodexConfig(cwd=str(root))) as codex:
-        thread = await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root))
+        thread = cast(
+            _CodexThread,
+            await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root)),
+        )
         async for item in _stream_turn(thread, prompt, str(root), cancel_token):
             yield item
 
 
 async def _stream_turn(
-    thread: object,
+    thread: _CodexThread,
     prompt: str,
     workdir: str,
     cancel_token: CancellationToken | None,
@@ -491,7 +525,7 @@ async def run_codex_stream(
     prompt: str,
     workdir: str,
     settings: Settings,
-    cancel_token: CancellationToken = None,
+    cancel_token: CancellationToken | None = None,
     conversation_id: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     if conversation_id:
@@ -509,7 +543,7 @@ async def run_codex_stream_with_timer(
     prompt: str,
     workdir: str,
     settings: Settings,
-    cancel_token: CancellationToken = None,
+    cancel_token: CancellationToken | None = None,
     conversation_id: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     queue: asyncio.Queue = asyncio.Queue()

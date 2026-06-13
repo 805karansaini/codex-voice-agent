@@ -31,7 +31,13 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 known-first-party = ["backend"]
 
+[tool.pyright]
+include = ["backend/app", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+
 [dependency-groups]
 dev = [
+    "pyright>=1.1.410",
     "ruff>=0.15.17",
 ]
