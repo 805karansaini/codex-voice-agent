@@ -23,6 +23,7 @@ import { useWorkspaceSearch } from "./hooks/useWorkspaceSearch";
 import { useSetupDoctor } from "./hooks/useSetupDoctor";
 import { useChangeReviewActions } from "./hooks/useChangeReviewActions";
 import { useBackendStatus } from "./hooks/useBackendStatus";
+import { useChatExport } from "./hooks/useChatExport";
 import * as api from "./services/api";
 import { Project, CodexTimelineEvent, ChatArtifact, SearchResult } from "./types";
 import { loadJSON, saveJSON, chatTitleFrom, cn } from "./utils";
@@ -429,6 +430,7 @@ export function App() {
     setConfirmDialog,
     setError,
   });
+  const handleExportChat = useChatExport({ activeChatId: store.activeChatId, setError });
 
   const send = useCallback(
     async (raw?: string, projectOverride?: Project, chatOverride?: string) => {
@@ -550,23 +552,6 @@ export function App() {
 
   const handleRenameChat = (projectId: string, chatId: string, title: string) => {
     setRenameDialog({ projectId, chatId, initialTitle: title });
-  };
-
-  const handleExportChat = async () => {
-    if (!store.activeChatId) return;
-    try {
-      const { blob, filename } = await api.exportChatMarkdown(store.activeChatId);
-      const href = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(href);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to export chat");
-    }
   };
 
   const openSearchResult = (result: SearchResult) => {
