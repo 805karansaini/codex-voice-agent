@@ -44,13 +44,7 @@ import RenameChatModal from "./components/modals/RenameChatModal";
 import ChatTopBar from "./components/chat/ChatTopBar";
 import ComposerFooter from "./components/chat/ComposerFooter";
 import ChatStream from "./components/chat/ChatStream";
-import ConsoleTabs from "./components/console/ConsoleTabs";
-import ConsoleStreamPanel from "./components/console/ConsoleStreamPanel";
-import ConsoleHandoffsPanel from "./components/console/ConsoleHandoffsPanel";
-import ConsoleActionsPanel from "./components/console/ConsoleActionsPanel";
-import ConsoleVoicePanel from "./components/console/ConsoleVoicePanel";
-import ConsoleStatsFooter from "./components/console/ConsoleStatsFooter";
-import ConsoleHeader from "./components/console/ConsoleHeader";
+import ConsolePanel from "./components/console/ConsolePanel";
 import ActivityRail from "./components/layout/ActivityRail";
 import WorkspaceSidebar from "./components/layout/WorkspaceSidebar";
 
@@ -845,54 +839,35 @@ export function App() {
 
         {/* Column 4: ConsolePanel (Resizable Sidebar) */}
         {(!isMobile ? panelOpen : mobileView === "console") && (
-          <aside
-            style={isMobile ? { width: "100%" } : { width: `${panelWidth}px` }}
-            className={cn(
-              "flex h-full min-h-0 flex-col bg-surface-1 shrink-0",
-              !isMobile ? "border-l border-line" : "w-full",
-            )}
-          >
-            <ConsoleHeader
-              isMobile={isMobile}
-              status={status}
-              canClear={Boolean(store.activeChatId)}
-              onHide={() => setPanelOpen(false)}
-              onBackToChat={() => setMobileView("chat")}
-              onClear={clearThread}
-            />
-
-            <ConsoleTabs activeTab={activeConsoleTab} onChange={setActiveConsoleTab} />
-
-            {/* Console Contents */}
-            <div className="flex-1 overflow-y-auto p-3">
-              {activeConsoleTab === "stream" && <ConsoleStreamPanel entries={debugEntries} />}
-
-              {activeConsoleTab === "actions" && <ConsoleActionsPanel actions={actions} />}
-
-              {activeConsoleTab === "handoffs" && <ConsoleHandoffsPanel handoffs={handoffs} />}
-
-              {activeConsoleTab === "voice" && (
-                <ConsoleVoicePanel
-                  doctorChecks={doctorChecks}
-                  voices={voices}
-                  selectedVoiceURI={selectedVoiceURI}
-                  voiceInputMode={voiceInputMode}
-                  pendingAudioUrl={pendingAudioUrl}
-                  onRefreshDoctor={refreshDoctor}
-                  onSelectedVoiceChange={setSelectedVoiceURI}
-                  onVoiceInputModeChange={(nextMode) => {
-                    setVoiceInputMode(nextMode);
-                    if (voiceActive) {
-                      liveVoice.setMuted(nextMode === "push");
-                    }
-                  }}
-                  onPlayResponseAudio={(audioUrl) => void playResponseAudio(audioUrl)}
-                />
-              )}
-            </div>
-
-            <ConsoleStatsFooter messages={store.messages} />
-          </aside>
+          <ConsolePanel
+            isMobile={isMobile}
+            width={panelWidth}
+            status={status}
+            canClear={Boolean(store.activeChatId)}
+            activeTab={activeConsoleTab}
+            debugEntries={debugEntries}
+            actions={actions}
+            handoffs={handoffs}
+            messages={store.messages}
+            doctorChecks={doctorChecks}
+            voices={voices}
+            selectedVoiceURI={selectedVoiceURI}
+            voiceInputMode={voiceInputMode}
+            pendingAudioUrl={pendingAudioUrl}
+            onHide={() => setPanelOpen(false)}
+            onBackToChat={() => setMobileView("chat")}
+            onClear={clearThread}
+            onTabChange={setActiveConsoleTab}
+            onRefreshDoctor={refreshDoctor}
+            onSelectedVoiceChange={setSelectedVoiceURI}
+            onVoiceInputModeChange={(nextMode) => {
+              setVoiceInputMode(nextMode);
+              if (voiceActive) {
+                liveVoice.setMuted(nextMode === "push");
+              }
+            }}
+            onPlayResponseAudio={(audioUrl) => void playResponseAudio(audioUrl)}
+          />
         )}
       </div>
 
