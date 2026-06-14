@@ -12,6 +12,8 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/ios": "^8.4.0",
     "@tailwindcss/vite": "^4.2.1",
     "@vitejs/plugin-react": "^4.3.4",
     "clsx": "^2.1.1",
@@ -24,6 +26,7 @@
     "vite": "^6.0.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.60.0",
     "@types/react": "^19.0.1",
