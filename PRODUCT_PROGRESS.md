@@ -354,6 +354,10 @@ This file tracks what has been completed from the product review and what still 
 - [x] Added a Change Review commit action for changed files.
   - Commit: Add change review commit action
   - Partially covers review feature: F1
+- [x] Added optional pre-Codex checkpoint commits for dirty projects.
+  - Commit: `3e2bcee` - Add optional Codex checkpoints
+  - Covers remaining review feature: F1
+  - Notes: `CODEX_AUTO_CHECKPOINT=true` creates a checkpoint commit before Codex starts when the selected project already has uncommitted changes; the default stays off.
 - [x] Added project briefing context for voice/session startup.
   - Commit: `19dda8a` - Add project briefing context
   - Covers review feature: F5
@@ -395,10 +399,9 @@ This file tracks what has been completed from the product review and what still 
   - Current status: complete. `App.tsx` is now a small shell composed from focused components and hooks.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
-- [ ] Complete the Change Review feature.
+- [x] Complete the Change Review feature.
   - Review feature: F1
-  - Done so far: diff artifacts are captured and surfaced, and changed files can be committed or reverted from the review chip.
-  - Remaining: approval flow and optional auto-checkpoint before Codex turns.
+  - Current status: complete. Diff artifacts are captured and surfaced, changed files can be committed or reverted from the review chip with confirmation, and optional pre-Codex checkpoint commits can be enabled for dirty projects.
 
 ### Product Features
 
@@ -517,3 +520,5 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-14 | `4b299eb` | Add Capacitor frontend config |
 | 2026-06-14 | `5b070a9` | Add type-aware frontend linting |
 | 2026-06-14 | `8a54a26` | Update product progress tracker |
+| 2026-06-14 | `2edb10f` | Refresh product progress log |
+| 2026-06-14 | `3e2bcee` | Add optional Codex checkpoints |
