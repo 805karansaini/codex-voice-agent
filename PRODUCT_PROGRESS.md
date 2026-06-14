@@ -204,6 +204,18 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved live voice message and handoff bookkeeping out of the large `App.tsx` file.
   - Commit: Extract live voice session handler hook
   - Partially covers review item: A5
+- [x] Moved live voice start/stop and push-to-talk control wiring out of the large `App.tsx` file.
+  - Commit: Extract live voice control hook
+  - Partially covers review item: A5
+- [x] Moved typed chat submit orchestration out of the large `App.tsx` file.
+  - Commit: Extract chat submit hook
+  - Partially covers review item: A5
+- [x] Moved app modal rendering out of the large `App.tsx` file.
+  - Commit: Extract app modals component
+  - Partially covers review item: A5
+- [x] Moved top-level app controller wiring out of the large `App.tsx` file.
+  - Commit: Extract app controller hook
+  - Covers remaining review item: A5
 
 ### P1 Reliability And Product Correctness
 
@@ -354,9 +366,9 @@ This file tracks what has been completed from the product review and what still 
   - Current status: localStorage no longer seeds or persists chat messages, and active chats refresh from backend history while preserving in-flight local streaming messages. Remaining work is a broader pass to remove local chat-list/project metadata duplication.
 - [ ] Decompose the large `/api/live` handler into smaller, testable parts.
   - Review item: A3
-- [ ] Break up the large `App.tsx` file into focused components and hooks.
+- [x] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
-  - Current status: started by extracting artifact, Change Review chip, Codex timeline, chat action modal rendering, app title bar, main workspace layout, chat panel, chat top bar, chat stream, composer footer, activity rail, workspace sidebar, console panel, console header, console tabs, all console tab panels, console stats footer, typed/Codex streaming callbacks, speech/audio playback state, live voice message/handoff bookkeeping, console session state, layout interaction state, active project path/git status loading, workspace search state, setup doctor state, Change Review action handling, backend health status loading, chat export handling, project/chat action dialog wiring, chat display state, chat auto-scroll behavior, composer input state, search-result navigation, chat switcher keyboard navigation, active thread clearing, workspace sidebar expansion state, microphone mode preference state, and console tab selection state; live voice wiring and remaining app orchestration still need follow-up passes.
+  - Current status: complete. `App.tsx` is now a small shell composed from focused components and hooks.
 - [ ] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
 - [ ] Complete the Change Review feature.

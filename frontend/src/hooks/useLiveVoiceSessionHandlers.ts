@@ -171,7 +171,12 @@ export function useLiveVoiceSessionHandlers({
         });
         resetActiveVoiceMessages();
       },
-      onTurnComplete: (userText: string, assistantText: string, usedCodex: boolean, workdir?: string) => {
+      onTurnComplete: (
+        userText: string,
+        assistantText: string,
+        usedCodex: boolean,
+        workdir?: string,
+      ) => {
         const ctx = voiceCtxRef.current;
         if (!ctx) return;
         const finalUserText = userText.trim();
@@ -267,7 +272,12 @@ export function useLiveVoiceSessionHandlers({
           }));
         }
       },
-      onHandoff: (name: string, summary: string, workdir?: string, details?: Record<string, unknown>) => {
+      onHandoff: (
+        name: string,
+        summary: string,
+        workdir?: string,
+        details?: Record<string, unknown>,
+      ) => {
         addHandoff(name, summary);
         const ctx = voiceCtxRef.current;
         if (ctx) {

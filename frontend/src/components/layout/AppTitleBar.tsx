@@ -15,7 +15,7 @@ import type { MobileView } from "../../hooks/useAppLayout";
 import type { ProjectInfo, SearchResult } from "../../types";
 import { cn } from "../../utils";
 
-type AppTitleBarProps = {
+export type AppTitleBarProps = {
   isMobile: boolean;
   mobileView: MobileView;
   activeProjectName: string;

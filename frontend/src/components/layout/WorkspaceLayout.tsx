@@ -20,7 +20,7 @@ import ConsolePanel from "../console/ConsolePanel";
 
 type ChatMode = "agent" | "codex";
 
-type WorkspaceLayoutProps = {
+export type WorkspaceLayoutProps = {
   isMobile: boolean;
   mobileView: MobileView;
   railOpen: boolean;
