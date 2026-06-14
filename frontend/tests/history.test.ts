@@ -60,6 +60,32 @@ test("historyRowsToMessages preserves artifact and Codex metadata", () => {
   assert.equal(message.workdir, "/tmp/project");
 });
 
+test("historyRowsToMessages preserves Gemini Live usage estimates", () => {
+  const [message] = historyRowsToMessages([
+    {
+      id: "assistant-1",
+      role: "assistant",
+      text: "Done",
+      meta: {
+        gemini_live_usage: {
+          estimated: true,
+          input_text_chars: 12,
+          output_text_chars: 8,
+          input_audio_bytes: 3200,
+          output_audio_bytes: 6400,
+          estimated_input_tokens: 3,
+          estimated_output_tokens: 2,
+          estimated_total_tokens: 5,
+          estimated_cost_usd: 0.000001,
+        },
+      },
+    },
+  ]);
+
+  assert.equal(message.geminiLiveUsage?.estimated_total_tokens, 5);
+  assert.equal(message.geminiLiveUsage?.input_audio_bytes, 3200);
+});
+
 test("historyRowsToMessages marks direct Codex and tool-call rows as Codex-backed", () => {
   const messages = historyRowsToMessages([
     {
@@ -120,6 +146,7 @@ test("mergeBackendHistoryWithLocalMessages prefers backend history over stale lo
       codexStatus: undefined,
       codexTurnId: undefined,
       codexThreadId: undefined,
+      geminiLiveUsage: undefined,
     },
   ]);
 });

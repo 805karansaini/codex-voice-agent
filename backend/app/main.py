@@ -87,6 +87,7 @@ class _LiveCodexResult:
 @dataclass
 class _LiveTurnState:
     audio_chunks: list[bytes] = field(default_factory=list)
+    input_audio_bytes: int = 0
     input_text_chunks: list[str] = field(default_factory=list)
     output_text_chunks: list[str] = field(default_factory=list)
     streamed_audio: bool = False
@@ -127,6 +128,31 @@ class _LiveTurnState:
             return ""
         return _pcm_to_wav_data_url(self.audio_chunks)
 
+    def usage_estimate(self) -> dict[str, object]:
+        input_text_chars = len(self.user_text)
+        output_text_chars = len(self.assistant_text)
+        output_audio_bytes = sum(len(chunk) for chunk in self.audio_chunks)
+        estimated_input_tokens = round(input_text_chars / 4.2)
+        estimated_output_tokens = round(output_text_chars / 4.2)
+        # Gemini Live pricing depends on model and modality. Without provider
+        # usage metadata in Live events, expose a transparent local estimate.
+        estimated_cost_usd = round(
+            (estimated_input_tokens * 0.10 / 1_000_000)
+            + (estimated_output_tokens * 0.40 / 1_000_000),
+            6,
+        )
+        return {
+            "estimated": True,
+            "input_text_chars": input_text_chars,
+            "output_text_chars": output_text_chars,
+            "input_audio_bytes": self.input_audio_bytes,
+            "output_audio_bytes": output_audio_bytes,
+            "estimated_input_tokens": estimated_input_tokens,
+            "estimated_output_tokens": estimated_output_tokens,
+            "estimated_total_tokens": estimated_input_tokens + estimated_output_tokens,
+            "estimated_cost_usd": estimated_cost_usd,
+        }
+
     def persist(
         self,
         *,
@@ -154,11 +180,13 @@ class _LiveTurnState:
                 "codex_thread_id": self.codex_thread_id,
                 "codex_status": self.codex_status,
                 "artifacts": self.artifacts,
+                "gemini_live_usage": self.usage_estimate(),
             },
         )
 
     def reset(self) -> None:
         self.audio_chunks.clear()
+        self.input_audio_bytes = 0
         self.input_text_chunks.clear()
         self.output_text_chunks.clear()
         self.streamed_audio = False
@@ -1424,6 +1452,7 @@ async def live_voice(websocket: WebSocket) -> None:
                         {"type": "error", "message": "Audio frame is too large."}
                     )
                     continue
+                turn_state.input_audio_bytes += len(audio_bytes)
                 mime_type = str(payload.get("mime_type") or "audio/pcm;rate=16000")
                 await session.send_realtime_input(
                     audio=types.Blob(data=audio_bytes, mime_type=mime_type)
@@ -1781,6 +1810,7 @@ async def live_voice(websocket: WebSocket) -> None:
                             "assistant_text": assistant_text,
                             "workdir": session_workdir,
                             "audio_data_url": turn_state.audio_data_url() or None,
+                            "gemini_live_usage": turn_state.usage_estimate(),
                             "session_ended": session_ended_by_tool,
                         }
                     )

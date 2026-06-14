@@ -18,6 +18,7 @@ export function historyRowsToMessages(rows: HistoryRow[]): Message[] {
       codexStatus: row.meta?.codex_status,
       codexTurnId: row.meta?.codex_turn_id,
       codexThreadId: row.meta?.codex_thread_id,
+      geminiLiveUsage: row.meta?.gemini_live_usage,
     }));
 }
 

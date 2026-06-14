@@ -59,6 +59,8 @@ class LiveTurnStateTests(unittest.TestCase):
             turn_state = main._LiveTurnState()
             turn_state.input_text_chunks.append("Please check this")
             turn_state.output_text_chunks.append("Done.")
+            turn_state.input_audio_bytes = 3200
+            turn_state.audio_chunks.append(b"audio")
             turn_state.add_codex_result(
                 events=[{"type": "codex_event", "turn_id": "turn-1"}],
                 turn_id="turn-1",
@@ -83,10 +85,14 @@ class LiveTurnStateTests(unittest.TestCase):
             self.assertEqual(rows[1]["meta"]["codex_thread_id"], "thread-1")
             self.assertEqual(rows[1]["meta"]["codex_status"], "completed")
             self.assertEqual(rows[1]["meta"]["artifacts"], [{"id": "artifact-1"}])
+            self.assertEqual(rows[1]["meta"]["gemini_live_usage"]["input_audio_bytes"], 3200)
+            self.assertEqual(rows[1]["meta"]["gemini_live_usage"]["output_audio_bytes"], 5)
+            self.assertTrue(rows[1]["meta"]["gemini_live_usage"]["estimated"])
 
     def test_reset_clears_per_turn_state(self) -> None:
         turn_state = main._LiveTurnState()
         turn_state.audio_chunks.append(b"audio")
+        turn_state.input_audio_bytes = 3200
         turn_state.input_text_chunks.append("user")
         turn_state.output_text_chunks.append("assistant")
         turn_state.streamed_audio = True
@@ -101,6 +107,7 @@ class LiveTurnStateTests(unittest.TestCase):
         turn_state.reset()
 
         self.assertFalse(turn_state.audio_chunks)
+        self.assertEqual(turn_state.input_audio_bytes, 0)
         self.assertFalse(turn_state.input_text_chunks)
         self.assertFalse(turn_state.output_text_chunks)
         self.assertFalse(turn_state.streamed_audio)

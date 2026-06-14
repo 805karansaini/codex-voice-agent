@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LiveVoiceState } from "../types";
+import type { GeminiLiveUsage, LiveVoiceState } from "../types";
 import { getWebSocketUrl } from "../services/api";
 
 const LIVE_AUDIO_RATE = 16000;
@@ -137,6 +137,7 @@ interface UseLiveVoiceProps {
     assistantText: string,
     usedCodex: boolean,
     workdir?: string,
+    geminiLiveUsage?: GeminiLiveUsage,
   ) => void;
 }
 
@@ -395,6 +396,7 @@ export function useLiveVoice({
             assistantText,
             usedCodexRef.current,
             payload.workdir,
+            payload.gemini_live_usage,
           );
           usedCodexRef.current = false;
           if (payload.audio_data_url && !hasStreamedAudioRef.current) {

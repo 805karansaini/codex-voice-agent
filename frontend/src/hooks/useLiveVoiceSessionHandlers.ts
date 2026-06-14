@@ -2,7 +2,7 @@ import { useCallback, useRef } from "react";
 
 import type { ActionPatch } from "./useConsoleSession";
 import type { useProjectStore } from "./useProjectStore";
-import type { ChatArtifact, CodexTimelineEvent, Project } from "../types";
+import type { ChatArtifact, CodexTimelineEvent, GeminiLiveUsage, Project } from "../types";
 import { chatTitleFrom } from "../utils";
 import { appendArtifacts } from "../utils/artifacts";
 
@@ -180,6 +180,7 @@ export function useLiveVoiceSessionHandlers({
         assistantText: string,
         usedCodex: boolean,
         workdir?: string,
+        geminiLiveUsage?: GeminiLiveUsage,
       ) => {
         const ctx = voiceCtxRef.current;
         if (!ctx) return;
@@ -205,6 +206,7 @@ export function useLiveVoiceSessionHandlers({
             streaming: false,
             usedCodex,
             workdir,
+            geminiLiveUsage,
           }));
         } else if (finalAssistantText || usedCodex) {
           store.appendMessage(ctx.chatId, {
@@ -213,6 +215,7 @@ export function useLiveVoiceSessionHandlers({
             text: finalAssistantText,
             usedCodex,
             workdir,
+            geminiLiveUsage,
           });
         }
         resetActiveVoiceMessages();

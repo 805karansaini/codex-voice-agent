@@ -12,6 +12,19 @@ export type Message = {
   codexStatus?: string;
   codexTurnId?: string;
   codexThreadId?: string;
+  geminiLiveUsage?: GeminiLiveUsage;
+};
+
+export type GeminiLiveUsage = {
+  estimated: boolean;
+  input_text_chars: number;
+  output_text_chars: number;
+  input_audio_bytes: number;
+  output_audio_bytes: number;
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  estimated_total_tokens: number;
+  estimated_cost_usd: number;
 };
 
 export type ChatArtifact = {
@@ -91,6 +104,7 @@ export type HistoryRow = {
     codex_status?: string;
     codex_turn_id?: string;
     codex_thread_id?: string;
+    gemini_live_usage?: GeminiLiveUsage;
     workdir?: string;
     project_id?: string;
     chat_id?: string;
