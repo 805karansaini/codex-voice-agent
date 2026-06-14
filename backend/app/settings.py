@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     api_token: str | None = Field(default=None, alias="CODEX_API_TOKEN")
     google_api_key: str | None = Field(default=None, alias="GOOGLE_API_KEY")
+    # 3.1-flash-live stopped streaming input transcription incrementally (Google
+    # now delivers the user transcript only at end-of-turn), which breaks live
+    # captions. The 2.5 native-audio Live model still streams it word-by-word.
     gemini_model: str = Field(default="gemini-3.1-flash-live-preview", alias="GEMINI_MODEL")
     gemini_text_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_TEXT_MODEL")
     gemini_voice_name: str = Field(default="Aoede", alias="GEMINI_VOICE_NAME")
