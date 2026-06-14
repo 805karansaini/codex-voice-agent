@@ -1,12 +1,13 @@
 import asyncio
 import subprocess
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, cast
 
 from . import tracing
-from .settings import Settings
+from .settings import Settings, get_settings
 
 
 _CODEX_STATUS_FIRST_DELAY_SECONDS = 20
@@ -23,6 +24,8 @@ class _CodexClient(Protocol):
     async def close(self) -> None: ...
 
     async def thread_start(self, **kwargs: Any) -> "_CodexThread": ...
+
+    async def thread_resume(self, thread_id: str, **kwargs: Any) -> "_CodexThread": ...
 
 
 class _CodexThread(Protocol):
@@ -203,6 +206,88 @@ _SESSION_IDLE_TTL = timedelta(minutes=30)
 _SESSION_LIMIT = 12
 
 
+def _thread_registry_path(settings: Settings) -> Path:
+    return settings.history_path.with_suffix(".sqlite3")
+
+
+def _init_thread_registry(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS codex_threads (
+            conversation_id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            workdir TEXT NOT NULL,
+            approval_mode TEXT NOT NULL,
+            sandbox_mode TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _read_thread_mapping(settings: Settings, conversation_id: str) -> dict[str, str] | None:
+    path = _thread_registry_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        _init_thread_registry(conn)
+        row = conn.execute(
+            """
+            SELECT conversation_id, thread_id, workdir, approval_mode, sandbox_mode, updated_at
+            FROM codex_threads
+            WHERE conversation_id = ?
+            """,
+            (conversation_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _save_thread_mapping(
+    settings: Settings,
+    *,
+    conversation_id: str,
+    thread_id: str | None,
+    workdir: str,
+) -> None:
+    if not thread_id:
+        return
+    path = _thread_registry_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as conn:
+        _init_thread_registry(conn)
+        conn.execute(
+            """
+            INSERT INTO codex_threads (
+                conversation_id, thread_id, workdir, approval_mode, sandbox_mode, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                thread_id = excluded.thread_id,
+                workdir = excluded.workdir,
+                approval_mode = excluded.approval_mode,
+                sandbox_mode = excluded.sandbox_mode,
+                updated_at = excluded.updated_at
+            """,
+            (
+                conversation_id,
+                thread_id,
+                workdir,
+                settings.codex_approval_mode,
+                settings.codex_sandbox_mode,
+                _now().isoformat(),
+            ),
+        )
+
+
+def _delete_thread_mapping(settings: Settings, conversation_id: str | None) -> None:
+    if not conversation_id:
+        return
+    path = _thread_registry_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as conn:
+        _init_thread_registry(conn)
+        conn.execute("DELETE FROM codex_threads WHERE conversation_id = ?", (conversation_id,))
+
+
 def _session_key(conversation_id: str) -> str:
     return f"chat:{conversation_id}"
 
@@ -270,9 +355,37 @@ async def _get_thread_session(workdir: str, settings: Settings, conversation_id:
 
     codex = cast(_CodexClient, AsyncCodex(CodexConfig(cwd=str(root))))
     await codex.__aenter__()
-    thread = cast(
-        _CodexThread,
-        await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root)),
+    saved = _read_thread_mapping(settings, conversation_id)
+    thread = None
+    if (
+        saved
+        and saved.get("workdir") == str(root)
+        and saved.get("approval_mode") == settings.codex_approval_mode
+        and saved.get("sandbox_mode") == settings.codex_sandbox_mode
+        and saved.get("thread_id")
+    ):
+        try:
+            thread = cast(
+                _CodexThread,
+                await codex.thread_resume(
+                    str(saved["thread_id"]),
+                    approval_mode=approval_mode,
+                    sandbox=sandbox,
+                    cwd=str(root),
+                ),
+            )
+        except Exception:
+            thread = None
+    if thread is None:
+        thread = cast(
+            _CodexThread,
+            await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root)),
+        )
+    _save_thread_mapping(
+        settings,
+        conversation_id=conversation_id,
+        thread_id=getattr(thread, "id", None),
+        workdir=str(root),
     )
     session = _ThreadSession(
         codex=codex,
@@ -298,6 +411,8 @@ async def close_codex_thread_session(conversation_id: str | None) -> None:
         return
     async with _sessions_lock:
         session = _sessions.pop(_session_key(conversation_id), None)
+    if conversation_id:
+        _delete_thread_mapping(get_settings(), conversation_id)
     if session:
         await _close_session(session)
 
