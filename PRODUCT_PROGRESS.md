@@ -54,6 +54,10 @@ This file tracks what has been completed from the product review and what still 
 - [x] Stopped booting project and chat lists from localStorage.
   - Commit: Prefer backend project and chat lists
   - Covers remaining review item: B7
+- [x] Consolidated projects, chats, and console state into SQLite.
+  - Commit: `d2cad75` - Store project metadata in SQLite
+  - Covers review item: A4
+  - Notes: legacy `projects.json`, `chats.json`, and `console.json` are migrated into `history.sqlite3` on startup; app event logs remain JSONL.
 - [x] Fixed Server-Sent Events parsing so multi-line data is handled correctly.
   - Commit: `4a99bc4` - Harden local agent access and fix review bugs
   - Covers review item: B8
@@ -397,8 +401,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
   - Current status: complete. `App.tsx` is now a small shell composed from focused components and hooks.
-- [ ] Consolidate project, chat, and console storage into SQLite.
+- [x] Consolidate project, chat, and console storage into SQLite.
   - Review item: A4
+  - Current status: complete. Projects, chat metadata, and console state now use SQLite tables in the history database with one-time migration from the old JSON files.
 - [x] Complete the Change Review feature.
   - Review feature: F1
   - Current status: complete. Diff artifacts are captured and surfaced, changed files can be committed or reverted from the review chip with confirmation, and optional pre-Codex checkpoint commits can be enabled for dirty projects.
@@ -522,3 +527,5 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-14 | `8a54a26` | Update product progress tracker |
 | 2026-06-14 | `2edb10f` | Refresh product progress log |
 | 2026-06-14 | `3e2bcee` | Add optional Codex checkpoints |
+| 2026-06-14 | `6536cd2` | Update progress for Codex checkpoints |
+| 2026-06-14 | `d2cad75` | Store project metadata in SQLite |
