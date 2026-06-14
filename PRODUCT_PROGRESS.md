@@ -51,6 +51,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Stopped booting chat messages from localStorage and preserved only in-flight local messages during backend history hydration.
   - Commit: Prefer backend history for chat messages
   - Partially covers review item: B7
+- [x] Stopped booting project and chat lists from localStorage.
+  - Commit: Prefer backend project and chat lists
+  - Covers remaining review item: B7
 - [x] Fixed Server-Sent Events parsing so multi-line data is handled correctly.
   - Commit: `4a99bc4` - Harden local agent access and fix review bugs
   - Covers review item: B8
@@ -216,6 +219,18 @@ This file tracks what has been completed from the product review and what still 
 - [x] Moved top-level app controller wiring out of the large `App.tsx` file.
   - Commit: Extract app controller hook
   - Covers remaining review item: A5
+- [x] Extracted live client config parsing from the large `/api/live` handler.
+  - Commit: Extract live client config helper
+  - Partially covers review item: A3
+- [x] Extracted live voice turn state persistence from the large `/api/live` handler.
+  - Commit: Extract live turn state helper
+  - Partially covers review item: A3
+- [x] Extracted live tool-call request preparation from the large `/api/live` handler.
+  - Commit: Extract live tool-call request helper
+  - Partially covers review item: A3
+- [x] Extracted live Codex stream execution from the large `/api/live` handler.
+  - Commit: Extract live Codex stream helper
+  - Covers remaining review item: A3
 
 ### P1 Reliability And Product Correctness
 
@@ -309,6 +324,10 @@ This file tracks what has been completed from the product review and what still 
   - Commit: Enforce frontend prettier check
   - Partially covers review item: Q2
   - Notes: tracked frontend source and config files have been formatted, and CI now runs `npm run format:check` before frontend lint.
+- [x] Enabled type-aware frontend linting for app and config TypeScript files.
+  - Commit: Add type-aware frontend linting
+  - Covers remaining review item: Q2
+  - Notes: typed lint now catches unhandled promises and unsafe string coercion in frontend source/config files while leaving Node test files on standard lint rules.
 - [x] Documented why the Google GenAI SDK stays pinned.
   - Commit: Document Google GenAI SDK pin
   - Covers review item: Q5
@@ -316,6 +335,10 @@ This file tracks what has been completed from the product review and what still 
 - [x] Updated README around auth, data storage, and removed stale transcription references.
   - Commits: `4a99bc4`, `c6950ee`, `fbc9944`, `cc3f545`
   - Partially covers review item: Q8
+- [x] Archived loose planning notes and ignored generated local app artifacts.
+  - Commit: Archive planning notes
+  - Partially covers review items: Q4, Q8
+  - Notes: `HANDOVER.md`, `REALTIME_VOICE_AGENT_PLAN.md`, and `frontend-updated.md` now live under `docs/archive/`; generated iOS app files are ignored.
 
 ### New Features From The Roadmap
 
@@ -361,11 +384,12 @@ This file tracks what has been completed from the product review and what still 
 
 ### Highest Priority
 
-- [ ] Finish making backend history the single source of truth for messages.
+- [x] Finish making backend history the single source of truth for messages.
   - Review item: B7
-  - Current status: localStorage no longer seeds or persists chat messages, and active chats refresh from backend history while preserving in-flight local streaming messages. Remaining work is a broader pass to remove local chat-list/project metadata duplication.
-- [ ] Decompose the large `/api/live` handler into smaller, testable parts.
+  - Current status: complete. Messages, project lists, and chat lists now hydrate from the backend instead of booting from browser copies; localStorage keeps only UI preferences such as active selection and theme.
+- [x] Decompose the large `/api/live` handler into smaller, testable parts.
   - Review item: A3
+  - Current status: complete. Shared live client config parsing, voice turn persistence, tool-call request preparation, and Codex stream execution now live in focused tested helpers.
 - [x] Break up the large `App.tsx` file into focused components and hooks.
   - Review item: A5
   - Current status: complete. `App.tsx` is now a small shell composed from focused components and hooks.
@@ -386,12 +410,12 @@ This file tracks what has been completed from the product review and what still 
   - Review feature: F6
   - Current status: Codex token usage is visible; Gemini Live token/audio usage and pricing are still pending.
 ### Reliability And Polish
-- [ ] Tighten code quality gates further.
+- [x] Tighten code quality gates further.
   - Follow-up to review item: Q2
-  - Remaining examples: consider type-aware frontend linting.
+  - Current status: complete. Backend Ruff/Pyright, frontend Prettier, ESLint, and type-aware frontend linting are now part of the local/CI verification path.
 - [ ] Finish README and repo hygiene cleanup.
   - Review items: Q4, Q8
-  - Remaining examples: archive old planning docs, ignore local data directories, remove bundled/duplicate app artifacts, and keep docs aligned with current storage paths.
+  - Current status: local data paths, generated app artifacts, and old planning notes are now handled. Remaining work is to decide whether any archived notes should be deleted, merged into README/docs, or left as historical references.
 
 ## Commit Log Used
 
