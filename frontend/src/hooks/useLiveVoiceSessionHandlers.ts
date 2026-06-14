@@ -267,8 +267,19 @@ export function useLiveVoiceSessionHandlers({
       onCodexEvent: (event: unknown) => {
         const ctx = voiceCtxRef.current;
         if (!ctx || !event) return;
+        const codexEvent = event as CodexTimelineEvent;
+        if (
+          activeVoiceActionIdRef.current &&
+          codexEvent.method === "turn/completed" &&
+          codexEvent.status === "completed"
+        ) {
+          updateAction(activeVoiceActionIdRef.current, {
+            status: "done",
+            workdir: ctx.project.path,
+          });
+          activeVoiceActionIdRef.current = null;
+        }
         if (activeAssistantVoiceMsgIdRef.current) {
-          const codexEvent = event as CodexTimelineEvent;
           store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
             ...m,
             usedCodex: true,
