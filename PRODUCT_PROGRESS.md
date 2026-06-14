@@ -369,6 +369,10 @@ This file tracks what has been completed from the product review and what still 
   - Commit: `9d937e5` - Persist Codex thread mappings
   - Covers review feature: F3
   - Notes: Codex thread IDs are stored by app chat ID in SQLite and resumed with the SDK's `thread_resume`; if resume fails, the backend starts and stores a fresh thread.
+- [x] Added an in-process background Codex job queue.
+  - Commit: `94996fc` - Add background Codex job queue
+  - Covers review feature: F2
+  - Notes: direct Codex-mode tasks now enqueue, return control to the UI immediately, update the Console Actions entry through job polling, and persist the completed result/artifacts into chat history.
 - [x] Added project briefing context for voice/session startup.
   - Commit: `19dda8a` - Add project briefing context
   - Covers review feature: F5
@@ -421,8 +425,9 @@ This file tracks what has been completed from the product review and what still 
 
 ### Product Features
 
-- [ ] Build a real background task queue with voice or UI completion notifications.
+- [x] Build a real background task queue with voice or UI completion notifications.
   - Review feature: F2
+  - Current status: complete. Direct Codex-mode tasks run as backend jobs, the UI remains available, and completion/failure is surfaced through the existing Console Actions monitor and chat message update.
 - [x] Persist Codex threads across server restarts.
   - Review feature: F3
   - Current status: complete. Chat-scoped Codex thread IDs survive process restarts and are resumed when the next Codex turn runs for that chat.
@@ -547,3 +552,5 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-14 | `b5fd621` | Estimate Gemini Live usage |
 | 2026-06-14 | `0e44d2b` | Update progress for Gemini usage |
 | 2026-06-14 | `9d937e5` | Persist Codex thread mappings |
+| 2026-06-14 | `ae6a03d` | Update progress for Codex thread persistence |
+| 2026-06-14 | `94996fc` | Add background Codex job queue |
