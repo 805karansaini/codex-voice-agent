@@ -39,6 +39,11 @@ Without a token, the backend accepts same-machine requests only.
 By default, local app data is written under `backend/data`. Set `DATA_DIR` if you
 want history, artifacts, chats, console state, and logs somewhere else.
 
+Set `CODEX_AUTO_CHECKPOINT=true` if you want the backend to create a git
+checkpoint commit before each Codex turn when the selected project already has
+uncommitted changes. The default is `false`, so normal runs do not create commits
+unless you opt in.
+
 ### Tracing (optional)
 
 The backend is instrumented with [Langfuse](https://langfuse.com) for LLM observability.

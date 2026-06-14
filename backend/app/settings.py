@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     codex_default_workdir: str = Field(default=str(ROOT), alias="CODEX_DEFAULT_WORKDIR")
     codex_approval_mode: str = Field(default="auto-review", alias="CODEX_APPROVAL_MODE")
     codex_sandbox_mode: str = Field(default="workspace-write", alias="CODEX_SANDBOX_MODE")
+    codex_auto_checkpoint: bool = Field(default=False, alias="CODEX_AUTO_CHECKPOINT")
     data_dir: Path = Field(default=ROOT / "backend" / "data", alias="DATA_DIR")
     history_file: str = Field(default="history.json", alias="HISTORY_FILE")
 

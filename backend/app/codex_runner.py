@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,6 +49,14 @@ class CodexRun:
     turn_id: str | None = None
     status: str | None = None
     events: list[dict[str, Any]] | None = None
+
+
+@dataclass
+class CodexCheckpoint:
+    created: bool
+    commit: str | None
+    message: str
+    skipped_reason: str | None = None
 
 
 class CancellationToken:
@@ -101,6 +110,71 @@ def resolve_workdir(workdir: str) -> Path:
     if not root.is_dir():
         raise NotADirectoryError(f"Not a directory: {workdir}")
     return root
+
+
+def _git_output(root: Path, args: list[str]) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _git_status_code(root: Path, args: list[str], timeout: int = 10) -> tuple[int, str, str]:
+    proc = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+
+
+def _compact_commit_message(message: str) -> str:
+    value = " ".join(str(message or "").split())
+    if len(value) > 72:
+        return value[:69].rstrip() + "..."
+    return value
+
+
+def create_pre_codex_checkpoint(
+    workdir: str,
+    message: str = "Checkpoint before Codex turn",
+) -> CodexCheckpoint:
+    root = resolve_workdir(workdir)
+    git_root_value = _git_output(root, ["rev-parse", "--show-toplevel"])
+    if not git_root_value:
+        return CodexCheckpoint(False, None, message, "not_git")
+    git_root = Path(git_root_value).resolve()
+    status = _git_output(git_root, ["status", "--short"])
+    if not status:
+        return CodexCheckpoint(False, None, message, "clean")
+
+    add_code, _stdout, add_stderr = _git_status_code(git_root, ["add", "-A", "--"], timeout=30)
+    if add_code != 0:
+        raise ValueError(add_stderr or "Failed to stage checkpoint changes")
+
+    diff_code, _stdout, diff_stderr = _git_status_code(git_root, ["diff", "--cached", "--quiet"])
+    if diff_code == 0:
+        return CodexCheckpoint(False, None, message, "clean")
+    if diff_code not in (0, 1):
+        raise ValueError(diff_stderr or "Failed to inspect checkpoint changes")
+
+    commit_message = _compact_commit_message(message)
+    commit_code, _stdout, commit_stderr = _git_status_code(
+        git_root,
+        ["commit", "-m", commit_message],
+        timeout=30,
+    )
+    if commit_code != 0:
+        raise ValueError(commit_stderr or "Failed to create checkpoint commit")
+    commit_id = _git_output(git_root, ["rev-parse", "--short", "HEAD"])
+    return CodexCheckpoint(True, commit_id, commit_message)
 
 
 def _codex_modes(settings: Settings):
@@ -528,6 +602,16 @@ async def run_codex_stream(
     cancel_token: CancellationToken | None = None,
     conversation_id: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
+    if settings.codex_auto_checkpoint:
+        checkpoint = create_pre_codex_checkpoint(workdir)
+        yield {
+            "type": "checkpoint",
+            "created": checkpoint.created,
+            "commit": checkpoint.commit,
+            "message": checkpoint.message,
+            "skipped_reason": checkpoint.skipped_reason,
+        }
+
     if conversation_id:
         session = await _get_thread_session(workdir, settings, conversation_id)
         async with session.lock:

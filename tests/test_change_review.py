@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from backend.app.codex_runner import create_pre_codex_checkpoint
 from backend.app.main import _commit_changed_files, _revert_changed_files
 
 
@@ -11,6 +12,57 @@ def _git(root: Path, *args: str) -> None:
 
 
 class ChangeReviewTests(unittest.TestCase):
+    def test_pre_codex_checkpoint_commits_dirty_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _git(root, "init", "-b", "main")
+            _git(root, "config", "user.email", "test@example.com")
+            _git(root, "config", "user.name", "Test User")
+            (root / "app.py").write_text("print('original')\n", encoding="utf-8")
+            _git(root, "add", "app.py")
+            _git(root, "commit", "-m", "Initial")
+
+            (root / "app.py").write_text("print('changed')\n", encoding="utf-8")
+            (root / "notes.md").write_text("new note\n", encoding="utf-8")
+
+            result = create_pre_codex_checkpoint(str(root), "Checkpoint before test")
+
+            self.assertTrue(result.created)
+            self.assertTrue(result.commit)
+            self.assertEqual(result.message, "Checkpoint before test")
+            status = subprocess.run(
+                ["git", "status", "--short"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            self.assertEqual(status, "")
+            log = subprocess.run(
+                ["git", "log", "-1", "--pretty=%s"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            self.assertEqual(log, "Checkpoint before test")
+
+    def test_pre_codex_checkpoint_skips_clean_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _git(root, "init", "-b", "main")
+            _git(root, "config", "user.email", "test@example.com")
+            _git(root, "config", "user.name", "Test User")
+            (root / "app.py").write_text("print('original')\n", encoding="utf-8")
+            _git(root, "add", "app.py")
+            _git(root, "commit", "-m", "Initial")
+
+            result = create_pre_codex_checkpoint(str(root))
+
+            self.assertFalse(result.created)
+            self.assertIsNone(result.commit)
+            self.assertEqual(result.skipped_reason, "clean")
+
     def test_commit_changed_files_commits_only_selected_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
