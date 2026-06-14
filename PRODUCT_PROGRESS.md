@@ -365,6 +365,10 @@ This file tracks what has been completed from the product review and what still 
   - Commit: `3e2bcee` - Add optional Codex checkpoints
   - Covers remaining review feature: F1
   - Notes: `CODEX_AUTO_CHECKPOINT=true` creates a checkpoint commit before Codex starts when the selected project already has uncommitted changes; the default stays off.
+- [x] Persisted Codex thread mappings across backend restarts.
+  - Commit: `9d937e5` - Persist Codex thread mappings
+  - Covers review feature: F3
+  - Notes: Codex thread IDs are stored by app chat ID in SQLite and resumed with the SDK's `thread_resume`; if resume fails, the backend starts and stores a fresh thread.
 - [x] Added project briefing context for voice/session startup.
   - Commit: `19dda8a` - Add project briefing context
   - Covers review feature: F5
@@ -419,8 +423,9 @@ This file tracks what has been completed from the product review and what still 
 
 - [ ] Build a real background task queue with voice or UI completion notifications.
   - Review feature: F2
-- [ ] Persist Codex threads across server restarts.
+- [x] Persist Codex threads across server restarts.
   - Review feature: F3
+  - Current status: complete. Chat-scoped Codex thread IDs survive process restarts and are resumed when the next Codex turn runs for that chat.
 - [x] Add Gemini Live usage and cost estimates.
   - Review feature: F6
   - Current status: complete. Codex token usage is visible, and Gemini Live voice turns now persist and display approximate token/cost estimates.
@@ -540,3 +545,5 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-14 | `73bbabd` | Document project docs layout |
 | 2026-06-14 | `71615eb` | Update progress for repo hygiene |
 | 2026-06-14 | `b5fd621` | Estimate Gemini Live usage |
+| 2026-06-14 | `0e44d2b` | Update progress for Gemini usage |
+| 2026-06-14 | `9d937e5` | Persist Codex thread mappings |
