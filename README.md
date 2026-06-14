@@ -103,6 +103,15 @@ Codex SDK:
 
 https://developers.openai.com/codex/sdk
 
+## Project docs
+
+- `PRODUCT_REVIEW.md` is the source review and roadmap.
+- `PRODUCT_PROGRESS.md` tracks completed and pending review items.
+- `docs/live-voice-state-flow.md` documents the live voice state flow.
+- `docs/chat-artifact-workflow-plan.md` documents the chat artifact workflow.
+- `docs/archive/` keeps older planning notes as historical references; they are
+  not required for normal setup or operation.
+
 ## iPhone wrapper
 
 The frontend now includes a lightweight Capacitor iOS wrapper in `frontend/ios`.
