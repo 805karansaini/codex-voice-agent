@@ -343,6 +343,9 @@ This file tracks what has been completed from the product review and what still 
   - Commit: Archive planning notes
   - Partially covers review items: Q4, Q8
   - Notes: `HANDOVER.md`, `REALTIME_VOICE_AGENT_PLAN.md`, and `frontend-updated.md` now live under `docs/archive/`; generated iOS app files are ignored.
+- [x] Documented the project docs layout and archive decision.
+  - Commit: `73bbabd` - Document project docs layout
+  - Covers remaining review items: Q4, Q8
 
 ### New Features From The Roadmap
 
@@ -421,9 +424,9 @@ This file tracks what has been completed from the product review and what still 
 - [x] Tighten code quality gates further.
   - Follow-up to review item: Q2
   - Current status: complete. Backend Ruff/Pyright, frontend Prettier, ESLint, and type-aware frontend linting are now part of the local/CI verification path.
-- [ ] Finish README and repo hygiene cleanup.
+- [x] Finish README and repo hygiene cleanup.
   - Review items: Q4, Q8
-  - Current status: local data paths, generated app artifacts, and old planning notes are now handled. Remaining work is to decide whether any archived notes should be deleted, merged into README/docs, or left as historical references.
+  - Current status: complete. Local data paths and generated artifacts are ignored, old planning notes are archived under `docs/archive/`, and README now documents which docs are active versus historical references.
 
 ## Commit Log Used
 
@@ -529,3 +532,5 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-14 | `3e2bcee` | Add optional Codex checkpoints |
 | 2026-06-14 | `6536cd2` | Update progress for Codex checkpoints |
 | 2026-06-14 | `d2cad75` | Store project metadata in SQLite |
+| 2026-06-14 | `8faad61` | Update progress for SQLite storage |
+| 2026-06-14 | `73bbabd` | Document project docs layout |
