@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Project, Chat, Message } from "../types";
 import * as api from "../services/api";
-import { loadJSON, saveJSON, chatTitleFrom } from "../utils";
+import { loadJSON, saveJSON } from "../utils";
 import { mergeBackendHistoryWithLocalMessages } from "../utils/history";
 
-const LS_PROJECTS = "cva.projects.v1";
 const LS_ACTIVE = "cva.activeProject.v1";
 const LS_THREADS = "cva.threads.v1"; // Legacy
 const LS_CHATS = "cva.chats.v1";
@@ -14,48 +13,23 @@ const LS_THEME = "cva.theme.v1";
 
 type ChatState = {
   chats: Record<string, Chat[]>;
-  messages: Record<string, Message[]>;
   activeChat: Record<string, string>;
 };
 
 function loadChatState(): ChatState {
-  if (localStorage.getItem(LS_CHATS) !== null) {
-    return {
-      chats: loadJSON<Record<string, Chat[]>>(LS_CHATS, {}),
-      messages: {},
-      activeChat: loadJSON<Record<string, string>>(LS_ACTIVE_CHAT, {}),
-    };
-  }
-  const legacy = loadJSON<Record<string, Message[]>>(LS_THREADS, {});
-  const chats: Record<string, Chat[]> = {};
-  const messages: Record<string, Message[]> = {};
-  const activeChat: Record<string, string> = {};
-  for (const [projectId, msgs] of Object.entries(legacy)) {
-    const id = crypto.randomUUID();
-    const firstUser = msgs.find((m) => m.role === "user");
-    chats[projectId] = [
-      {
-        id,
-        projectId,
-        title: firstUser ? chatTitleFrom(firstUser.text) : "Chat 1",
-        createdAt: Date.now(),
-      },
-    ];
-    messages[id] = msgs;
-    activeChat[projectId] = id;
-  }
-  return { chats, messages, activeChat };
+  return {
+    chats: {},
+    activeChat: loadJSON<Record<string, string>>(LS_ACTIVE_CHAT, {}),
+  };
 }
 
 export function useProjectStore() {
-  const [projects, setProjects] = useState<Project[]>(() => loadJSON<Project[]>(LS_PROJECTS, []));
+  const [projects, setProjects] = useState<Project[]>([]);
   const [activeId, setActiveId] = useState<string>(() => loadJSON<string>(LS_ACTIVE, ""));
 
   const initialChatState = useRef(loadChatState()).current;
   const [chats, setChats] = useState<Record<string, Chat[]>>(initialChatState.chats);
-  const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>(
-    initialChatState.messages,
-  );
+  const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>({});
   const [activeChatByProject, setActiveChatByProject] = useState<Record<string, string>>(
     initialChatState.activeChat,
   );
@@ -73,11 +47,13 @@ export function useProjectStore() {
   const messages = activeChatId ? messagesByChat[activeChatId] || [] : [];
 
   // Local storage persistence
-  useEffect(() => saveJSON(LS_PROJECTS, projects), [projects]);
   useEffect(() => saveJSON(LS_ACTIVE, activeId), [activeId]);
-  useEffect(() => saveJSON(LS_CHATS, chats), [chats]);
   useEffect(() => saveJSON(LS_ACTIVE_CHAT, activeChatByProject), [activeChatByProject]);
-  useEffect(() => localStorage.removeItem(LS_MESSAGES), []);
+  useEffect(() => {
+    localStorage.removeItem(LS_MESSAGES);
+    localStorage.removeItem(LS_THREADS);
+    localStorage.removeItem(LS_CHATS);
+  }, []);
 
   useEffect(() => {
     saveJSON(LS_THEME, theme);
@@ -90,9 +66,13 @@ export function useProjectStore() {
     api
       .fetchProjects()
       .then((serverProjects) => {
-        if (cancelled || serverProjects.length === 0) return;
+        if (cancelled) return;
         setProjects(serverProjects);
-        setActiveId((current) => current || serverProjects[0]?.id || "");
+        setActiveId((current) =>
+          serverProjects.some((project) => project.id === current)
+            ? current
+            : serverProjects[0]?.id || "",
+        );
       })
       .catch(() => {});
     return () => {
@@ -105,7 +85,7 @@ export function useProjectStore() {
     api
       .fetchChats()
       .then((serverChats) => {
-        if (cancelled || serverChats.length === 0) return;
+        if (cancelled) return;
         const next: Record<string, Chat[]> = {};
         for (const chat of serverChats) {
           next[chat.projectId] = [...(next[chat.projectId] || []), chat];
