@@ -134,6 +134,24 @@ export type ActionEntry = {
   workdir?: string;
 };
 
+export type CodexJob = {
+  id: string;
+  task: string;
+  workdir: string;
+  project_id?: string;
+  chat_id?: string;
+  status: "queued" | "running" | "done" | "failed";
+  result: string;
+  error: string;
+  codex_events: CodexTimelineEvent[];
+  codex_turn_id?: string;
+  codex_thread_id?: string;
+  codex_status?: string;
+  artifacts?: ChatArtifact[];
+  created_at: string;
+  updated_at: string;
+};
+
 export type ConsoleState = {
   actions: ActionEntry[];
   handoffs: Handoff[];

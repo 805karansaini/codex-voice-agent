@@ -8,7 +8,7 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, AsyncIterator, Protocol, TypedDict, cast
 
@@ -999,6 +999,157 @@ def _compact_commit_message(message: str) -> str:
     if len(value) > 72:
         return value[:69].rstrip() + "..."
     return value
+
+
+@dataclass
+class _CodexBackgroundJob:
+    id: str
+    task: str
+    enhanced_task: str
+    workdir: str
+    project_id: str | None
+    chat_id: str | None
+    status: str = "queued"
+    result: str = ""
+    error: str = ""
+    codex_events: list[dict[str, Any]] = field(default_factory=list)
+    codex_turn_id: str | None = None
+    codex_thread_id: str | None = None
+    codex_status: str | None = None
+    artifacts: list[dict[str, object]] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "task": self.task,
+            "workdir": self.workdir,
+            "project_id": self.project_id,
+            "chat_id": self.chat_id,
+            "status": self.status,
+            "result": self.result,
+            "error": self.error,
+            "codex_events": self.codex_events[-200:],
+            "codex_turn_id": self.codex_turn_id,
+            "codex_thread_id": self.codex_thread_id,
+            "codex_status": self.codex_status,
+            "artifacts": self.artifacts,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+_codex_jobs: dict[str, _CodexBackgroundJob] = {}
+_codex_jobs_lock = asyncio.Lock()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _touch_job(job: _CodexBackgroundJob, status: str | None = None) -> None:
+    if status:
+        job.status = status
+    job.updated_at = _utc_now_iso()
+
+
+async def _store_job(job: _CodexBackgroundJob) -> None:
+    async with _codex_jobs_lock:
+        _codex_jobs[job.id] = job
+
+
+async def _get_job(job_id: str) -> _CodexBackgroundJob | None:
+    async with _codex_jobs_lock:
+        return _codex_jobs.get(job_id)
+
+
+async def _list_jobs(chat_id: str | None = None) -> list[dict[str, object]]:
+    async with _codex_jobs_lock:
+        rows = list(_codex_jobs.values())
+    if chat_id is not None:
+        rows = [job for job in rows if job.chat_id == chat_id]
+    rows.sort(key=lambda job: job.created_at, reverse=True)
+    return [job.to_dict() for job in rows[:50]]
+
+
+async def _run_codex_background_job(job_id: str) -> None:
+    job = await _get_job(job_id)
+    if job is None:
+        return
+    _touch_job(job, "running")
+    app_log.write("codex_job.start", job_id=job.id, chat_id=job.chat_id, workdir=job.workdir)
+    try:
+        async for event in run_codex_stream_with_timer(
+            job.enhanced_task,
+            job.workdir,
+            settings,
+            None,
+            job.chat_id,
+        ):
+            if event.get("type") == "codex_event":
+                job.codex_events.append(dict(event))
+                _touch_job(job)
+            elif event.get("type") == "done":
+                job.result = str(event.get("text") or "")
+                job.workdir = str(event.get("workdir") or job.workdir)
+                job.codex_events = list(event.get("events") or job.codex_events)
+                job.codex_turn_id = event.get("turn_id")
+                job.codex_thread_id = event.get("thread_id")
+                job.codex_status = event.get("status")
+                artifact = _create_tool_artifact(
+                    chat_id=job.chat_id,
+                    message_id=None,
+                    title="Codex output",
+                    content=job.result,
+                    source="background_codex",
+                    workdir=job.workdir,
+                )
+                if artifact:
+                    job.artifacts.append(artifact)
+                change_artifact = _create_change_review_artifact(
+                    chat_id=job.chat_id,
+                    workdir=job.workdir,
+                    codex_events=cast(list[object], job.codex_events),
+                )
+                if change_artifact:
+                    job.artifacts.append(change_artifact)
+                history.append(
+                    "assistant",
+                    job.result or "Codex background task completed.",
+                    {
+                        "direct_codex": True,
+                        "background_job_id": job.id,
+                        "artifacts": job.artifacts,
+                        "workdir": job.workdir,
+                        "project_id": job.project_id,
+                        "chat_id": job.chat_id,
+                        "codex_events": job.codex_events[-200:],
+                        "codex_turn_id": job.codex_turn_id,
+                        "codex_thread_id": job.codex_thread_id,
+                        "codex_status": job.codex_status,
+                    },
+                )
+                _touch_job(job, "done")
+                app_log.write(
+                    "codex_job.done",
+                    job_id=job.id,
+                    chat_id=job.chat_id,
+                    codex_status=job.codex_status,
+                    result_chars=len(job.result),
+                )
+            elif event.get("type") == "error":
+                job.error = str(event.get("message") or "Codex failed")
+                _touch_job(job, "failed")
+                app_log.write("codex_job.error", job_id=job.id, message=clip_text(job.error))
+    except Exception as exc:
+        job.error = str(exc)
+        _touch_job(job, "failed")
+        app_log.write("codex_job.exception", job_id=job.id, message=clip_text(exc))
+    finally:
+        if job.status == "running":
+            _touch_job(job, "failed")
+            job.error = job.error or "Codex task ended before completion"
 
 
 class ChatRequest(BaseModel):
@@ -2047,6 +2198,57 @@ async def commit_change_review(req: ChangeReviewCommitRequest) -> _CommitResult:
         commit=result.get("commit"),
     )
     return result
+
+
+@app.post("/api/codex/jobs")
+async def enqueue_codex_job(req: CodexRequest) -> dict[str, object]:
+    task = req.task.strip()
+    if not task:
+        raise HTTPException(status_code=400, detail="Task is required")
+    workdir = _resolve_scoped_workdir(req.workdir, project_id=req.project_id)
+    job = _CodexBackgroundJob(
+        id=str(uuid.uuid4()),
+        task=task,
+        enhanced_task=improve_codex_task_prompt(task),
+        workdir=workdir,
+        project_id=req.project_id,
+        chat_id=req.chat_id,
+    )
+    await _store_job(job)
+    history.append(
+        "user",
+        task,
+        {
+            "direct_codex": True,
+            "background_job_id": job.id,
+            "workdir": workdir,
+            "project_id": req.project_id,
+            "chat_id": req.chat_id,
+        },
+    )
+    asyncio.create_task(_run_codex_background_job(job.id))
+    app_log.write(
+        "codex_job.queued",
+        job_id=job.id,
+        chat_id=req.chat_id,
+        project_id=req.project_id,
+        workdir=workdir,
+        task_chars=len(task),
+    )
+    return job.to_dict()
+
+
+@app.get("/api/codex/jobs")
+async def list_codex_jobs(chat_id: str | None = None) -> list[dict[str, object]]:
+    return await _list_jobs(chat_id=chat_id)
+
+
+@app.get("/api/codex/jobs/{job_id}")
+async def get_codex_job(job_id: str) -> dict[str, object]:
+    job = await _get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Codex job not found")
+    return job.to_dict()
 
 
 @app.post("/api/codex/stream")

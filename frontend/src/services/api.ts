@@ -2,6 +2,7 @@ import {
   Project,
   Chat,
   ConsoleState,
+  CodexJob,
   HistoryRow,
   ProjectInfo,
   SearchResult,
@@ -224,6 +225,32 @@ export async function postCodexStream(
     }),
     signal,
   });
+}
+
+export async function enqueueCodexJob(options: StreamOptions): Promise<CodexJob> {
+  const res = await fetch(`${API_BASE}/api/codex/jobs`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      task: options.task,
+      workdir: options.workdir,
+      project_id: options.projectId,
+      chat_id: options.chatId,
+    }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || "Failed to enqueue Codex job");
+  }
+  return res.json();
+}
+
+export async function fetchCodexJob(jobId: string): Promise<CodexJob> {
+  const res = await fetch(`${API_BASE}/api/codex/jobs/${encodeURIComponent(jobId)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch Codex job");
+  return res.json();
 }
 
 export async function postChatStream(

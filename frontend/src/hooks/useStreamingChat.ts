@@ -45,7 +45,7 @@ export function useStreamingChat({
   const streamCodex = useCallback(
     async (task: string, project: Project, chatId: string) => {
       const actionId = addAction({
-        title: "Codex task",
+        title: "Background Codex task",
         status: "running",
         detail: task,
         workdir: project.path,
@@ -54,118 +54,95 @@ export function useStreamingChat({
       store.appendMessage(chatId, {
         id: assistantId,
         role: "assistant",
-        text: "",
+        text: "Started a background Codex task. I will update this message when it finishes.",
         usedCodex: true,
         streaming: true,
+        workdir: project.path,
       });
 
-      const controller = new AbortController();
-      activeAbortControllerRef.current = controller;
-
-      let finalText = "";
-
       try {
-        const res = await api.postCodexStream(
-          {
-            task,
-            workdir: project.path,
-            projectId: project.id,
-            chatId,
-          },
-          controller.signal,
-        );
+        const queued = await api.enqueueCodexJob({
+          task,
+          workdir: project.path,
+          projectId: project.id,
+          chatId,
+        });
+        updateAction(actionId, {
+          detail: `${task}\n\nJob ${queued.id} is ${queued.status}.`,
+          workdir: queued.workdir || project.path,
+        });
 
-        if (!res.ok || !res.body) {
-          const payload = await res.json().catch(() => ({}));
-          store.updateMessage(chatId, assistantId, (message) => ({
-            ...message,
-            streaming: false,
-            text: message.text || "Codex request failed.",
-          }));
-          updateAction(actionId, {
-            status: "failed",
-            streamingResponse: payload.detail || "Codex request failed",
-          });
-          throw new Error(payload.detail || "Codex request failed");
-        }
-
-        const handle = (evt: any) => {
-          if (evt.type === "codex_event" && evt.method) {
-            store.updateMessage(chatId, assistantId, (message) => ({
-              ...message,
-              codexEvents: appendCodexEvent(message.codexEvents, evt as CodexTimelineEvent),
-              codexStatus: String(evt.status || message.codexStatus || ""),
-              codexTurnId: String(evt.turn_id || message.codexTurnId || ""),
-              codexThreadId: String(evt.thread_id || message.codexThreadId || ""),
-            }));
-          } else if (evt.type === "delta" && evt.text) {
-            finalText += evt.text;
-            store.updateMessage(chatId, assistantId, (message) => ({
-              ...message,
-              text: message.text + evt.text,
-            }));
-            updateAction(actionId, (prev) => ({
-              streamingResponse: (prev.streamingResponse || "") + evt.text,
-            }));
-          } else if (evt.type === "done") {
-            finalText = String(evt.text ?? finalText);
-            store.updateMessage(chatId, assistantId, (message) => ({
-              ...message,
-              text: finalText || message.text,
+        const pollJob = async () => {
+          try {
+            const job = await api.fetchCodexJob(queued.id);
+            if (job.status === "queued" || job.status === "running") {
+              store.updateMessage(chatId, assistantId, (message) => ({
+                ...message,
+                codexEvents: job.codex_events || message.codexEvents || [],
+                codexStatus: job.codex_status || message.codexStatus,
+                codexTurnId: job.codex_turn_id || message.codexTurnId,
+                codexThreadId: job.codex_thread_id || message.codexThreadId,
+              }));
+              window.setTimeout(() => void pollJob(), 1500);
+              return;
+            }
+            if (job.status === "done") {
+              const finalText = job.result || "Codex background task completed.";
+              store.updateMessage(chatId, assistantId, (message) => ({
+                ...message,
+                text: finalText,
+                streaming: false,
+                workdir: job.workdir,
+                codexEvents: job.codex_events || message.codexEvents || [],
+                codexStatus: job.codex_status || message.codexStatus,
+                codexTurnId: job.codex_turn_id || message.codexTurnId,
+                codexThreadId: job.codex_thread_id || message.codexThreadId,
+                artifacts: appendArtifacts(message.artifacts, ...(job.artifacts || [])),
+              }));
+              updateAction(actionId, {
+                status: "done",
+                streamingResponse: finalText,
+                workdir: job.workdir || project.path,
+              });
+              addHandoff("background_codex", finalText.slice(0, 160));
+              speak(finalText);
+              return;
+            }
+            const message = job.error || "Codex background task failed.";
+            store.updateMessage(chatId, assistantId, (current) => ({
+              ...current,
               streaming: false,
-              workdir: evt.workdir,
-              codexEvents: (evt.events || message.codexEvents || []) as CodexTimelineEvent[],
-              codexStatus: String(evt.status || message.codexStatus || ""),
-              codexTurnId: String(evt.turn_id || message.codexTurnId || ""),
-              codexThreadId: String(evt.thread_id || message.codexThreadId || ""),
-              artifacts: appendArtifacts(
-                message.artifacts,
-                evt.artifact as ChatArtifact | undefined,
-                evt.change_artifact as ChatArtifact | undefined,
-              ),
-            }));
-            updateAction(actionId, {
-              status: "done",
-              streamingResponse: finalText,
-              workdir: evt.workdir || project.path,
-            });
-            addHandoff("run_codex_task", finalText.slice(0, 160));
-          } else if (evt.type === "error") {
-            store.updateMessage(chatId, assistantId, (message) => ({
-              ...message,
-              streaming: false,
+              text: message,
             }));
             updateAction(actionId, {
               status: "failed",
-              streamingResponse: String(evt.message || "Codex failed"),
+              streamingResponse: message,
             });
-            setError(String(evt.message || "Codex failed"));
+            setError(message);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to poll Codex job";
+            updateAction(actionId, {
+              status: "failed",
+              streamingResponse: message,
+            });
+            setError(message);
           }
         };
-
-        await readSseStream(res, handle);
+        window.setTimeout(() => void pollJob(), 1000);
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-          store.updateMessage(chatId, assistantId, (message) => ({
-            ...message,
-            streaming: false,
-            text: message.text || "Cancelled.",
-          }));
-          updateAction(actionId, {
-            status: "failed",
-            streamingResponse: "Cancelled by user.",
-          });
-          return;
-        }
+        store.updateMessage(chatId, assistantId, (message) => ({
+          ...message,
+          streaming: false,
+          text: message.text || "Codex request failed.",
+        }));
+        updateAction(actionId, {
+          status: "failed",
+          streamingResponse: err instanceof Error ? err.message : "Codex request failed",
+        });
         throw err;
       } finally {
         activeAbortControllerRef.current = null;
       }
-
-      store.updateMessage(chatId, assistantId, (message) =>
-        message.streaming ? { ...message, streaming: false } : message,
-      );
-      if (finalText) speak(finalText);
     },
     [activeAbortControllerRef, addAction, addHandoff, speak, store, updateAction, setError],
   );
