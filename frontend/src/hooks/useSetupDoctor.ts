@@ -22,7 +22,7 @@ export function useSetupDoctor() {
         try {
           const permissions = navigator.permissions;
           if (permissions?.query) {
-            const status = await permissions.query({ name: "microphone" as PermissionName });
+            const status = await permissions.query({ name: "microphone" });
             micCheck = {
               name: "Microphone permission",
               ok: status.state === "granted" || status.state === "prompt",

@@ -159,11 +159,15 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
                   if (error) setError("");
                 }}
                 placeholder="/Users/username/Projects/my-app"
-                onKeyDown={(e) => e.key === "Enter" && submit()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void submit();
+                }}
               />
               <button
                 type="button"
-                onClick={browse}
+                onClick={() => {
+                  void browse();
+                }}
                 disabled={picking}
                 className="flex items-center gap-1.5 shrink-0 rounded-md border border-line bg-surface-2 px-3 py-2 text-[12px] font-medium text-fg hover:bg-surface-3 transition-colors disabled:opacity-50"
               >
@@ -220,7 +224,9 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
           </button>
           <button
             type="button"
-            onClick={submit}
+            onClick={() => {
+              void submit();
+            }}
             disabled={!name.trim() || !path.trim() || checking}
             className="rounded-md bg-accent px-4 py-2 text-[12.5px] font-semibold text-accent-foreground hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm glow-accent"
           >

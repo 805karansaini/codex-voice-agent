@@ -32,6 +32,10 @@ function appendCodexEvent(
   return [...current, event].slice(-80);
 }
 
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
 export function useLiveVoiceSessionHandlers({
   store,
   addAction,
@@ -288,9 +292,9 @@ export function useLiveVoiceSessionHandlers({
               ...m,
               usedCodex: true,
               codexEvents: (details?.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
-              codexStatus: String(details?.codex_status || m.codexStatus || ""),
-              codexTurnId: String(details?.codex_turn_id || m.codexTurnId || ""),
-              codexThreadId: String(details?.codex_thread_id || m.codexThreadId || ""),
+              codexStatus: stringValue(details?.codex_status, m.codexStatus),
+              codexTurnId: stringValue(details?.codex_turn_id, m.codexTurnId),
+              codexThreadId: stringValue(details?.codex_thread_id, m.codexThreadId),
               artifacts: appendArtifacts(m.artifacts, artifact, changeArtifact),
             }));
           } else {
@@ -305,9 +309,9 @@ export function useLiveVoiceSessionHandlers({
               workdir,
               artifacts: appendArtifacts([], artifact, changeArtifact),
               codexEvents: (details?.codex_events || []) as CodexTimelineEvent[],
-              codexStatus: String(details?.codex_status || ""),
-              codexTurnId: String(details?.codex_turn_id || ""),
-              codexThreadId: String(details?.codex_thread_id || ""),
+              codexStatus: stringValue(details?.codex_status),
+              codexTurnId: stringValue(details?.codex_turn_id),
+              codexThreadId: stringValue(details?.codex_thread_id),
             });
           }
         }

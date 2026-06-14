@@ -72,7 +72,7 @@ class AudioStreamPlayer {
       this.nextPlayTime = 0;
     }
     if (this.ctx.state === "suspended") {
-      this.ctx.resume();
+      void this.ctx.resume();
     }
   }
 
@@ -436,7 +436,7 @@ export function useLiveVoice({
               }
               hasStreamedAudioRef.current = true;
             } catch (err) {
-              log(`Error playing audio chunk: ${err}`);
+              log(`Error playing audio chunk: ${String(err)}`);
             }
           }
         } else if (payload.type === "tool_call_started") {

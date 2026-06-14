@@ -67,14 +67,14 @@ export function useLiveVoiceControls({
     resetActiveVoiceMessages();
     if (voiceActive) {
       stopActiveVoiceHandoff("Stopped before completion.");
-      liveVoice.stop();
+      void liveVoice.stop();
       clearVoiceContext();
     } else if (store.activeProject) {
       const chatId = store.activeChatId || store.createChat(store.activeProject.id).id;
       setVoiceContext(store.activeProject, chatId);
-      liveVoice.start();
+      void liveVoice.start();
       if (voiceInputMode === "push") {
-        liveVoice.setMuted(true);
+        void liveVoice.setMuted(true);
       }
     }
   }, [

@@ -35,10 +35,23 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["src/**/*.{ts,tsx}", "vite.config.ts"],
+    files: ["*.js"],
+    extends: [tseslint.configs.disableTypeChecked],
+  },
+  {
+    files: ["tests/**/*.ts"],
+    extends: [tseslint.configs.disableTypeChecked],
+  },
+  {
+    files: ["src/**/*.{ts,tsx}", "vite.config.ts", "capacitor.config.ts"],
+    extends: [tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       ecmaVersion: 2020,
       globals: browserGlobals,
+      parserOptions: {
+        project: ["./tsconfig.json", "./tsconfig.node.json"],
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     plugins: {
       "react-hooks": reactHooks,
@@ -51,6 +64,11 @@ export default tseslint.config(
       "react-hooks/refs": "off",
       "react-hooks/set-state-in-effect": "off",
       "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unused-vars": [
         "warn",
         {
