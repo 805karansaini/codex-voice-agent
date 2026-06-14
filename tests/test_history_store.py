@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.app.history import ArtifactStore, HistoryStore, ProjectStore
+from backend.app.history import ArtifactStore, ChatStore, ConsoleStore, HistoryStore, ProjectStore
 
 
 class HistoryStoreTests(unittest.TestCase):
@@ -118,6 +118,75 @@ class ProjectStoreTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 store.upsert({"id": "two", "path": "/tmp/example", "name": "Two"})
+
+    def test_migrates_legacy_projects_into_shared_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "projects.json").write_text(
+                '[{"id":"one","name":"One","path":"/tmp/one","color":"#fff","createdAt":10}]',
+                encoding="utf-8",
+            )
+            store = ProjectStore(root / "projects.json", db_path=root / "history.json")
+
+            self.assertEqual(store.path, root / "history.sqlite3")
+            self.assertEqual(store.list()[0]["id"], "one")
+
+
+class ChatStoreTests(unittest.TestCase):
+    def test_migrates_legacy_chats_and_filters_by_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "chats.json").write_text(
+                """
+                [
+                  {"id":"chat-1","projectId":"project-1","title":"One","createdAt":10},
+                  {"id":"chat-2","projectId":"project-2","title":"Two","createdAt":20}
+                ]
+                """,
+                encoding="utf-8",
+            )
+            store = ChatStore(root / "chats.json", db_path=root / "history.json")
+
+            rows = store.list(project_id="project-1")
+
+            self.assertEqual(store.path, root / "history.sqlite3")
+            self.assertEqual([row["id"] for row in rows], ["chat-1"])
+
+
+class ConsoleStoreTests(unittest.TestCase):
+    def test_migrates_legacy_console_state_and_marks_running_actions_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "console.json").write_text(
+                """
+                {
+                  "chat-1": {
+                    "actions": [{"id":"action-1","status":"running","detail":"Build"}],
+                    "handoffs": [],
+                    "debugEntries": []
+                  }
+                }
+                """,
+                encoding="utf-8",
+            )
+            store = ConsoleStore(root / "console.json", db_path=root / "history.json")
+
+            state = store.get("chat-1")
+
+            self.assertEqual(store.path, root / "history.sqlite3")
+            self.assertEqual(state["actions"][0]["status"], "failed")
+
+    def test_put_get_and_clear_console_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ConsoleStore(Path(tmp) / "console.json", db_path=Path(tmp) / "history.json")
+
+            saved = store.put("chat-1", {"actions": [{"id": "done", "status": "done"}]})
+            loaded = store.get("chat-1")
+            store.clear("chat-1")
+
+            self.assertEqual(saved["actions"][0]["id"], "done")
+            self.assertEqual(loaded["actions"][0]["id"], "done")
+            self.assertEqual(store.get("chat-1"), {"actions": [], "handoffs": [], "debugEntries": []})
 
 
 if __name__ == "__main__":

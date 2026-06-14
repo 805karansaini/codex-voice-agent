@@ -172,9 +172,9 @@ class _LiveTurnState:
 settings = get_settings()
 history = HistoryStore(settings.history_path)
 artifacts = ArtifactStore(settings.history_path)
-projects = ProjectStore(settings.history_path.with_name("projects.json"))
-chats = ChatStore(settings.history_path.with_name("chats.json"))
-console = ConsoleStore(settings.history_path.with_name("console.json"))
+projects = ProjectStore(settings.history_path.with_name("projects.json"), db_path=settings.history_path)
+chats = ChatStore(settings.history_path.with_name("chats.json"), db_path=settings.history_path)
+console = ConsoleStore(settings.history_path.with_name("console.json"), db_path=settings.history_path)
 app_log = JsonlEventLogger(settings.history_path.with_name("app_events.jsonl"))
 
 
