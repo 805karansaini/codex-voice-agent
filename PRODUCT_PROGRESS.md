@@ -381,6 +381,10 @@ This file tracks what has been completed from the product review and what still 
   - Commit: Show Codex token usage
   - Partially covers review feature: F6
   - Notes: Codex token usage events are now persisted and shown in the console footer; Gemini Live usage still needs provider-side usage capture.
+- [x] Added Gemini Live usage and cost estimates.
+  - Commit: `b5fd621` - Estimate Gemini Live usage
+  - Covers remaining review feature: F6
+  - Notes: Gemini Live events do not expose official billing metadata here, so the console shows an explicitly approximate estimate based on captured transcript size and audio bytes.
 - [x] Added an onboarding doctor for setup checks.
   - Commit: Add onboarding doctor
   - Covers review feature: F6
@@ -417,9 +421,9 @@ This file tracks what has been completed from the product review and what still 
   - Review feature: F2
 - [ ] Persist Codex threads across server restarts.
   - Review feature: F3
-- [ ] Add Gemini Live usage and cost estimates.
+- [x] Add Gemini Live usage and cost estimates.
   - Review feature: F6
-  - Current status: Codex token usage is visible; Gemini Live token/audio usage and pricing are still pending.
+  - Current status: complete. Codex token usage is visible, and Gemini Live voice turns now persist and display approximate token/cost estimates.
 ### Reliability And Polish
 - [x] Tighten code quality gates further.
   - Follow-up to review item: Q2
@@ -534,3 +538,5 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-14 | `d2cad75` | Store project metadata in SQLite |
 | 2026-06-14 | `8faad61` | Update progress for SQLite storage |
 | 2026-06-14 | `73bbabd` | Document project docs layout |
+| 2026-06-14 | `71615eb` | Update progress for repo hygiene |
+| 2026-06-14 | `b5fd621` | Estimate Gemini Live usage |
