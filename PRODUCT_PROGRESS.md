@@ -1,6 +1,6 @@
 # Codex Voice Agent - Product Progress
 
-Updated: 2026-06-13
+Updated: 2026-06-14
 
 Source material:
 - `PRODUCT_REVIEW.md`, reviewed 2026-06-09
@@ -443,45 +443,77 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-11 | `31b53fa` | Document console state overwrite behavior |
 | 2026-06-11 | `e4724d1` | Correct false live tool claims |
 | 2026-06-11 | `cc3f545` | Move typed chat off Live API |
-| 2026-06-13 | current commit | Add lint and format tooling |
-| 2026-06-13 | current commit | Export chats as markdown |
-| 2026-06-13 | current commit | Search chats and artifacts |
-| 2026-06-13 | current commit | Show Codex token usage |
-| 2026-06-13 | current commit | Add onboarding doctor |
-| 2026-06-13 | current commit | Support project subpath workdirs |
-| 2026-06-13 | current commit | Add push-to-talk voice mode |
-| 2026-06-13 | current commit | Document Google GenAI SDK pin |
-| 2026-06-13 | current commit | Add streaming response accessibility status |
-| 2026-06-13 | current commit | Document live voice state flow |
-| 2026-06-13 | current commit | Extract artifact card component |
-| 2026-06-13 | current commit | Extract Codex timeline component |
-| 2026-06-13 | current commit | Extract change review chip component |
-| 2026-06-13 | current commit | Extract chat action modals |
-| 2026-06-13 | current commit | Remove unused frontend lint warnings |
-| 2026-06-13 | current commit | Resolve frontend hook lint warnings |
-| 2026-06-13 | current commit | Improve modal focus handling |
-| 2026-06-13 | current commit | Improve chat switcher keyboard flow |
-| 2026-06-13 | current commit | Add frontend SSE parser tests |
-| 2026-06-13 | current commit | Add frontend artifact helper tests |
-| 2026-06-13 | current commit | Add frontend history merge tests |
-| 2026-06-13 | current commit | Add prompting sanitizer tests |
-| 2026-06-13 | current commit | Add change review revert action |
-| 2026-06-13 | current commit | Add change review commit action |
-| 2026-06-13 | current commit | Add backend pyright check |
-| 2026-06-13 | current commit | Enforce frontend prettier check |
-| 2026-06-13 | current commit | Stabilize live voice reconnect callbacks |
-| 2026-06-13 | current commit | Clarify Gemini cleanup exception handling |
-| 2026-06-13 | current commit | Prefer backend history for chat messages |
-| 2026-06-13 | current commit | Extract chat top bar component |
-| 2026-06-13 | current commit | Extract composer footer component |
-| 2026-06-13 | current commit | Extract console tabs component |
-| 2026-06-13 | current commit | Extract console stream panel component |
-| 2026-06-13 | current commit | Extract console handoffs panel component |
-| 2026-06-13 | current commit | Extract console actions panel component |
-| 2026-06-13 | current commit | Extract console voice panel component |
-| 2026-06-13 | current commit | Extract console stats footer component |
-| 2026-06-13 | current commit | Extract console header component |
-| 2026-06-13 | current commit | Extract activity rail component |
-| 2026-06-13 | current commit | Extract workspace sidebar component |
-| 2026-06-13 | current commit | Extract chat stream component |
-| 2026-06-13 | current commit | Extract streaming chat hook |
+| 2026-06-13 | `e7bdbde` | Add lint and format tooling |
+| 2026-06-13 | `72bd4db` | Export chats as markdown |
+| 2026-06-13 | `2b389a8` | Search chats and artifacts |
+| 2026-06-13 | `ac92495` | Show Codex token usage |
+| 2026-06-13 | `ae8619c` | Add onboarding doctor |
+| 2026-06-13 | `644e386` | Support project subpath workdirs |
+| 2026-06-13 | `86ff171` | Add push-to-talk voice mode |
+| 2026-06-13 | `cc31257` | Mark FastAPI lifespan complete |
+| 2026-06-13 | `2855ac2` | Document Google GenAI SDK pin |
+| 2026-06-13 | `3bc5757` | Add streaming response accessibility status |
+| 2026-06-13 | `055b548` | Document live voice state flow |
+| 2026-06-13 | `b93083c` | Extract artifact card component |
+| 2026-06-13 | `7974699` | Extract Codex timeline component |
+| 2026-06-13 | `ca150ef` | Extract change review chip component |
+| 2026-06-13 | `ea99f17` | Extract chat action modals |
+| 2026-06-13 | `7400810` | Remove unused frontend lint warnings |
+| 2026-06-13 | `2e5c9aa` | Resolve frontend hook lint warnings |
+| 2026-06-13 | `8757351` | Improve modal focus handling |
+| 2026-06-13 | `099dd89` | Improve chat switcher keyboard flow |
+| 2026-06-13 | `7a32b3e` | Add frontend SSE parser tests |
+| 2026-06-13 | `dda61a9` | Add frontend artifact helper tests |
+| 2026-06-13 | `a2527e0` | Add frontend history merge tests |
+| 2026-06-13 | `6d60c7d` | Add prompting sanitizer tests |
+| 2026-06-13 | `1db6766` | Add change review revert action |
+| 2026-06-13 | `8ba335e` | Add change review commit action |
+| 2026-06-13 | `e8e63b1` | Add backend pyright check |
+| 2026-06-13 | `2fe3ca1` | Enforce frontend prettier check |
+| 2026-06-13 | `4272adf` | Stabilize live voice reconnect callbacks |
+| 2026-06-13 | `8556cbe` | Clarify Gemini cleanup exception handling |
+| 2026-06-13 | `09ddb5f` | Prefer backend history for chat messages |
+| 2026-06-13 | `e71d8fe` | Extract chat top bar component |
+| 2026-06-13 | `6e92e87` | Extract composer footer component |
+| 2026-06-13 | `95f6eea` | Extract console tabs component |
+| 2026-06-13 | `30f9a65` | Extract console stream panel component |
+| 2026-06-13 | `fd74a93` | Extract console handoffs panel component |
+| 2026-06-13 | `528db7f` | Extract console actions panel component |
+| 2026-06-13 | `fa0d3d0` | Extract console voice panel component |
+| 2026-06-13 | `d550d0d` | Extract console stats footer component |
+| 2026-06-13 | `ee45dda` | Extract console header component |
+| 2026-06-13 | `86ff76b` | Extract activity rail component |
+| 2026-06-13 | `17f51a9` | Extract workspace sidebar component |
+| 2026-06-13 | `a96f775` | Extract chat stream component |
+| 2026-06-13 | `7f5c9b1` | Extract streaming chat hook |
+| 2026-06-13 | `40eb179` | Extract speech playback hook |
+| 2026-06-13 | `135bc1b` | Extract console session hook |
+| 2026-06-13 | `2aa3d22` | Extract app layout hook |
+| 2026-06-13 | `6f0f03f` | Extract project info hook |
+| 2026-06-13 | `bb9da8f` | Extract workspace search hook |
+| 2026-06-13 | `3b304e4` | Extract setup doctor hook |
+| 2026-06-13 | `637be55` | Extract change review actions hook |
+| 2026-06-13 | `0f8df96` | Extract backend status hook |
+| 2026-06-13 | `1c1f027` | Extract chat export hook |
+| 2026-06-13 | `ffff7e9` | Extract chat action dialog hook |
+| 2026-06-13 | `df5dc44` | Extract chat display state hook |
+| 2026-06-13 | `4c6ec76` | Extract message auto-scroll hook |
+| 2026-06-13 | `14e1ce0` | Extract composer input hook |
+| 2026-06-13 | `e61345c` | Extract search result navigation hook |
+| 2026-06-13 | `88cb541` | Extract chat switcher keyboard hook |
+| 2026-06-13 | `624246b` | Extract clear thread hook |
+| 2026-06-13 | `89a2115` | Extract workspace sidebar state hook |
+| 2026-06-13 | `a0aa3b3` | Extract voice input mode hook |
+| 2026-06-13 | `2dfe08d` | Extract console panel state hook |
+| 2026-06-13 | `0eeefc8` | Extract console panel component |
+| 2026-06-13 | `038e689` | Extract chat panel component |
+| 2026-06-13 | `5234a4b` | Extract app title bar component |
+| 2026-06-13 | `294f7b1` | Extract workspace layout component |
+| 2026-06-13 | `b182a8d` | Extract live voice session handler hook |
+| 2026-06-14 | `8a28bf8` | Complete App decomposition |
+| 2026-06-14 | `2c3b85c` | Extract live handler helpers |
+| 2026-06-14 | `7b093cb` | Prefer backend project and chat lists |
+| 2026-06-14 | `d806145` | Archive planning notes |
+| 2026-06-14 | `4b299eb` | Add Capacitor frontend config |
+| 2026-06-14 | `5b070a9` | Add type-aware frontend linting |
+| 2026-06-14 | `8a54a26` | Update product progress tracker |
