@@ -194,6 +194,7 @@ export function useLiveVoice({
   const reconnectNoticeSentRef = useRef(false);
   const connectSocketRef = useRef<(() => WebSocket | undefined) | null>(null);
   const stopRef = useRef<(() => Promise<void>) | null>(null);
+  const audioSentSinceTurnEndRef = useRef(false);
 
   const clearToolResultFallback = useCallback(() => {
     if (toolResultFallbackTimerRef.current) {
@@ -268,31 +269,47 @@ export function useLiveVoice({
 
   const log = useCallback((text: string) => cbRef.current.onDebug(text), []);
 
+  const endCurrentAudioTurn = useCallback(() => {
+    if (!audioSentSinceTurnEndRef.current) return;
+    const websocket = websocketRef.current;
+    if (websocket?.readyState !== WebSocket.OPEN) return;
+    websocket.send(JSON.stringify({ type: "stop" }));
+    audioSentSinceTurnEndRef.current = false;
+    log("[Audio] Finalized current voice turn.");
+  }, [log]);
+
   const setInputMuted = useCallback(
     (next: boolean) => {
+      const wasMuted = mutedRef.current;
       mutedRef.current = next;
       setMuted(next);
+      if (next && !wasMuted) {
+        endCurrentAudioTurn();
+      }
       log(
         next
-          ? "Microphone muted — Gemini will not be interrupted by background audio."
+          ? "Microphone muted. Gemini is finalizing the current voice turn."
           : "Microphone unmuted.",
       );
     },
-    [log],
+    [endCurrentAudioTurn, log],
   );
 
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       const next = !m;
       mutedRef.current = next;
+      if (next && !m) {
+        endCurrentAudioTurn();
+      }
       log(
         next
-          ? "Microphone muted — Gemini will not be interrupted by background audio."
+          ? "Microphone muted. Gemini is finalizing the current voice turn."
           : "Microphone unmuted.",
       );
       return next;
     });
-  }, [log]);
+  }, [endCurrentAudioTurn, log]);
 
   const stopMicrophone = useCallback(async () => {
     processorRef.current?.disconnect();
@@ -337,6 +354,7 @@ export function useLiveVoice({
     manuallyStoppedRef.current = true;
     setMuted(false);
     mutedRef.current = false;
+    audioSentSinceTurnEndRef.current = false;
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -565,6 +583,7 @@ export function useLiveVoice({
     usedCodexRef.current = false;
     setMuted(false);
     mutedRef.current = false;
+    audioSentSinceTurnEndRef.current = false;
     bufferedAudioRef.current = [];
     clearToolResultFallback();
     hasStreamedAudioRef.current = false;
@@ -626,6 +645,7 @@ export function useLiveVoice({
             const websocket = websocketRef.current;
             if (websocket?.readyState === WebSocket.OPEN) {
               websocket.send(payload);
+              audioSentSinceTurnEndRef.current = true;
               return;
             }
             bufferedAudioRef.current.push(payload);
@@ -664,6 +684,7 @@ export function useLiveVoice({
           const websocket = websocketRef.current;
           if (websocket?.readyState === WebSocket.OPEN) {
             websocket.send(payload);
+            audioSentSinceTurnEndRef.current = true;
             return;
           }
           bufferedAudioRef.current.push(payload);
