@@ -16,6 +16,77 @@ function authHeaders(headers: HeadersInit = {}): HeadersInit {
   return API_TOKEN ? { ...headers, Authorization: `Bearer ${API_TOKEN}` } : headers;
 }
 
+async function errorDetail(res: Response, fallback: string): Promise<string> {
+  const payload = (await res.json().catch(() => ({}))) as { detail?: string };
+  return payload.detail || fallback;
+}
+
+async function apiFetch(
+  path: string,
+  init: RequestInit = {},
+  errorMessage = "Request failed",
+): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: authHeaders(init.headers),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, errorMessage));
+  return res;
+}
+
+async function apiJson<T>(
+  path: string,
+  init: RequestInit = {},
+  errorMessage = "Request failed",
+): Promise<T> {
+  const res = await apiFetch(path, init, errorMessage);
+  return res.json() as Promise<T>;
+}
+
+async function apiVoid(
+  path: string,
+  init: RequestInit = {},
+  errorMessage = "Request failed",
+): Promise<void> {
+  await apiFetch(path, init, errorMessage);
+}
+
+function jsonBody(method: "POST" | "PUT", body?: unknown): RequestInit {
+  return {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+}
+
+function jsonPost(body?: unknown): RequestInit {
+  return jsonBody("POST", body);
+}
+
+// SSE endpoints: callers inspect res.ok and the response body themselves, so
+// this returns the raw response without throwing on non-OK status.
+function streamFetch(
+  path: string,
+  options: StreamOptions,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return fetch(`${API_BASE}${path}`, {
+    ...jsonPost(streamPayload(options)),
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    signal,
+  });
+}
+
+function streamPayload(options: StreamOptions) {
+  return {
+    task: options.task,
+    message: options.message,
+    workdir: options.workdir,
+    project_id: options.projectId,
+    chat_id: options.chatId,
+  };
+}
+
 export function getWebSocketUrl(path: string): string {
   const wsPath = API_TOKEN
     ? `${path}${path.includes("?") ? "&" : "?"}api_token=${encodeURIComponent(API_TOKEN)}`
@@ -31,70 +102,53 @@ export async function fetchHealth(): Promise<{
   has_google_api_key: boolean;
   gemini_model: string;
 }> {
-  const res = await fetch(`${API_BASE}/api/health`, { headers: authHeaders() });
-  if (!res.ok) throw new Error("Health check failed");
-  return res.json();
+  return apiJson("/api/health", {}, "Health check failed");
 }
 
 export async function fetchDoctor(): Promise<{ ok: boolean; checks: DoctorCheck[] }> {
-  const res = await fetch(`${API_BASE}/api/doctor`, { headers: authHeaders() });
-  if (!res.ok) throw new Error("Doctor check failed");
-  return res.json();
+  return apiJson("/api/doctor", {}, "Doctor check failed");
 }
 
 export async function fetchProjects(): Promise<Project[]> {
-  const res = await fetch(`${API_BASE}/api/projects`, { headers: authHeaders() });
-  if (!res.ok) throw new Error("Failed to fetch projects");
-  return res.json();
+  return apiJson("/api/projects", {}, "Failed to fetch projects");
 }
 
 export async function saveProject(project: Project): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/projects`, {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(project),
-  });
-  if (!res.ok) throw new Error("Failed to save project");
+  await apiVoid("/api/projects", jsonPost(project), "Failed to save project");
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(projectId)}`, {
-    method: "DELETE",
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to delete project");
+  await apiVoid(
+    `/api/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" },
+    "Failed to delete project",
+  );
 }
 
 export async function fetchChats(): Promise<Chat[]> {
-  const res = await fetch(`${API_BASE}/api/chats`, { headers: authHeaders() });
-  if (!res.ok) throw new Error("Failed to fetch chats");
-  return res.json();
+  return apiJson("/api/chats", {}, "Failed to fetch chats");
 }
 
 export async function saveChat(chat: Chat): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/chats`, {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(chat),
-  });
-  if (!res.ok) throw new Error("Failed to save chat");
+  await apiVoid("/api/chats", jsonPost(chat), "Failed to save chat");
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}`, {
-    method: "DELETE",
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to delete chat");
+  await apiVoid(
+    `/api/chats/${encodeURIComponent(chatId)}`,
+    { method: "DELETE" },
+    "Failed to delete chat",
+  );
 }
 
 export async function exportChatMarkdown(
   chatId: string,
 ): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/export.md`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to export chat");
+  const res = await apiFetch(
+    `/api/chats/${encodeURIComponent(chatId)}/export.md`,
+    {},
+    "Failed to export chat",
+  );
   const disposition = res.headers.get("content-disposition") || "";
   const filenameMatch = disposition.match(/filename="([^"]+)"/);
   return {
@@ -104,85 +158,70 @@ export async function exportChatMarkdown(
 }
 
 export async function fetchConsoleState(chatId: string): Promise<ConsoleState> {
-  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to fetch console state");
-  return res.json();
+  return apiJson(
+    `/api/chats/${encodeURIComponent(chatId)}/console`,
+    {},
+    "Failed to fetch console state",
+  );
 }
 
 export async function saveConsoleState(chatId: string, state: ConsoleState): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`, {
-    method: "PUT",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(state),
-  });
-  if (!res.ok) throw new Error("Failed to save console state");
+  await apiVoid(
+    `/api/chats/${encodeURIComponent(chatId)}/console`,
+    jsonBody("PUT", state),
+    "Failed to save console state",
+  );
 }
 
 export async function deleteConsoleState(chatId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(chatId)}/console`, {
-    method: "DELETE",
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to clear console state");
+  await apiVoid(
+    `/api/chats/${encodeURIComponent(chatId)}/console`,
+    { method: "DELETE" },
+    "Failed to clear console state",
+  );
 }
 
 export async function fetchHistory(chatId: string): Promise<HistoryRow[]> {
-  const res = await fetch(`${API_BASE}/api/history?chat_id=${encodeURIComponent(chatId)}`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to fetch history");
-  return res.json();
+  return apiJson(
+    `/api/history?chat_id=${encodeURIComponent(chatId)}`,
+    {},
+    "Failed to fetch history",
+  );
 }
 
 export async function deleteHistory(chatId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/history?chat_id=${encodeURIComponent(chatId)}`, {
-    method: "DELETE",
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to clear history");
+  await apiVoid(
+    `/api/history?chat_id=${encodeURIComponent(chatId)}`,
+    { method: "DELETE" },
+    "Failed to clear history",
+  );
 }
 
 export async function searchContent(query: string): Promise<SearchResult[]> {
-  const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Search failed");
-  return res.json();
+  return apiJson(`/api/search?q=${encodeURIComponent(query)}`, {}, "Search failed");
 }
 
 export async function getProjectInfo(path: string): Promise<ProjectInfo> {
-  const res = await fetch(`${API_BASE}/api/project/info?path=${encodeURIComponent(path)}`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to fetch project info");
-  return res.json();
+  return apiJson(
+    `/api/project/info?path=${encodeURIComponent(path)}`,
+    {},
+    "Failed to fetch project info",
+  );
 }
 
 export async function pickFolder(): Promise<{ path: string | null; cancelled: boolean }> {
-  const res = await fetch(`${API_BASE}/api/fs/pick`, { method: "POST", headers: authHeaders() });
-  if (!res.ok) {
-    const payload = await res.json().catch(() => ({}));
-    throw new Error(payload.detail || "Folder picker failed");
-  }
-  return res.json();
+  return apiJson("/api/fs/pick", { method: "POST" }, "Folder picker failed");
 }
 
 export async function revertChangeReview(
   workdir: string,
   files: string[],
 ): Promise<{ ok: boolean; reverted_files: string[] }> {
-  const res = await fetch(`${API_BASE}/api/change-review/revert`, {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ workdir, files }),
-  });
-  if (!res.ok) {
-    const payload = await res.json().catch(() => ({}));
-    throw new Error(payload.detail || "Failed to revert changes");
-  }
-  return res.json();
+  return apiJson(
+    "/api/change-review/revert",
+    jsonPost({ workdir, files }),
+    "Failed to revert changes",
+  );
 }
 
 export async function commitChangeReview(
@@ -190,16 +229,11 @@ export async function commitChangeReview(
   files: string[],
   message: string,
 ): Promise<{ ok: boolean; commit: string; committed_files: string[]; message: string }> {
-  const res = await fetch(`${API_BASE}/api/change-review/commit`, {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ workdir, files, message }),
-  });
-  if (!res.ok) {
-    const payload = await res.json().catch(() => ({}));
-    throw new Error(payload.detail || "Failed to commit changes");
-  }
-  return res.json();
+  return apiJson(
+    "/api/change-review/commit",
+    jsonPost({ workdir, files, message }),
+    "Failed to commit changes",
+  );
 }
 
 export interface StreamOptions {
@@ -214,58 +248,24 @@ export async function postCodexStream(
   options: StreamOptions,
   signal?: AbortSignal,
 ): Promise<Response> {
-  return fetch(`${API_BASE}/api/codex/stream`, {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      task: options.task,
-      workdir: options.workdir,
-      project_id: options.projectId,
-      chat_id: options.chatId,
-    }),
-    signal,
-  });
+  return streamFetch("/api/codex/stream", options, signal);
 }
 
 export async function enqueueCodexJob(options: StreamOptions): Promise<CodexJob> {
-  const res = await fetch(`${API_BASE}/api/codex/jobs`, {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      task: options.task,
-      workdir: options.workdir,
-      project_id: options.projectId,
-      chat_id: options.chatId,
-    }),
-  });
-  if (!res.ok) {
-    const payload = await res.json().catch(() => ({}));
-    throw new Error(payload.detail || "Failed to enqueue Codex job");
-  }
-  return res.json();
+  return apiJson(
+    "/api/codex/jobs",
+    jsonPost(streamPayload(options)),
+    "Failed to enqueue Codex job",
+  );
 }
 
 export async function fetchCodexJob(jobId: string): Promise<CodexJob> {
-  const res = await fetch(`${API_BASE}/api/codex/jobs/${encodeURIComponent(jobId)}`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("Failed to fetch Codex job");
-  return res.json();
+  return apiJson(`/api/codex/jobs/${encodeURIComponent(jobId)}`, {}, "Failed to fetch Codex job");
 }
 
 export async function postChatStream(
   options: StreamOptions,
   signal?: AbortSignal,
 ): Promise<Response> {
-  return fetch(`${API_BASE}/api/chat/stream`, {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      message: options.message,
-      workdir: options.workdir,
-      project_id: options.projectId,
-      chat_id: options.chatId,
-    }),
-    signal,
-  });
+  return streamFetch("/api/chat/stream", options, signal);
 }
