@@ -46,6 +46,8 @@ TOOL-CALLING RULES (you must unmistakably follow these):
 9. If recent artifact references already contain the answer and the user asks to
    show or revisit prior output, use those references. Call the tool again only
    when the user asks for fresh local state or a new task.
+10. If the user asks whether Codex is still running, asks for progress, or asks for
+   current status of a background Codex task, call `get_codex_status`.
 
 Only answer directly without the tool when the user is making conversation, asking
 a general conceptual question, or asking for a plan that requires no local access.
@@ -117,6 +119,7 @@ def _get_tools() -> list[types.Tool]:
         },
     )
     end_conversation_parameters = cast(Any, {"type": "object", "properties": {}})
+    get_codex_status_parameters = cast(Any, {"type": "object", "properties": {}})
     return [
         types.Tool(
             function_declarations=[
@@ -129,6 +132,15 @@ def _get_tools() -> list[types.Tool]:
                         "Call this tool instead of answering from memory for any local-work question."
                     ),
                     parameters=run_codex_parameters,
+                ),
+                types.FunctionDeclaration(
+                    name="get_codex_status",
+                    description=(
+                        "Get the latest known status and progress for Codex background jobs "
+                        "in the current chat. Use this when the user asks if Codex is still "
+                        "running, what progress has been made, or whether a background task finished."
+                    ),
+                    parameters=get_codex_status_parameters,
                 ),
                 types.FunctionDeclaration(
                     name="end_conversation",
@@ -164,6 +176,7 @@ def live_connect_config(
     settings: Settings,
     workdir: str | None = None,
     conversation_context: str | None = None,
+    session_resumption_handle: str | None = None,
 ) -> types.LiveConnectConfig:
     return types.LiveConnectConfig(
         system_instruction=_system_instruction(workdir, conversation_context),
@@ -177,7 +190,24 @@ def live_connect_config(
             ),
         ),
         tools=_get_tools(),
+        context_window_compression=types.ContextWindowCompressionConfig(
+            trigger_tokens=settings.gemini_live_compression_trigger_tokens,
+            sliding_window=types.SlidingWindow(
+                target_tokens=settings.gemini_live_compression_target_tokens
+            ),
+        ),
+        session_resumption=types.SessionResumptionConfig(
+            handle=session_resumption_handle,
+        ),
     )
+
+
+def _codex_status_from_context(conversation_context: str | None) -> str:
+    context = conversation_context or ""
+    marker = "Current and recent Codex background jobs for this chat:"
+    if marker not in context:
+        return "No active or recent Codex background jobs were found for this chat."
+    return context[context.index(marker) :].strip()
 
 
 async def ask_gemini_stream(
@@ -285,6 +315,23 @@ async def ask_gemini_stream(
                                 "name": call.name,
                                 "args": {},
                                 "result": "Session ended successfully.",
+                                "workdir": session_workdir,
+                            }
+                        )
+                        response_parts.append(types.Part(function_response=response))
+                        continue
+                    if call.name == "get_codex_status":
+                        status_text = _codex_status_from_context(conversation_context)
+                        response = types.FunctionResponse(
+                            id=call.id,
+                            name=call.name,
+                            response={"result": status_text},
+                        )
+                        tool_calls.append(
+                            {
+                                "name": call.name,
+                                "args": {},
+                                "result": status_text,
                                 "workdir": session_workdir,
                             }
                         )
