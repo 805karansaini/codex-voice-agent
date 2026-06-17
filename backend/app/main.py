@@ -112,6 +112,7 @@ class _LiveTurnState:
     codex_thread_id: str | None = None
     codex_status: str | None = None
     artifacts: list[dict[str, object]] = field(default_factory=list)
+    handoff_ids: list[str] = field(default_factory=list)
 
     @property
     def user_text(self) -> str:
@@ -211,6 +212,7 @@ class _LiveTurnState:
         self.codex_thread_id = None
         self.codex_status = None
         self.artifacts = []
+        self.handoff_ids = []
 
 
 settings = get_settings()
@@ -1562,6 +1564,7 @@ async def live_voice(websocket: WebSocket) -> None:
                         handoff_id = str(handoff.get("id") or "")
                         if handoff_id:
                             response_handoff_ids.append(handoff_id)
+                            turn_state.handoff_ids.append(handoff_id)
                         live_log.write(
                             "codex.handoff_persisted",
                             chat_id=session_chat_id,
@@ -1808,7 +1811,7 @@ async def live_voice(websocket: WebSocket) -> None:
                         turn_state.reset()
                         continue
                     if used_codex:
-                        codex_handoffs.acknowledge_chat(session_chat_id)
+                        codex_handoffs.acknowledge(turn_state.handoff_ids)
                     turn_state.persist(
                         history_store=history,
                         workdir=session_workdir,

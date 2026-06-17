@@ -145,26 +145,62 @@ class CodexHandoffStoreTests(unittest.TestCase):
             self.assertFalse(pending[0]["gemini_acknowledged"])
             self.assertEqual(pending[0]["artifact_ids"], ["artifact-1", "artifact-2"])
 
-    def test_acknowledge_chat_stops_reinjecting_handoff(self) -> None:
+    def test_acknowledge_only_stops_reinjecting_selected_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = CodexHandoffStore(Path(tmp) / "history.json")
-            store.create(
+            first = store.create(
                 chat_id="chat-1",
                 project_id="project-1",
                 workdir="/tmp/project-1",
-                user_text="Fix reconnect handling",
+                user_text="Request A",
                 tool_name="run_codex_task",
                 codex_status="completed",
-                result_summary="Changed reconnect context handling.",
+                result_summary="Result A",
+                result_artifact_id="artifact-1",
+                codex_turn_id="turn-1",
+                codex_thread_id="thread-1",
+                artifact_ids=["artifact-1"],
+            )
+            second = store.create(
+                chat_id="chat-1",
+                project_id="project-1",
+                workdir="/tmp/project-1",
+                user_text="Request B",
+                tool_name="run_codex_task",
+                codex_status="completed",
+                result_summary="Result B",
+                result_artifact_id="artifact-2",
+                codex_turn_id="turn-2",
+                codex_thread_id="thread-1",
+                artifact_ids=["artifact-2"],
+            )
+
+            store.acknowledge([second["id"]])
+
+            pending = store.pending_for_chat("chat-1")
+            self.assertEqual([item["id"] for item in pending], [first["id"]])
+            self.assertEqual(pending[0]["user_text"], "Request A")
+
+    def test_acknowledge_empty_list_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CodexHandoffStore(Path(tmp) / "history.json")
+            handoff = store.create(
+                chat_id="chat-1",
+                project_id="project-1",
+                workdir="/tmp/project-1",
+                user_text="Request A",
+                tool_name="run_codex_task",
+                codex_status="completed",
+                result_summary="Result A",
                 result_artifact_id="artifact-1",
                 codex_turn_id="turn-1",
                 codex_thread_id="thread-1",
                 artifact_ids=["artifact-1"],
             )
 
-            store.acknowledge_chat("chat-1")
+            store.acknowledge([])
 
-            self.assertEqual(store.pending_for_chat("chat-1"), [])
+            self.assertEqual([item["id"] for item in store.pending_for_chat("chat-1")], [handoff["id"]])
 
 
 class ProjectStoreTests(unittest.TestCase):

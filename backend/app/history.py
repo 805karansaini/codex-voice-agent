@@ -581,14 +581,16 @@ class CodexHandoffStore:
                     (state, 1 if acknowledged else 0, now, handoff_id),
                 )
 
-    def acknowledge_chat(self, chat_id: str | None) -> None:
-        if not chat_id:
+    def acknowledge(self, handoff_ids: list[str]) -> None:
+        ids = [handoff_id for handoff_id in handoff_ids if handoff_id]
+        if not ids:
             return
         now = datetime.now(timezone.utc).isoformat()
+        placeholders = ", ".join("?" for _ in ids)
         with self.lock:
             with self._connect() as conn:
                 conn.execute(
-                    """
+                    f"""
                     UPDATE codex_handoffs
                     SET gemini_acknowledged = 1,
                         delivery_state = CASE
@@ -597,9 +599,9 @@ class CodexHandoffStore:
                             ELSE delivery_state
                         END,
                         updated_at = ?
-                    WHERE chat_id = ? AND gemini_acknowledged = 0
+                    WHERE id IN ({placeholders})
                     """,
-                    (now, chat_id),
+                    (now, *ids),
                 )
 
     def pending_for_chat(self, chat_id: str | None, limit: int = 3) -> list[dict[str, Any]]:
