@@ -98,6 +98,8 @@ class _LiveCodexResult:
     turn_id: str | None
     thread_id: str | None
     status: str | None
+    job_id: str | None = None
+    background_status: str | None = None
 
 
 @dataclass
@@ -222,7 +224,10 @@ projects = ProjectStore(settings.history_path.with_name("projects.json"), db_pat
 chats = ChatStore(settings.history_path.with_name("chats.json"), db_path=settings.history_path)
 console = ConsoleStore(settings.history_path.with_name("console.json"), db_path=settings.history_path)
 app_log = JsonlEventLogger(settings.history_path.with_name("app_events.jsonl"))
+model_context_log = JsonlEventLogger(settings.history_path.with_name("model_context_packets.jsonl"))
 codex_handoffs = CodexHandoffStore(settings.history_path)
+_live_resumption_handles: dict[str, str] = {}
+_LIVE_PROACTIVE_RECONNECT_SECONDS = 8 * 60 + 30
 
 
 def _artifact_summary(text: object, limit: int = 220) -> str:
@@ -353,6 +358,41 @@ def _persist_live_codex_handoff(
     )
 
 
+def _persist_background_codex_handoff(job: CodexBackgroundJob) -> dict[str, object] | None:
+    result_artifact = job.artifacts[0] if job.artifacts else None
+    change_artifact = job.artifacts[1] if len(job.artifacts) > 1 else None
+    result = _LiveCodexResult(
+        response=job.result,
+        workdir=job.workdir,
+        events=list(job.codex_events),
+        turn_id=job.codex_turn_id,
+        thread_id=job.codex_thread_id,
+        status=job.codex_status or job.status,
+        job_id=job.id,
+        background_status=job.status,
+    )
+    handoff = _persist_live_codex_handoff(
+        chat_id=job.chat_id,
+        project_id=job.project_id,
+        workdir=job.workdir,
+        user_text=job.task,
+        tool_name="run_codex_task",
+        result=result,
+        artifact=result_artifact,
+        change_artifact=change_artifact,
+    )
+    app_log.write(
+        "codex.handoff_persisted",
+        chat_id=job.chat_id,
+        handoff_id=handoff.get("id"),
+        delivery_state=handoff.get("delivery_state"),
+        artifact_id=handoff.get("result_artifact_id"),
+        codex_status=result.status,
+        background_job_id=job.id,
+    )
+    return handoff
+
+
 def _revert_changed_files(workdir: str, files: list[str]) -> _RevertResult:
     return revert_changed_files(workdir, files)
 
@@ -368,6 +408,7 @@ _background_jobs = BackgroundJobService(
     create_tool_artifact=_create_tool_artifact_for_job,
     create_change_review_artifact=_create_change_review_artifact_for_job,
     run_codex_stream=run_codex_stream_with_timer,
+    create_handoff=_persist_background_codex_handoff,
 )
 
 # Backward-compatible names for focused tests and route handlers.
@@ -380,6 +421,7 @@ def _sync_background_job_dependencies() -> None:
         history=history,
         app_log=app_log,
         run_codex_stream=run_codex_stream_with_timer,
+        create_handoff=_persist_background_codex_handoff,
     )
 
 
@@ -401,6 +443,48 @@ async def _list_jobs(chat_id: str | None = None) -> list[dict[str, object]]:
 async def _run_codex_background_job(job_id: str) -> None:
     _sync_background_job_dependencies()
     await _background_jobs.run(job_id)
+
+
+async def _enqueue_codex_background_job(
+    *,
+    task: str,
+    enhanced_task: str,
+    workdir: str,
+    project_id: str | None,
+    chat_id: str | None,
+    source: str = "direct",
+) -> _CodexBackgroundJob:
+    job = _CodexBackgroundJob(
+        id=str(uuid.uuid4()),
+        task=task,
+        enhanced_task=enhanced_task,
+        workdir=workdir,
+        project_id=project_id,
+        chat_id=chat_id,
+    )
+    await _store_job(job)
+    history.append(
+        "user",
+        task,
+        {
+            "direct_codex": True,
+            "background_job_id": job.id,
+            "workdir": workdir,
+            "project_id": project_id,
+            "chat_id": chat_id,
+        },
+    )
+    asyncio.create_task(_run_codex_background_job(job.id))
+    app_log.write(
+        "codex_job.queued",
+        job_id=job.id,
+        chat_id=chat_id,
+        project_id=project_id,
+        workdir=workdir,
+        task_chars=len(task),
+        source=source,
+    )
+    return job
 
 
 @asynccontextmanager
@@ -493,12 +577,9 @@ app.include_router(
         resolve_workdir=lambda workdir, project_id: _resolve_scoped_workdir(
             workdir, project_id=project_id
         ),
-        history=history,
-        store_job=_store_job,
+        enqueue_job=_enqueue_codex_background_job,
         get_job=_get_job,
         list_jobs=_list_jobs,
-        run_job=_run_codex_background_job,
-        write_log=app_log.write,
     )
 )
 
@@ -534,10 +615,10 @@ def _live_tool_call_request(
     fallback_workdir: str,
 ) -> _LiveToolCallRequest:
     call_name = str(name or "")
-    if call_name == "end_conversation":
+    if call_name in {"end_conversation", "get_codex_status"}:
         return _LiveToolCallRequest(
             name=call_name,
-            is_end_conversation=True,
+            is_end_conversation=call_name == "end_conversation",
             task="",
             enhanced_task="",
             workdir=fallback_workdir,
@@ -556,6 +637,23 @@ def _live_tool_call_request(
         enhanced_task=improve_codex_task_prompt(task),
         workdir=workdir,
     )
+
+
+def _codex_status_for_chat(chat_id: str | None) -> str:
+    if not chat_id:
+        return "No chat is selected, so I cannot find a Codex background job."
+    jobs = [job for job in list(_codex_jobs.values()) if job.chat_id == chat_id]
+    if not jobs:
+        return "Codex is not currently running a background task in this chat."
+    jobs.sort(key=lambda item: item.updated_at, reverse=True)
+    job = jobs[0]
+    if job.status == "done":
+        summary = _artifact_summary(job.result, limit=260) if job.result else "Codex finished."
+        return f"Codex finished the latest task. {summary}"
+    if job.status == "failed":
+        return f"Codex failed the latest task. {job.error or 'No error details were recorded.'}"
+    progress = job.latest_status or "Codex is still working."
+    return f"Codex is still running. Latest progress: {progress}"
 
 
 async def _run_live_codex_tool(
@@ -660,6 +758,63 @@ async def _run_live_codex_tool(
         turn_id=codex_turn_id,
         thread_id=codex_thread_id,
         status=codex_status,
+    )
+
+
+async def _start_live_codex_background_job(
+    *,
+    request: _LiveToolCallRequest,
+    project_id: str | None,
+    chat_id: str | None,
+    call_name: str | None,
+    send_json: Any,
+    live_log: LiveSessionLogger,
+) -> _LiveCodexResult:
+    job = await _enqueue_codex_background_job(
+        task=request.task,
+        enhanced_task=request.enhanced_task,
+        workdir=request.workdir,
+        project_id=project_id,
+        chat_id=chat_id,
+        source="voice",
+    )
+    message = (
+        "Codex is running this task in the background. "
+        "You can ask for status at any time, and the final result will appear in this chat when it finishes."
+    )
+    live_log.write(
+        "codex.background_started",
+        chat_id=chat_id,
+        job_id=job.id,
+        workdir=job.workdir,
+        task=clip_text(job.task),
+    )
+    await send_json(
+        {
+            "type": "tool_result",
+            "name": call_name,
+            "result": message,
+            "workdir": job.workdir,
+            "artifact": None,
+            "change_artifact": None,
+            "changed_files": [],
+            "codex_events": [],
+            "codex_turn_id": None,
+            "codex_thread_id": None,
+            "codex_status": "running",
+            "background_job_id": job.id,
+            "background_job_status": job.status,
+        }
+    )
+    return _LiveCodexResult(
+        response=message,
+        workdir=job.workdir,
+        events=[],
+        turn_id=None,
+        thread_id=None,
+        status="running",
+        job_id=job.id,
+        background_status=job.status,
     )
 
 
@@ -877,6 +1032,31 @@ def _chat_context(chat_id: str | None, workdir: str | None = None) -> str:
     parts = [_project_briefing(workdir)]
     if chat_id:
         parts.append(build_recent_conversation_context(history.list(chat_id=chat_id)))
+        jobs = [
+            job
+            for job in list(_codex_jobs.values())
+            if job.chat_id == chat_id and job.status in {"queued", "running", "done", "failed"}
+        ]
+        jobs.sort(key=lambda item: item.updated_at, reverse=True)
+        if jobs:
+            lines = ["Current and recent Codex background jobs for this chat:"]
+            for job in jobs[:5]:
+                if job.status in {"done", "failed"} and job.result:
+                    detail = _artifact_summary(job.result, limit=220)
+                else:
+                    detail = job.latest_status or "No progress update yet."
+                lines.extend(
+                    [
+                        "- Job id: " + job.id,
+                        "  User request: " + job.task,
+                        "  Status: " + job.status,
+                        "  Latest progress: " + detail,
+                    ]
+                )
+            lines.append(
+                "If the user asks for Codex status or progress, answer from these job records."
+            )
+            parts.append("\n".join(lines))
     recent_artifacts = artifacts.list(chat_id=chat_id)[-5:] if chat_id else []
     if recent_artifacts:
         lines = ["Recent visible artifacts in this chat:"]
@@ -911,6 +1091,80 @@ def _chat_context(chat_id: str | None, workdir: str | None = None) -> str:
             )
         parts.append("\n".join(lines))
     return "\n\n".join(part for part in parts if part.strip())
+
+
+def _latest_artifact_replay(chat_id: str | None, user_text: str) -> str | None:
+    if not chat_id:
+        return None
+    normalized = " ".join(user_text.lower().split())
+    replay_phrases = (
+        "you already have it",
+        "give me the full summary",
+        "full summary",
+        "repeat that",
+        "show me that result",
+        "show that result",
+        "what was the result",
+    )
+    if not any(phrase in normalized for phrase in replay_phrases):
+        return None
+    pending = codex_handoffs.pending_for_chat(chat_id)
+    artifact_id = None
+    if pending:
+        latest = pending[0]
+        artifact_id = latest.get("result_artifact_id")
+    rows = artifacts.list(chat_id=chat_id)
+    if artifact_id:
+        for row in reversed(rows):
+            if row.get("id") == artifact_id:
+                return str(row.get("content") or "")
+    for row in reversed(rows):
+        source = str(row.get("source") or "")
+        if source in {"background_codex", "run_codex_task"}:
+            return str(row.get("content") or "")
+    return None
+
+
+def _write_model_context_packet(
+    *,
+    surface: str,
+    chat_id: str | None,
+    project_id: str | None,
+    workdir: str | None,
+    model: str,
+    user_text: str | None,
+    conversation_context: str,
+    extra: dict[str, object] | None = None,
+) -> None:
+    recent_artifacts = artifacts.list(chat_id=chat_id)[-5:] if chat_id else []
+    pending_handoffs = codex_handoffs.pending_for_chat(chat_id) if chat_id else []
+    model_context_log.write(
+        "model_context.packet",
+        surface=surface,
+        chat_id=chat_id,
+        project_id=project_id,
+        workdir=workdir,
+        model=model,
+        user_text=clip_text(user_text or "", limit=1000),
+        context_chars=len(conversation_context),
+        context_preview=clip_text(conversation_context, limit=4000),
+        recent_artifact_ids=[item.get("id") for item in recent_artifacts],
+        pending_handoff_ids=[item.get("id") for item in pending_handoffs],
+        **(extra or {}),
+    )
+
+
+def _function_response(
+    *,
+    call_id: str | None,
+    name: str | None,
+    response: dict[str, object],
+) -> types.FunctionResponse:
+    return types.FunctionResponse(
+        id=call_id,
+        name=name,
+        response=response,
+    )
 
 
 def _markdown_title(value: object) -> str:
@@ -1225,8 +1479,19 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     workdir = _resolve_scoped_workdir(req.workdir, project_id=req.project_id)
     project_root = str(_project_root(req.project_id) or workdir)
     conversation_context = _chat_context(req.chat_id, workdir)
+    artifact_replay = _latest_artifact_replay(req.chat_id, text)
     history.append(
         "user", text, {"workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id}
+    )
+    _write_model_context_packet(
+        surface="chat",
+        chat_id=req.chat_id,
+        project_id=req.project_id,
+        workdir=workdir,
+        model=settings.gemini_text_model,
+        user_text=text,
+        conversation_context=conversation_context,
+        extra={"direct_artifact_replay": bool(artifact_replay)},
     )
     app_log.write(
         "chat_stream.start",
@@ -1240,6 +1505,24 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     cancel_token = CancellationToken()
 
     async def event_source():
+        if artifact_replay is not None:
+            history.append(
+                "assistant",
+                artifact_replay,
+                {
+                    "direct_artifact_replay": True,
+                    "workdir": workdir,
+                    "project_id": req.project_id,
+                    "chat_id": req.chat_id,
+                },
+            )
+            app_log.write(
+                "chat_stream.artifact_replay",
+                chat_id=req.chat_id,
+                reply_chars=len(artifact_replay),
+            )
+            yield f"data: {json.dumps({'type': 'done', 'text': artifact_replay, 'workdir': workdir})}\n\n"
+            return
         final_text = ""
         final_workdir = workdir
         final_tool_calls = []
@@ -1377,6 +1660,7 @@ async def live_voice(websocket: WebSocket) -> None:
     current_task_cancel_token: CancellationToken | None = None
     active_turn_gen = None
     session_ended_by_tool = False
+    live_connection_started_at: datetime | None = None
 
     async def send_client_audio(session: _LiveSession, initial: dict | None = None) -> None:
         nonlocal \
@@ -1472,6 +1756,24 @@ async def live_voice(websocket: WebSocket) -> None:
                     await websocket.send_json(
                         {"type": "ready", "message": "Gemini Live session ready."}
                     )
+                if server_message.session_resumption_update:
+                    update = server_message.session_resumption_update
+                    handle = str(update.new_handle or "")
+                    if session_chat_id and handle:
+                        _live_resumption_handles[session_chat_id] = handle
+                    live_log.write(
+                        "gemini.session_resumption_update",
+                        chat_id=session_chat_id,
+                        resumable=update.resumable,
+                        has_handle=bool(handle),
+                        last_consumed_client_message_index=update.last_consumed_client_message_index,
+                    )
+                if server_message.go_away:
+                    live_log.write(
+                        "gemini.go_away",
+                        chat_id=session_chat_id,
+                        time_left=str(server_message.go_away.time_left),
+                    )
 
                 if server_message.tool_call and server_message.tool_call.function_calls:
                     responses = []
@@ -1490,10 +1792,25 @@ async def live_voice(websocket: WebSocket) -> None:
                             session_ended_by_tool = True
                             live_log.write("gemini.end_conversation_tool", chat_id=session_chat_id)
                             responses.append(
-                                types.FunctionResponse(
-                                    id=call.id,
+                                _function_response(
+                                    call_id=call.id,
                                     name=call.name,
                                     response={"result": "Session ended successfully."},
+                                )
+                            )
+                            continue
+                        if request.name == "get_codex_status":
+                            status_text = _codex_status_for_chat(session_chat_id)
+                            live_log.write(
+                                "gemini.codex_status_tool",
+                                chat_id=session_chat_id,
+                                result=clip_text(status_text),
+                            )
+                            responses.append(
+                                _function_response(
+                                    call_id=call.id,
+                                    name=call.name,
+                                    response={"result": status_text},
                                 )
                             )
                             continue
@@ -1505,6 +1822,15 @@ async def live_voice(websocket: WebSocket) -> None:
                             original_task=clip_text(request.task),
                             workdir=request.workdir,
                         )
+                        if live_connection_started_at:
+                            age = (datetime.now() - live_connection_started_at).total_seconds()
+                            if age >= _LIVE_PROACTIVE_RECONNECT_SECONDS:
+                                live_log.write(
+                                    "gemini.proactive_reconnect_recommended",
+                                    chat_id=session_chat_id,
+                                    connection_age_seconds=age,
+                                    name=call.name,
+                                )
 
                         await websocket.send_json(
                             {
@@ -1516,88 +1842,33 @@ async def live_voice(websocket: WebSocket) -> None:
                             }
                         )
 
-                        cancel_token = CancellationToken()
-                        current_task_cancel_token = cancel_token
-
-                        result = await _run_live_codex_tool(
+                        result = await _start_live_codex_background_job(
                             request=request,
-                            settings_value=settings,
-                            cancel_token=cancel_token,
+                            project_id=session_project_id,
                             chat_id=session_chat_id,
                             call_name=call.name,
                             send_json=websocket.send_json,
                             live_log=live_log,
-                            turn_gen=turn_gen,
                         )
-
-                        artifact = _create_tool_artifact(
-                            chat_id=session_chat_id,
-                            message_id=None,
-                            title=f"{call.name or 'Codex'} output",
-                            content=result.response,
-                            source=str(call.name or "run_codex_task"),
-                            workdir=result.workdir,
-                        )
-                        change_artifact = _create_change_review_artifact(
-                            chat_id=session_chat_id,
-                            workdir=result.workdir,
-                            codex_events=result.events,
-                        )
-                        current_task_cancel_token = None
                         turn_state.add_codex_result(
                             events=result.events,
                             turn_id=result.turn_id,
                             thread_id=result.thread_id,
                             status=result.status,
-                            artifacts_for_result=[artifact, change_artifact],
-                        )
-                        handoff = _persist_live_codex_handoff(
-                            chat_id=session_chat_id,
-                            project_id=session_project_id,
-                            workdir=result.workdir,
-                            user_text=user_text or request.task,
-                            tool_name=call.name,
-                            result=result,
-                            artifact=artifact,
-                            change_artifact=change_artifact,
-                        )
-                        handoff_id = str(handoff.get("id") or "")
-                        if handoff_id:
-                            response_handoff_ids.append(handoff_id)
-                            turn_state.handoff_ids.append(handoff_id)
-                        live_log.write(
-                            "codex.handoff_persisted",
-                            chat_id=session_chat_id,
-                            handoff_id=handoff_id,
-                            delivery_state=handoff.get("delivery_state"),
-                            artifact_id=handoff.get("result_artifact_id"),
-                            codex_status=result.status,
+                            artifacts_for_result=[],
                         )
 
                         responses.append(
-                            types.FunctionResponse(
-                                id=call.id,
+                            _function_response(
+                                call_id=call.id,
                                 name=call.name,
-                                response={"result": result.response, "workdir": result.workdir},
+                                response={
+                                    "result": result.response,
+                                    "workdir": result.workdir,
+                                    "job_id": result.job_id,
+                                    "status": result.background_status or result.status,
+                                },
                             )
-                        )
-                        await websocket.send_json(
-                            {
-                                "type": "tool_result",
-                                "name": call.name,
-                                "result": result.response,
-                                "workdir": result.workdir,
-                                "artifact": artifact,
-                                "change_artifact": change_artifact,
-                                "changed_files": change_artifact.get("changed_files", [])
-                                if change_artifact
-                                else [],
-                                "codex_events": result.events[-200:],
-                                "codex_turn_id": result.turn_id,
-                                "codex_thread_id": result.thread_id,
-                                "codex_status": result.status,
-                                "handoff_id": handoff_id or None,
-                            }
                         )
                         live_log.write(
                             "client.tool_result_sent",
@@ -1872,17 +2143,47 @@ async def live_voice(websocket: WebSocket) -> None:
                 workdir=session_workdir,
                 context_chars=len(session_conversation_context),
             )
+            _write_model_context_packet(
+                surface="live",
+                chat_id=session_chat_id,
+                project_id=session_project_id,
+                workdir=session_workdir,
+                model=settings.gemini_model,
+                user_text=None,
+                conversation_context=session_conversation_context,
+                extra={
+                    "compression_trigger_tokens": settings.gemini_live_compression_trigger_tokens,
+                    "compression_target_tokens": settings.gemini_live_compression_target_tokens,
+                    "has_resumption_handle": bool(
+                        session_chat_id and _live_resumption_handles.get(session_chat_id)
+                    ),
+                },
+            )
             await websocket.send_json(
                 {"type": "debug", "message": f"Active workdir: {session_workdir}"}
             )
             first_payload = None
 
+        session_resumption_handle = (
+            _live_resumption_handles.get(session_chat_id) if session_chat_id else None
+        )
         async with client.aio.live.connect(
             model=settings.gemini_model,
-            config=live_connect_config(settings, session_workdir, session_conversation_context),
+            config=live_connect_config(
+                settings,
+                session_workdir,
+                session_conversation_context,
+                session_resumption_handle=session_resumption_handle,
+            ),
         ) as raw_session:
             session = cast(_LiveSession, raw_session)
-            live_log.write("gemini.connected", chat_id=session_chat_id, model=settings.gemini_model)
+            live_connection_started_at = datetime.now()
+            live_log.write(
+                "gemini.connected",
+                chat_id=session_chat_id,
+                model=settings.gemini_model,
+                has_resumption_handle=bool(session_resumption_handle),
+            )
             await websocket.send_json({"type": "debug", "message": "Connected to Gemini Live."})
             # Group every observation from this live connection under one session.
             # create_task copies the current context, so the spawned tasks inherit it.

@@ -63,6 +63,9 @@ class BackgroundJobTests(unittest.IsolatedAsyncioTestCase):
                 assert saved is not None
                 self.assertEqual(saved.status, "done")
                 self.assertEqual(saved.result, "Tests passed.")
+                self.assertEqual(saved.latest_status, "Codex completed the task.")
+                self.assertIn("Started", saved.progress_updates)
+                self.assertIn("Codex completed the task.", saved.progress_updates)
                 self.assertEqual(saved.codex_thread_id, "thread-1")
                 self.assertEqual(rows[-1]["role"], "assistant")
                 self.assertEqual(rows[-1]["text"], "Tests passed.")

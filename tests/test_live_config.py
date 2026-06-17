@@ -2,9 +2,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
+from google.genai import types
+
+from backend.app.gemini_agent import live_connect_config
 from backend.app.history import HistoryStore
+from backend.app.settings import Settings
 from backend.app import main
 
 
@@ -50,6 +55,41 @@ class LiveClientConfigTests(unittest.TestCase):
             self.assertEqual(config["chat_id"], "chat-1")
             self.assertEqual(config["workdir"], str(root.resolve()))
             self.assertEqual(config["conversation_context"], "existing context")
+
+
+class LiveModelConfigTests(unittest.TestCase):
+    def test_default_31_model_remains_sync_tool_model(self) -> None:
+        settings = Settings(GEMINI_MODEL="gemini-3.1-flash-live-preview")
+
+        config = live_connect_config(settings, "/tmp/project", "recent context")
+
+        tools = cast(list[types.Tool], config.tools)
+        declarations = cast(list[types.FunctionDeclaration], tools[0].function_declarations)
+        declaration = declarations[0]
+        self.assertEqual(declaration.name, "run_codex_task")
+        self.assertIsNone(declaration.behavior)
+        compression = config.context_window_compression
+        self.assertIsNotNone(compression)
+        assert compression is not None
+        self.assertEqual(compression.trigger_tokens, 25000)
+        self.assertIsNotNone(compression.sliding_window)
+        assert compression.sliding_window is not None
+        self.assertEqual(compression.sliding_window.target_tokens, 10000)
+        resumption = config.session_resumption
+        self.assertIsNotNone(resumption)
+        assert resumption is not None
+        self.assertIsNone(resumption.transparent)
+
+    def test_session_resumption_passes_handle_without_transparent_flag(self) -> None:
+        settings = Settings(GEMINI_MODEL="gemini-3.1-flash-live-preview")
+
+        config = live_connect_config(settings, "/tmp/project", "recent context", "handle-1")
+
+        resumption = config.session_resumption
+        self.assertIsNotNone(resumption)
+        assert resumption is not None
+        self.assertEqual(resumption.handle, "handle-1")
+        self.assertIsNone(resumption.transparent)
 
 
 class LiveTurnStateTests(unittest.TestCase):
@@ -166,8 +206,88 @@ class LiveToolCallRequestTests(unittest.TestCase):
         self.assertEqual(request.enhanced_task, "")
         self.assertEqual(request.workdir, "/tmp/project")
 
+    def test_marks_status_request_without_codex_task(self) -> None:
+        request = main._live_tool_call_request(
+            name="get_codex_status",
+            args={"task": "run something"},
+            user_text="is codex still running?",
+            project_id=None,
+            fallback_workdir="/tmp/project",
+        )
+
+        self.assertFalse(request.is_end_conversation)
+        self.assertEqual(request.name, "get_codex_status")
+        self.assertEqual(request.task, "")
+        self.assertEqual(request.enhanced_task, "")
+        self.assertEqual(request.workdir, "/tmp/project")
+
 
 class LiveCodexToolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_codex_background_start_returns_running_job(self) -> None:
+        sent: list[dict[str, object]] = []
+        live_log = FakeLiveLog()
+        request = main._LiveToolCallRequest(
+            name="run_codex_task",
+            is_end_conversation=False,
+            task="run tests",
+            enhanced_task="run tests",
+            workdir="/tmp/project",
+        )
+        job = main._CodexBackgroundJob(
+            id="job-1",
+            task="run tests",
+            enhanced_task="run tests",
+            workdir="/tmp/project",
+            project_id="project-1",
+            chat_id="chat-1",
+            status="running",
+        )
+
+        async def fake_enqueue(**_kwargs: object) -> object:
+            return job
+
+        async def send_json(payload: dict[str, object]) -> None:
+            sent.append(payload)
+
+        with patch.object(main, "_enqueue_codex_background_job", fake_enqueue):
+            result = await main._start_live_codex_background_job(
+                request=request,
+                project_id="project-1",
+                chat_id="chat-1",
+                call_name="run_codex_task",
+                send_json=send_json,
+                live_log=live_log,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(result.status, "running")
+        self.assertEqual(result.job_id, "job-1")
+        self.assertEqual(result.background_status, "running")
+        self.assertEqual(sent[0]["type"], "tool_result")
+        self.assertEqual(sent[0]["background_job_id"], "job-1")
+        self.assertEqual(sent[0]["codex_status"], "running")
+
+    def test_codex_status_for_chat_reports_latest_running_job(self) -> None:
+        old_jobs = dict(main._codex_jobs)
+        try:
+            main._codex_jobs.clear()
+            job = main._CodexBackgroundJob(
+                id="job-1",
+                task="run tests",
+                enhanced_task="run tests",
+                workdir="/tmp/project",
+                project_id="project-1",
+                chat_id="chat-1",
+                status="running",
+                latest_status="Codex is running tests.",
+            )
+            main._codex_jobs[job.id] = job
+
+            self.assertIn("Codex is still running", main._codex_status_for_chat("chat-1"))
+            self.assertIn("Codex is running tests", main._codex_status_for_chat("chat-1"))
+        finally:
+            main._codex_jobs.clear()
+            main._codex_jobs.update(old_jobs)
+
     async def test_streams_codex_events_and_returns_done_result(self) -> None:
         sent: list[dict[str, object]] = []
         live_log = FakeLiveLog()
