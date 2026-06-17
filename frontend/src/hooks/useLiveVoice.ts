@@ -1,120 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GeminiLiveUsage, LiveVoiceState } from "../types";
 import { getWebSocketUrl } from "../services/api";
+import {
+  AudioStreamPlayer,
+  MAX_BUFFERED_AUDIO_CHUNKS,
+  LIVE_AUDIO_RATE,
+  base64ToFloat32Array,
+  encodePcmChunk,
+} from "./liveVoiceAudio";
+import { liveVoiceDeliveryFailureMessage } from "../utils/liveVoice";
 
-const LIVE_AUDIO_RATE = 16000;
-const MAX_BUFFERED_AUDIO_CHUNKS = 360;
 const RECONNECT_DELAY_MS = 900;
 // Backend Codex status events start after about 20s, then repeat every 60s.
 // This waits slightly longer than the first status event before surfacing a
 // completed Codex result when Gemini does not produce a final voice response.
 const TOOL_RESULT_FALLBACK_MS = 25000;
-
-function encodePcmChunk(input: Float32Array, sourceRate: number): string {
-  const ratio = sourceRate / LIVE_AUDIO_RATE;
-  const outputLength = Math.max(1, Math.floor(input.length / ratio));
-  const pcm = new Int16Array(outputLength);
-  for (let index = 0; index < outputLength; index += 1) {
-    const start = Math.floor(index * ratio);
-    const end = Math.min(input.length, Math.floor((index + 1) * ratio));
-    let total = 0;
-    let samples = 0;
-    for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
-      total += input[sampleIndex];
-      samples += 1;
-    }
-    const sample = Math.max(-1, Math.min(1, samples ? total / samples : input[start] || 0));
-    pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-  }
-  const bytes = new Uint8Array(pcm.buffer);
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 1) {
-    binary += String.fromCharCode(bytes[index]);
-  }
-  return btoa(binary);
-}
-
-function base64ToFloat32Array(base64: string): Float32Array {
-  const binaryString = window.atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  const int16Array = new Int16Array(bytes.buffer);
-  const float32Array = new Float32Array(int16Array.length);
-  for (let i = 0; i < int16Array.length; i++) {
-    float32Array[i] = int16Array[i] / 32768;
-  }
-  return float32Array;
-}
-
-class AudioStreamPlayer {
-  private ctx: AudioContext | null = null;
-  private nextPlayTime: number = 0;
-  private activeSources: AudioBufferSourceNode[] = [];
-  private sampleRate: number = 24000;
-
-  constructor() {}
-
-  isPlaying(): boolean {
-    return this.activeSources.length > 0;
-  }
-
-  init() {
-    if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      try {
-        this.ctx = new AudioCtx({ sampleRate: 24000 });
-      } catch {
-        this.ctx = new AudioCtx();
-      }
-      this.nextPlayTime = 0;
-    }
-    if (this.ctx.state === "suspended") {
-      void this.ctx.resume();
-    }
-  }
-
-  playChunk(float32Data: Float32Array) {
-    this.init();
-    if (!this.ctx) return;
-
-    const audioBuffer = this.ctx.createBuffer(1, float32Data.length, this.sampleRate);
-    audioBuffer.getChannelData(0).set(float32Data);
-
-    const source = this.ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.ctx.destination);
-
-    const currentTime = this.ctx.currentTime;
-    if (this.nextPlayTime < currentTime) {
-      this.nextPlayTime = currentTime + 0.03;
-    }
-
-    source.start(this.nextPlayTime);
-    this.activeSources.push(source);
-
-    const duration = audioBuffer.duration;
-    source.onended = () => {
-      this.activeSources = this.activeSources.filter((s) => s !== source);
-    };
-
-    this.nextPlayTime += duration;
-  }
-
-  stop() {
-    this.activeSources.forEach((source) => {
-      try {
-        source.stop();
-      } catch {
-        // Some browsers throw if a source already stopped.
-      }
-    });
-    this.activeSources = [];
-    this.nextPlayTime = 0;
-  }
-}
 
 interface UseLiveVoiceProps {
   getWorkdir: () => string | undefined;
@@ -126,6 +26,7 @@ interface UseLiveVoiceProps {
   onHandoffStart?: (name: string, task: string, workdir: string) => void;
   onHandoffProgress?: (name: string, text: string) => void;
   onHandoffFailed?: (name: string, message: string) => void;
+  onHandoffDeliveryFailed?: (message: string) => void;
   onHandoffTimeout?: () => void;
   onCodexEvent?: (event: any) => void;
   onUserTranscript?: (text: string) => void;
@@ -151,6 +52,7 @@ export function useLiveVoice({
   onHandoffStart,
   onHandoffProgress,
   onHandoffFailed,
+  onHandoffDeliveryFailed,
   onHandoffTimeout,
   onCodexEvent,
   onUserTranscript,
@@ -217,6 +119,7 @@ export function useLiveVoice({
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
+    onHandoffDeliveryFailed,
     onHandoffTimeout,
     onCodexEvent,
     onUserTranscript,
@@ -237,6 +140,7 @@ export function useLiveVoice({
       onHandoffStart,
       onHandoffProgress,
       onHandoffFailed,
+      onHandoffDeliveryFailed,
       onHandoffTimeout,
       onCodexEvent,
       onUserTranscript,
@@ -255,6 +159,7 @@ export function useLiveVoice({
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
+    onHandoffDeliveryFailed,
     onHandoffTimeout,
     onCodexEvent,
     onUserTranscript,
@@ -328,6 +233,28 @@ export function useLiveVoice({
     if (bufferedAudioRef.current.length === 0) return;
     const buffered = bufferedAudioRef.current.splice(0);
     buffered.forEach((payload) => websocket.send(payload));
+  }, []);
+
+  const sendAudioInput = useCallback((input: Float32Array, sampleRate: number) => {
+    if (mutedRef.current) return;
+    const payload = JSON.stringify({
+      type: "audio",
+      mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
+      data: encodePcmChunk(input, sampleRate),
+    });
+    const websocket = websocketRef.current;
+    if (websocket?.readyState === WebSocket.OPEN) {
+      websocket.send(payload);
+      audioSentSinceTurnEndRef.current = true;
+      return;
+    }
+    bufferedAudioRef.current.push(payload);
+    if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
+      bufferedAudioRef.current.splice(
+        0,
+        bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS,
+      );
+    }
   }, []);
 
   const sendSessionConfig = useCallback(
@@ -517,6 +444,13 @@ export function useLiveVoice({
           log(
             `[Tool Call Completed] ${payload.name || "tool"}. Result length: ${payload.result?.length || 0} chars.`,
           );
+        } else if (payload.type === "tool_result_gemini_delivery_failed") {
+          clearToolResultFallback();
+          const deliveryFailureMessage = liveVoiceDeliveryFailureMessage(payload.message);
+          setState("connecting");
+          setMessage("Codex result is available in chat. Gemini is reconnecting with the result.");
+          cbRef.current.onHandoffDeliveryFailed?.(deliveryFailureMessage);
+          log(`[Tool Result Delivery Failed] ${deliveryFailureMessage}`);
         } else if (payload.type === "error") {
           setState("error");
           setMessage(payload.message || "Live voice failed.");
@@ -635,26 +569,7 @@ export function useLiveVoice({
           processorRef.current = micWorkletNode;
 
           micWorkletNode.port.onmessage = (event) => {
-            if (mutedRef.current) return;
-            const input = event.data;
-            const payload = JSON.stringify({
-              type: "audio",
-              mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
-              data: encodePcmChunk(input, audioContext.sampleRate),
-            });
-            const websocket = websocketRef.current;
-            if (websocket?.readyState === WebSocket.OPEN) {
-              websocket.send(payload);
-              audioSentSinceTurnEndRef.current = true;
-              return;
-            }
-            bufferedAudioRef.current.push(payload);
-            if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
-              bufferedAudioRef.current.splice(
-                0,
-                bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS,
-              );
-            }
+            sendAudioInput(event.data, audioContext.sampleRate);
           };
 
           source.connect(micWorkletNode);
@@ -674,26 +589,7 @@ export function useLiveVoice({
         processorRef.current = processor;
 
         processor.onaudioprocess = (event) => {
-          if (mutedRef.current) return;
-          const input = event.inputBuffer.getChannelData(0);
-          const payload = JSON.stringify({
-            type: "audio",
-            mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
-            data: encodePcmChunk(input, audioContext.sampleRate),
-          });
-          const websocket = websocketRef.current;
-          if (websocket?.readyState === WebSocket.OPEN) {
-            websocket.send(payload);
-            audioSentSinceTurnEndRef.current = true;
-            return;
-          }
-          bufferedAudioRef.current.push(payload);
-          if (bufferedAudioRef.current.length > MAX_BUFFERED_AUDIO_CHUNKS) {
-            bufferedAudioRef.current.splice(
-              0,
-              bufferedAudioRef.current.length - MAX_BUFFERED_AUDIO_CHUNKS,
-            );
-          }
+          sendAudioInput(event.inputBuffer.getChannelData(0), audioContext.sampleRate);
         };
 
         source.connect(processor);
@@ -708,7 +604,7 @@ export function useLiveVoice({
       setState("error");
       setMessage(err instanceof Error ? err.message : "Could not start live voice.");
     }
-  }, [clearToolResultFallback, connectSocket, log, state, stopMicrophone]);
+  }, [clearToolResultFallback, connectSocket, log, sendAudioInput, state, stopMicrophone]);
 
   const cancelTask = useCallback(() => {
     if (websocketRef.current?.readyState === WebSocket.OPEN) {

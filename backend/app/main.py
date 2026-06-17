@@ -8,8 +8,8 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from datetime import datetime
+from pathlib import Path
 from typing import Any, AsyncIterator, Protocol, TypedDict, cast
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
@@ -29,9 +29,33 @@ from .codex_runner import (
     run_codex_stream_with_timer,
 )
 from .gemini_agent import _pcm_to_wav_data_url, ask_gemini_stream, live_connect_config
-from .history import ArtifactStore, ChatStore, ConsoleStore, HistoryStore, ProjectStore
+from .history import (
+    ArtifactStore,
+    ChatStore,
+    CodexHandoffStore,
+    ConsoleStore,
+    HistoryStore,
+    ProjectStore,
+)
 from .live_logging import JsonlEventLogger, LiveSessionLogger, clip_text
 from .prompting import build_recent_conversation_context, improve_codex_task_prompt
+from .routes.change_review import create_router as create_change_review_router
+from .routes.codex_jobs import create_router as create_codex_jobs_router
+from .services.background_jobs import BackgroundJobService, CodexBackgroundJob
+from .services.change_review import (
+    CommitResult,
+    RevertResult,
+    artifact_content_type,
+    artifact_summary,
+    changed_files_from_status,
+    commit_changed_files,
+    create_change_review_artifact,
+    create_tool_artifact,
+    event_item_type,
+    git_output,
+    has_file_changes,
+    revert_changed_files,
+)
 from .settings import get_settings
 from . import tracing
 
@@ -46,16 +70,8 @@ class _LiveSession(Protocol):
     def receive(self) -> AsyncIterator[Any]: ...
 
 
-class _RevertResult(TypedDict):
-    ok: bool
-    reverted_files: list[str]
-
-
-class _CommitResult(TypedDict):
-    ok: bool
-    commit: str | None
-    committed_files: list[str]
-    message: str
+_RevertResult = RevertResult
+_CommitResult = CommitResult
 
 
 class _LiveClientConfig(TypedDict):
@@ -204,6 +220,185 @@ projects = ProjectStore(settings.history_path.with_name("projects.json"), db_pat
 chats = ChatStore(settings.history_path.with_name("chats.json"), db_path=settings.history_path)
 console = ConsoleStore(settings.history_path.with_name("console.json"), db_path=settings.history_path)
 app_log = JsonlEventLogger(settings.history_path.with_name("app_events.jsonl"))
+codex_handoffs = CodexHandoffStore(settings.history_path)
+
+
+def _artifact_summary(text: object, limit: int = 220) -> str:
+    return artifact_summary(text, limit)
+
+
+def _artifact_content_type(text: object) -> str:
+    return artifact_content_type(text)
+
+
+def _create_tool_artifact(
+    *,
+    chat_id: str | None,
+    message_id: str | None,
+    title: str,
+    content: object,
+    source: str,
+    workdir: str | None,
+) -> dict[str, object] | None:
+    return create_tool_artifact(
+        artifacts=artifacts,
+        app_log=app_log,
+        chat_id=chat_id,
+        message_id=message_id,
+        title=title,
+        content=content,
+        source=source,
+        workdir=workdir,
+    )
+
+
+def _create_tool_artifact_for_job(
+    chat_id: str | None,
+    message_id: str | None,
+    title: str,
+    content: object,
+    source: str,
+    workdir: str | None,
+) -> dict[str, object] | None:
+    return _create_tool_artifact(
+        chat_id=chat_id,
+        message_id=message_id,
+        title=title,
+        content=content,
+        source=source,
+        workdir=workdir,
+    )
+
+
+def _event_item_type(event: object) -> str:
+    return event_item_type(event)
+
+
+def _has_file_changes(events: list[object]) -> bool:
+    return has_file_changes(events)
+
+
+def _git_output(root: Path, args: list[str]) -> str:
+    return git_output(root, args)
+
+
+def _changed_files_from_status(status_text: str) -> list[str]:
+    return changed_files_from_status(status_text)
+
+
+def _create_change_review_artifact(
+    *,
+    chat_id: str | None,
+    workdir: str | None,
+    codex_events: list[object],
+) -> dict[str, object] | None:
+    return create_change_review_artifact(
+        artifacts=artifacts,
+        app_log=app_log,
+        chat_id=chat_id,
+        workdir=workdir,
+        codex_events=codex_events,
+    )
+
+
+def _create_change_review_artifact_for_job(
+    chat_id: str | None,
+    workdir: str | None,
+    codex_events: list[object],
+) -> dict[str, object] | None:
+    return _create_change_review_artifact(
+        chat_id=chat_id,
+        workdir=workdir,
+        codex_events=codex_events,
+    )
+
+
+def _artifact_id(item: dict[str, object] | None) -> str | None:
+    if not item:
+        return None
+    value = item.get("id")
+    return str(value) if value else None
+
+
+def _persist_live_codex_handoff(
+    *,
+    chat_id: str | None,
+    project_id: str | None,
+    workdir: str | None,
+    user_text: str,
+    tool_name: str | None,
+    result: _LiveCodexResult,
+    artifact: dict[str, object] | None,
+    change_artifact: dict[str, object] | None,
+) -> dict[str, Any]:
+    artifact_ids = [
+        artifact_id
+        for artifact_id in (_artifact_id(artifact), _artifact_id(change_artifact))
+        if artifact_id
+    ]
+    return codex_handoffs.create(
+        chat_id=chat_id,
+        project_id=project_id,
+        workdir=workdir,
+        user_text=user_text,
+        tool_name=str(tool_name or "run_codex_task"),
+        codex_status=result.status,
+        result_summary=_artifact_summary(result.response, limit=500),
+        result_artifact_id=_artifact_id(artifact),
+        codex_turn_id=result.turn_id,
+        codex_thread_id=result.thread_id,
+        artifact_ids=artifact_ids,
+    )
+
+
+def _revert_changed_files(workdir: str, files: list[str]) -> _RevertResult:
+    return revert_changed_files(workdir, files)
+
+
+def _commit_changed_files(workdir: str, files: list[str], message: str) -> _CommitResult:
+    return commit_changed_files(workdir, files, message)
+
+
+_background_jobs = BackgroundJobService(
+    settings=settings,
+    history=history,
+    app_log=app_log,
+    create_tool_artifact=_create_tool_artifact_for_job,
+    create_change_review_artifact=_create_change_review_artifact_for_job,
+    run_codex_stream=run_codex_stream_with_timer,
+)
+
+# Backward-compatible names for focused tests and route handlers.
+_CodexBackgroundJob = CodexBackgroundJob
+_codex_jobs = _background_jobs.jobs
+
+
+def _sync_background_job_dependencies() -> None:
+    _background_jobs.configure(
+        history=history,
+        app_log=app_log,
+        run_codex_stream=run_codex_stream_with_timer,
+    )
+
+
+async def _store_job(job: _CodexBackgroundJob) -> None:
+    _sync_background_job_dependencies()
+    await _background_jobs.store(job)
+
+
+async def _get_job(job_id: str) -> _CodexBackgroundJob | None:
+    _sync_background_job_dependencies()
+    return await _background_jobs.get(job_id)
+
+
+async def _list_jobs(chat_id: str | None = None) -> list[dict[str, object]]:
+    _sync_background_job_dependencies()
+    return await _background_jobs.list(chat_id)
+
+
+async def _run_codex_background_job(job_id: str) -> None:
+    _sync_background_job_dependencies()
+    await _background_jobs.run(job_id)
 
 
 @asynccontextmanager
@@ -282,6 +477,28 @@ def _resolve_scoped_workdir(
     if resolved != root and root not in resolved.parents:
         raise HTTPException(status_code=400, detail="Workdir must be inside the selected project")
     return str(resolved)
+
+
+app.include_router(
+    create_change_review_router(
+        revert_changed_files=_revert_changed_files,
+        commit_changed_files=_commit_changed_files,
+        write_log=app_log.write,
+    )
+)
+app.include_router(
+    create_codex_jobs_router(
+        resolve_workdir=lambda workdir, project_id: _resolve_scoped_workdir(
+            workdir, project_id=project_id
+        ),
+        history=history,
+        store_job=_store_job,
+        get_job=_get_job,
+        list_jobs=_list_jobs,
+        run_job=_run_codex_background_job,
+        write_log=app_log.write,
+    )
+)
 
 
 def _live_client_config_from_payload(
@@ -673,6 +890,24 @@ def _chat_context(chat_id: str | None, workdir: str | None = None) -> str:
             "If a follow-up asks about one of these generated outputs, answer from the artifact reference instead of calling Codex again unless fresh local state is required."
         )
         parts.append("\n".join(lines))
+    pending_handoffs = codex_handoffs.pending_for_chat(chat_id) if chat_id else []
+    if pending_handoffs:
+        lines = ["Important recent Codex handoffs Gemini has not yet summarized:"]
+        for item in pending_handoffs:
+            artifact_ref = item.get("result_artifact_id") or ", ".join(
+                str(value) for value in item.get("artifact_ids", []) if value
+            )
+            lines.extend(
+                [
+                    "- Previous user request: " + str(item.get("user_text") or "(not captured)"),
+                    "  Codex status: " + str(item.get("codex_status") or "completed"),
+                    "  Gemini delivery state: " + str(item.get("delivery_state") or "unknown"),
+                    "  Artifact reference: " + str(artifact_ref or "not available"),
+                    "  Summary: " + str(item.get("result_summary") or "Codex completed."),
+                    "  If the user asks for an update, answer from this completed Codex result instead of saying no work was done.",
+                ]
+            )
+        parts.append("\n".join(lines))
     return "\n\n".join(part for part in parts if part.strip())
 
 
@@ -743,415 +978,6 @@ def _chat_export_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _artifact_summary(text: object, limit: int = 220) -> str:
-    value = " ".join(str(text or "").split())
-    if not value:
-        return "Codex completed without a textual result."
-    return value if len(value) <= limit else value[:limit].rstrip() + "..."
-
-
-def _artifact_content_type(text: object) -> str:
-    value = str(text or "")
-    if value.startswith("diff --git ") or "\n@@ " in value:
-        return "diff"
-    if value.startswith(("```", "## ", "### ")):
-        return "markdown"
-    if "\n| " in value and "\n|-" in value:
-        return "markdown"
-    markdown_markers = ("```", "\n## ", "\n### ", "\n- [", "\n* [")
-    return "markdown" if any(marker in value for marker in markdown_markers) else "text"
-
-
-def _create_tool_artifact(
-    *,
-    chat_id: str | None,
-    message_id: str | None,
-    title: str,
-    content: object,
-    source: str,
-    workdir: str | None,
-) -> dict[str, object] | None:
-    text = str(content or "").strip()
-    if not text:
-        return None
-    item = artifacts.create(
-        chat_id=chat_id,
-        message_id=message_id,
-        title=title,
-        summary=_artifact_summary(text),
-        content=text,
-        content_type=_artifact_content_type(text),
-        source=source,
-        workdir=workdir,
-    )
-    app_log.write(
-        "artifact.created",
-        chat_id=chat_id,
-        message_id=message_id,
-        artifact_id=item["id"],
-        title=title,
-        source=source,
-        content_chars=len(text),
-    )
-    return item
-
-
-def _event_item_type(event: object) -> str:
-    if not isinstance(event, dict):
-        return ""
-    nested = event.get("event")
-    if isinstance(nested, dict):
-        return str(nested.get("item_type") or nested.get("type") or "")
-    return str(event.get("item_type") or "")
-
-
-def _has_file_changes(events: list[object]) -> bool:
-    return any(_event_item_type(event) == "fileChange" for event in events)
-
-
-def _git_output(root: Path, args: list[str]) -> str:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(root), *args],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception:
-        return ""
-    return proc.stdout.strip() if proc.returncode == 0 else ""
-
-
-def _changed_files_from_status(status_text: str) -> list[str]:
-    files: list[str] = []
-    for line in status_text.splitlines():
-        value = line[3:].strip() if len(line) > 3 else ""
-        if " -> " in value:
-            value = value.split(" -> ", 1)[1].strip()
-        if value:
-            files.append(value)
-    return files
-
-
-def _create_change_review_artifact(
-    *,
-    chat_id: str | None,
-    workdir: str | None,
-    codex_events: list[object],
-) -> dict[str, object] | None:
-    if not workdir or not _has_file_changes(codex_events):
-        return None
-    try:
-        root = resolve_workdir(workdir)
-    except Exception:
-        return None
-    status_text = _git_output(root, ["status", "--short"])
-    diff_text = _git_output(root, ["diff", "--no-ext-diff", "HEAD", "--"])
-    if not status_text and not diff_text:
-        return None
-    files = _changed_files_from_status(status_text)
-    file_summary = f"{len(files)} file{'s' if len(files) != 1 else ''} changed"
-    content = "\n".join(
-        part
-        for part in [
-            f"# Git status\n\n```text\n{status_text or '(clean)'}\n```",
-            f"# Diff\n\n```diff\n{diff_text or '(no tracked diff)'}\n```",
-        ]
-        if part
-    )
-    artifact = artifacts.create(
-        chat_id=chat_id,
-        message_id=None,
-        title=f"Change review: {file_summary}",
-        summary=file_summary,
-        content=content,
-        content_type="diff",
-        source="git_diff",
-        workdir=str(root),
-    )
-    artifact["changed_files"] = files
-    app_log.write(
-        "artifact.created",
-        chat_id=chat_id,
-        artifact_id=artifact["id"],
-        title=artifact["title"],
-        source="git_diff",
-        content_chars=len(content),
-        changed_file_count=len(files),
-    )
-    return artifact
-
-
-def _safe_changed_file(value: str) -> str:
-    normalized = value.replace("\\", "/").strip().strip("/")
-    path = PurePosixPath(normalized)
-    if not normalized or path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"Unsafe changed file path: {value}")
-    return path.as_posix()
-
-
-def _git_file_is_tracked(root: Path, rel_path: str) -> bool:
-    proc = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", rel_path],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    return proc.returncode == 0
-
-
-def _revert_changed_files(workdir: str, files: list[str]) -> _RevertResult:
-    if not files:
-        raise ValueError("No changed files were provided")
-    root = resolve_workdir(workdir)
-    if not (root / ".git").exists() and not _git_output(root, ["rev-parse", "--show-toplevel"]):
-        raise ValueError("Workdir is not inside a git repository")
-
-    reverted: list[str] = []
-    for raw_file in files:
-        rel_path = _safe_changed_file(raw_file)
-        target = (root / rel_path).resolve()
-        if target != root and root not in target.parents:
-            raise ValueError(f"Changed file path escapes workdir: {raw_file}")
-        if _git_file_is_tracked(root, rel_path):
-            proc = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(root),
-                    "restore",
-                    "--source=HEAD",
-                    "--worktree",
-                    "--staged",
-                    "--",
-                    rel_path,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if proc.returncode != 0:
-                raise ValueError(proc.stderr.strip() or f"Failed to restore {rel_path}")
-        elif target.exists():
-            if target.is_dir() and not target.is_symlink():
-                shutil.rmtree(target)
-            else:
-                target.unlink()
-        reverted.append(rel_path)
-    return {"ok": True, "reverted_files": reverted}
-
-
-def _commit_changed_files(workdir: str, files: list[str], message: str) -> _CommitResult:
-    if not files:
-        raise ValueError("No changed files were provided")
-    commit_message = _compact_commit_message(message)
-    if not commit_message:
-        raise ValueError("Commit message is required")
-    root = resolve_workdir(workdir)
-    if not (root / ".git").exists() and not _git_output(root, ["rev-parse", "--show-toplevel"]):
-        raise ValueError("Workdir is not inside a git repository")
-
-    safe_files = [_safe_changed_file(raw_file) for raw_file in files]
-    for rel_path in safe_files:
-        target = (root / rel_path).resolve()
-        if target != root and root not in target.parents:
-            raise ValueError(f"Changed file path escapes workdir: {rel_path}")
-
-    add_proc = subprocess.run(
-        ["git", "-C", str(root), "add", "--", *safe_files],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if add_proc.returncode != 0:
-        raise ValueError(add_proc.stderr.strip() or "Failed to stage changed files")
-
-    diff_proc = subprocess.run(
-        ["git", "-C", str(root), "diff", "--cached", "--quiet", "--", *safe_files],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if diff_proc.returncode == 0:
-        raise ValueError("No staged changes to commit")
-    if diff_proc.returncode not in (0, 1):
-        raise ValueError(diff_proc.stderr.strip() or "Failed to inspect staged changes")
-
-    commit_proc = subprocess.run(
-        ["git", "-C", str(root), "commit", "-m", commit_message, "--", *safe_files],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if commit_proc.returncode != 0:
-        raise ValueError(commit_proc.stderr.strip() or "Failed to commit changed files")
-    commit_id = _git_output(root, ["rev-parse", "--short", "HEAD"])
-    return {
-        "ok": True,
-        "commit": commit_id,
-        "committed_files": safe_files,
-        "message": commit_message,
-    }
-
-
-def _compact_commit_message(message: str) -> str:
-    value = " ".join(str(message or "").split())
-    if len(value) > 72:
-        return value[:69].rstrip() + "..."
-    return value
-
-
-@dataclass
-class _CodexBackgroundJob:
-    id: str
-    task: str
-    enhanced_task: str
-    workdir: str
-    project_id: str | None
-    chat_id: str | None
-    status: str = "queued"
-    result: str = ""
-    error: str = ""
-    codex_events: list[dict[str, Any]] = field(default_factory=list)
-    codex_turn_id: str | None = None
-    codex_thread_id: str | None = None
-    codex_status: str | None = None
-    artifacts: list[dict[str, object]] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "id": self.id,
-            "task": self.task,
-            "workdir": self.workdir,
-            "project_id": self.project_id,
-            "chat_id": self.chat_id,
-            "status": self.status,
-            "result": self.result,
-            "error": self.error,
-            "codex_events": self.codex_events[-200:],
-            "codex_turn_id": self.codex_turn_id,
-            "codex_thread_id": self.codex_thread_id,
-            "codex_status": self.codex_status,
-            "artifacts": self.artifacts,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
-
-
-_codex_jobs: dict[str, _CodexBackgroundJob] = {}
-_codex_jobs_lock = asyncio.Lock()
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _touch_job(job: _CodexBackgroundJob, status: str | None = None) -> None:
-    if status:
-        job.status = status
-    job.updated_at = _utc_now_iso()
-
-
-async def _store_job(job: _CodexBackgroundJob) -> None:
-    async with _codex_jobs_lock:
-        _codex_jobs[job.id] = job
-
-
-async def _get_job(job_id: str) -> _CodexBackgroundJob | None:
-    async with _codex_jobs_lock:
-        return _codex_jobs.get(job_id)
-
-
-async def _list_jobs(chat_id: str | None = None) -> list[dict[str, object]]:
-    async with _codex_jobs_lock:
-        rows = list(_codex_jobs.values())
-    if chat_id is not None:
-        rows = [job for job in rows if job.chat_id == chat_id]
-    rows.sort(key=lambda job: job.created_at, reverse=True)
-    return [job.to_dict() for job in rows[:50]]
-
-
-async def _run_codex_background_job(job_id: str) -> None:
-    job = await _get_job(job_id)
-    if job is None:
-        return
-    _touch_job(job, "running")
-    app_log.write("codex_job.start", job_id=job.id, chat_id=job.chat_id, workdir=job.workdir)
-    try:
-        async for event in run_codex_stream_with_timer(
-            job.enhanced_task,
-            job.workdir,
-            settings,
-            None,
-            job.chat_id,
-        ):
-            if event.get("type") == "codex_event":
-                job.codex_events.append(dict(event))
-                _touch_job(job)
-            elif event.get("type") == "done":
-                job.result = str(event.get("text") or "")
-                job.workdir = str(event.get("workdir") or job.workdir)
-                job.codex_events = list(event.get("events") or job.codex_events)
-                job.codex_turn_id = event.get("turn_id")
-                job.codex_thread_id = event.get("thread_id")
-                job.codex_status = event.get("status")
-                artifact = _create_tool_artifact(
-                    chat_id=job.chat_id,
-                    message_id=None,
-                    title="Codex output",
-                    content=job.result,
-                    source="background_codex",
-                    workdir=job.workdir,
-                )
-                if artifact:
-                    job.artifacts.append(artifact)
-                change_artifact = _create_change_review_artifact(
-                    chat_id=job.chat_id,
-                    workdir=job.workdir,
-                    codex_events=cast(list[object], job.codex_events),
-                )
-                if change_artifact:
-                    job.artifacts.append(change_artifact)
-                history.append(
-                    "assistant",
-                    job.result or "Codex background task completed.",
-                    {
-                        "direct_codex": True,
-                        "background_job_id": job.id,
-                        "artifacts": job.artifacts,
-                        "workdir": job.workdir,
-                        "project_id": job.project_id,
-                        "chat_id": job.chat_id,
-                        "codex_events": job.codex_events[-200:],
-                        "codex_turn_id": job.codex_turn_id,
-                        "codex_thread_id": job.codex_thread_id,
-                        "codex_status": job.codex_status,
-                    },
-                )
-                _touch_job(job, "done")
-                app_log.write(
-                    "codex_job.done",
-                    job_id=job.id,
-                    chat_id=job.chat_id,
-                    codex_status=job.codex_status,
-                    result_chars=len(job.result),
-                )
-            elif event.get("type") == "error":
-                job.error = str(event.get("message") or "Codex failed")
-                _touch_job(job, "failed")
-                app_log.write("codex_job.error", job_id=job.id, message=clip_text(job.error))
-    except Exception as exc:
-        job.error = str(exc)
-        _touch_job(job, "failed")
-        app_log.write("codex_job.exception", job_id=job.id, message=clip_text(exc))
-    finally:
-        if job.status == "running":
-            _touch_job(job, "failed")
-            job.error = job.error or "Codex task ended before completion"
-
-
 class ChatRequest(BaseModel):
     message: str
     workdir: str | None = None
@@ -1185,17 +1011,6 @@ class ConsoleStateRequest(BaseModel):
     actions: list[dict[str, object]] = []
     handoffs: list[dict[str, object]] = []
     debugEntries: list[dict[str, object]] = []
-
-
-class ChangeReviewRevertRequest(BaseModel):
-    workdir: str
-    files: list[str]
-
-
-class ChangeReviewCommitRequest(BaseModel):
-    workdir: str
-    files: list[str]
-    message: str
 
 
 @app.get("/api/health")
@@ -1236,11 +1051,13 @@ async def clear_history(
         await close_codex_thread_sessions_for(chat_ids)
         for cid in chat_ids:
             artifacts.clear(cid)
+            codex_handoffs.clear(cid)
     elif chat_id is not None:
         await close_codex_thread_session(chat_id)
     history.clear(project_id=project_id, workdir=workdir, chat_id=chat_id)
     if chat_id is not None:
         artifacts.clear(chat_id)
+        codex_handoffs.clear(chat_id)
     return {"ok": True}
 
 
@@ -1290,6 +1107,7 @@ async def delete_project(project_id: str) -> dict[str, object]:
     history.clear(project_id=project_id)
     for chat_id in chat_ids:
         artifacts.clear(chat_id)
+        codex_handoffs.clear(chat_id)
     console.clear_for_project(chat_ids)
     return {"ok": True}
 
@@ -1359,6 +1177,7 @@ async def delete_chat(chat_id: str) -> dict[str, object]:
     chats.delete(chat_id)
     history.clear(chat_id=chat_id)
     artifacts.clear(chat_id)
+    codex_handoffs.clear(chat_id)
     console.clear(chat_id)
     return {"ok": True}
 
@@ -1654,6 +1473,7 @@ async def live_voice(websocket: WebSocket) -> None:
 
                 if server_message.tool_call and server_message.tool_call.function_calls:
                     responses = []
+                    response_handoff_ids: list[str] = []
                     user_text = turn_state.user_text
                     ensure_turn_gen()
                     for call in server_message.tool_call.function_calls:
@@ -1729,6 +1549,27 @@ async def live_voice(websocket: WebSocket) -> None:
                             status=result.status,
                             artifacts_for_result=[artifact, change_artifact],
                         )
+                        handoff = _persist_live_codex_handoff(
+                            chat_id=session_chat_id,
+                            project_id=session_project_id,
+                            workdir=result.workdir,
+                            user_text=user_text or request.task,
+                            tool_name=call.name,
+                            result=result,
+                            artifact=artifact,
+                            change_artifact=change_artifact,
+                        )
+                        handoff_id = str(handoff.get("id") or "")
+                        if handoff_id:
+                            response_handoff_ids.append(handoff_id)
+                        live_log.write(
+                            "codex.handoff_persisted",
+                            chat_id=session_chat_id,
+                            handoff_id=handoff_id,
+                            delivery_state=handoff.get("delivery_state"),
+                            artifact_id=handoff.get("result_artifact_id"),
+                            codex_status=result.status,
+                        )
 
                         responses.append(
                             types.FunctionResponse(
@@ -1752,6 +1593,7 @@ async def live_voice(websocket: WebSocket) -> None:
                                 "codex_turn_id": result.turn_id,
                                 "codex_thread_id": result.thread_id,
                                 "codex_status": result.status,
+                                "handoff_id": handoff_id or None,
                             }
                         )
                         live_log.write(
@@ -1769,8 +1611,34 @@ async def live_voice(websocket: WebSocket) -> None:
                     try:
                         await session.send_tool_response(function_responses=responses)
                     except Exception as e:
+                        for handoff_id in response_handoff_ids:
+                            codex_handoffs.mark_delivery(
+                                handoff_id,
+                                "tool_response_failed_to_gemini",
+                                acknowledged=False,
+                            )
                         live_log.write(
-                            "gemini.tool_response_send_error", chat_id=session_chat_id, error=str(e)
+                            "gemini.tool_response_send_error",
+                            chat_id=session_chat_id,
+                            error=str(e),
+                            handoff_ids=response_handoff_ids,
+                        )
+                        await websocket.send_json(
+                            {
+                                "type": "tool_result_gemini_delivery_failed",
+                                "message": (
+                                    "Codex completed, but Gemini Live reconnected before reading "
+                                    "the result. The next session will include the completed result."
+                                ),
+                                "handoff_ids": response_handoff_ids,
+                            }
+                        )
+                        return
+                    for handoff_id in response_handoff_ids:
+                        codex_handoffs.mark_delivery(
+                            handoff_id,
+                            "tool_response_sent_to_gemini",
+                            acknowledged=False,
                         )
                     live_log.write(
                         "gemini.tool_response_send_done",
@@ -1939,6 +1807,8 @@ async def live_voice(websocket: WebSocket) -> None:
                     if not turn_state.has_persistable_content():
                         turn_state.reset()
                         continue
+                    if used_codex:
+                        codex_handoffs.acknowledge_chat(session_chat_id)
                     turn_state.persist(
                         history_store=history,
                         workdir=session_workdir,
@@ -2169,86 +2039,6 @@ async def project_info(path: str) -> dict[str, object]:
         "branch": _git_branch(root) if is_git else None,
         "file_count": _file_count(root),
     }
-
-
-@app.post("/api/change-review/revert")
-async def revert_change_review(req: ChangeReviewRevertRequest) -> _RevertResult:
-    try:
-        result = _revert_changed_files(req.workdir, req.files)
-    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    app_log.write(
-        "change_review.revert",
-        workdir=req.workdir,
-        file_count=len(result.get("reverted_files") or []),
-    )
-    return result
-
-
-@app.post("/api/change-review/commit")
-async def commit_change_review(req: ChangeReviewCommitRequest) -> _CommitResult:
-    try:
-        result = _commit_changed_files(req.workdir, req.files, req.message)
-    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    app_log.write(
-        "change_review.commit",
-        workdir=req.workdir,
-        file_count=len(result.get("committed_files") or []),
-        commit=result.get("commit"),
-    )
-    return result
-
-
-@app.post("/api/codex/jobs")
-async def enqueue_codex_job(req: CodexRequest) -> dict[str, object]:
-    task = req.task.strip()
-    if not task:
-        raise HTTPException(status_code=400, detail="Task is required")
-    workdir = _resolve_scoped_workdir(req.workdir, project_id=req.project_id)
-    job = _CodexBackgroundJob(
-        id=str(uuid.uuid4()),
-        task=task,
-        enhanced_task=improve_codex_task_prompt(task),
-        workdir=workdir,
-        project_id=req.project_id,
-        chat_id=req.chat_id,
-    )
-    await _store_job(job)
-    history.append(
-        "user",
-        task,
-        {
-            "direct_codex": True,
-            "background_job_id": job.id,
-            "workdir": workdir,
-            "project_id": req.project_id,
-            "chat_id": req.chat_id,
-        },
-    )
-    asyncio.create_task(_run_codex_background_job(job.id))
-    app_log.write(
-        "codex_job.queued",
-        job_id=job.id,
-        chat_id=req.chat_id,
-        project_id=req.project_id,
-        workdir=workdir,
-        task_chars=len(task),
-    )
-    return job.to_dict()
-
-
-@app.get("/api/codex/jobs")
-async def list_codex_jobs(chat_id: str | None = None) -> list[dict[str, object]]:
-    return await _list_jobs(chat_id=chat_id)
-
-
-@app.get("/api/codex/jobs/{job_id}")
-async def get_codex_job(job_id: str) -> dict[str, object]:
-    job = await _get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Codex job not found")
-    return job.to_dict()
 
 
 @app.post("/api/codex/stream")

@@ -438,6 +438,195 @@ class ArtifactStore:
                     conn.execute("DELETE FROM artifacts WHERE chat_id = ?", (chat_id,))
 
 
+class CodexHandoffStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path.with_suffix(".sqlite3")
+        self.lock = Lock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS codex_handoffs (
+                    id TEXT PRIMARY KEY,
+                    chat_id TEXT,
+                    project_id TEXT,
+                    workdir TEXT,
+                    user_text TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    codex_status TEXT,
+                    result_summary TEXT NOT NULL,
+                    result_artifact_id TEXT,
+                    codex_turn_id TEXT,
+                    codex_thread_id TEXT,
+                    artifact_ids_json TEXT NOT NULL,
+                    delivery_state TEXT NOT NULL,
+                    gemini_acknowledged INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_handoffs_chat ON codex_handoffs(chat_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_handoffs_pending ON codex_handoffs(chat_id, gemini_acknowledged, delivery_state)"
+            )
+
+    def _row_to_item(self, row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            artifact_ids = json.loads(row["artifact_ids_json"])
+        except Exception:
+            artifact_ids = []
+        return {
+            "id": row["id"],
+            "chat_id": row["chat_id"],
+            "project_id": row["project_id"],
+            "workdir": row["workdir"],
+            "user_text": row["user_text"],
+            "tool_name": row["tool_name"],
+            "codex_status": row["codex_status"],
+            "result_summary": row["result_summary"],
+            "result_artifact_id": row["result_artifact_id"],
+            "codex_turn_id": row["codex_turn_id"],
+            "codex_thread_id": row["codex_thread_id"],
+            "artifact_ids": artifact_ids if isinstance(artifact_ids, list) else [],
+            "delivery_state": row["delivery_state"],
+            "gemini_acknowledged": bool(row["gemini_acknowledged"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def create(
+        self,
+        *,
+        chat_id: str | None,
+        project_id: str | None,
+        workdir: str | None,
+        user_text: str,
+        tool_name: str,
+        codex_status: str | None,
+        result_summary: str,
+        result_artifact_id: str | None,
+        codex_turn_id: str | None,
+        codex_thread_id: str | None,
+        artifact_ids: list[str],
+    ) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        item_id = str(uuid.uuid4())
+        with self.lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO codex_handoffs (
+                        id, chat_id, project_id, workdir, user_text, tool_name,
+                        codex_status, result_summary, result_artifact_id,
+                        codex_turn_id, codex_thread_id, artifact_ids_json,
+                        delivery_state, gemini_acknowledged, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item_id,
+                        chat_id,
+                        project_id,
+                        workdir,
+                        user_text,
+                        tool_name,
+                        codex_status,
+                        result_summary,
+                        result_artifact_id,
+                        codex_turn_id,
+                        codex_thread_id,
+                        json.dumps(artifact_ids),
+                        "tool_result_sent_to_client",
+                        0,
+                        now,
+                        now,
+                    ),
+                )
+        return self.get(item_id) or {}
+
+    def get(self, handoff_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM codex_handoffs WHERE id = ?", (handoff_id,)
+                ).fetchone()
+                return self._row_to_item(row) if row else None
+
+    def mark_delivery(self, handoff_id: str, state: str, *, acknowledged: bool) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE codex_handoffs
+                    SET delivery_state = ?, gemini_acknowledged = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (state, 1 if acknowledged else 0, now, handoff_id),
+                )
+
+    def acknowledge_chat(self, chat_id: str | None) -> None:
+        if not chat_id:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        with self.lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE codex_handoffs
+                    SET gemini_acknowledged = 1,
+                        delivery_state = CASE
+                            WHEN delivery_state = 'tool_response_failed_to_gemini'
+                            THEN 'gemini_final_response_completed'
+                            ELSE delivery_state
+                        END,
+                        updated_at = ?
+                    WHERE chat_id = ? AND gemini_acknowledged = 0
+                    """,
+                    (now, chat_id),
+                )
+
+    def pending_for_chat(self, chat_id: str | None, limit: int = 3) -> list[dict[str, Any]]:
+        if not chat_id:
+            return []
+        with self.lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM codex_handoffs
+                    WHERE chat_id = ? AND gemini_acknowledged = 0
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (chat_id, limit),
+                ).fetchall()
+                return [self._row_to_item(row) for row in reversed(rows)]
+
+    def clear(self, chat_id: str | None = None) -> None:
+        with self.lock:
+            with self._connect() as conn:
+                if chat_id is None:
+                    conn.execute("DELETE FROM codex_handoffs")
+                else:
+                    conn.execute("DELETE FROM codex_handoffs WHERE chat_id = ?", (chat_id,))
+
+
 class ProjectStore:
     def __init__(self, path: Path, db_path: Path | None = None) -> None:
         self.legacy_path = path

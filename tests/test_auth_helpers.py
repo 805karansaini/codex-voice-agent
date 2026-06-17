@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from backend.app.main import (
     _artifact_content_type,
     _bearer_token,
+    _chat_context,
     _chat_export_markdown,
     _changed_files_from_status,
     _doctor_checks,
@@ -20,7 +21,7 @@ from backend.app.main import (
     _resolve_scoped_workdir,
 )
 import backend.app.main as main
-from backend.app.history import ProjectStore
+from backend.app.history import ArtifactStore, CodexHandoffStore, HistoryStore, ProjectStore
 
 
 class AuthHelperTests(unittest.TestCase):
@@ -162,6 +163,41 @@ class AuthHelperTests(unittest.TestCase):
             self.assertIn("Current git branch: main", briefing)
             self.assertIn("M README.md", briefing)
             self.assertIn("Initial commit", briefing)
+
+    def test_chat_context_includes_pending_codex_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_history = main.history
+            old_artifacts = main.artifacts
+            old_handoffs = main.codex_handoffs
+            try:
+                main.history = HistoryStore(Path(tmp) / "history.json")
+                main.artifacts = ArtifactStore(Path(tmp) / "history.json")
+                main.codex_handoffs = CodexHandoffStore(Path(tmp) / "history.json")
+                main.codex_handoffs.create(
+                    chat_id="chat-1",
+                    project_id="project-1",
+                    workdir=str(Path(tmp)),
+                    user_text="Fix reconnect handling",
+                    tool_name="run_codex_task",
+                    codex_status="completed",
+                    result_summary="Codex changed the reconnect handling.",
+                    result_artifact_id="artifact-1",
+                    codex_turn_id="turn-1",
+                    codex_thread_id="thread-1",
+                    artifact_ids=["artifact-1"],
+                )
+
+                context = _chat_context("chat-1", str(Path(tmp)))
+
+                self.assertIn("Important recent Codex handoffs", context)
+                self.assertIn("Fix reconnect handling", context)
+                self.assertIn("Codex status: completed", context)
+                self.assertIn("Artifact reference: artifact-1", context)
+                self.assertIn("instead of saying no work was done", context)
+            finally:
+                main.history = old_history
+                main.artifacts = old_artifacts
+                main.codex_handoffs = old_handoffs
 
 
 if __name__ == "__main__":

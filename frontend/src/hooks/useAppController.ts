@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AppModalsProps } from "../components/layout/AppModals";
 import type { AppTitleBarProps } from "../components/layout/AppTitleBar";
@@ -32,6 +32,7 @@ import { useWorkspaceSidebarState } from "./useWorkspaceSidebarState";
 
 export function useAppController() {
   const store = useProjectStore();
+  const { syncError, clearSyncError } = store;
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"agent" | "codex">("agent");
   const [showAdd, setShowAdd] = useState(false);
@@ -107,6 +108,11 @@ export function useAppController() {
     playResponseAudio,
   } = useSpeechPlayback({ setError });
   const activeAbortControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!syncError) return;
+    setError(syncError);
+    clearSyncError();
+  }, [syncError, clearSyncError]);
   const {
     voiceCtxRef,
     getWorkdir,

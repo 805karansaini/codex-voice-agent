@@ -4,7 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.app.history import ArtifactStore, ChatStore, ConsoleStore, HistoryStore, ProjectStore
+from backend.app.history import (
+    ArtifactStore,
+    ChatStore,
+    CodexHandoffStore,
+    ConsoleStore,
+    HistoryStore,
+    ProjectStore,
+)
 
 
 class HistoryStoreTests(unittest.TestCase):
@@ -108,6 +115,56 @@ class ArtifactStoreTests(unittest.TestCase):
             self.assertEqual(results[0]["type"], "artifact")
             self.assertEqual(results[0]["id"], item["id"])
             self.assertEqual(results[0]["chat_id"], "chat-1")
+
+
+class CodexHandoffStoreTests(unittest.TestCase):
+    def test_pending_handoff_survives_failed_gemini_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CodexHandoffStore(Path(tmp) / "history.json")
+            handoff = store.create(
+                chat_id="chat-1",
+                project_id="project-1",
+                workdir="/tmp/project-1",
+                user_text="Fix reconnect handling",
+                tool_name="run_codex_task",
+                codex_status="completed",
+                result_summary="Changed reconnect context handling.",
+                result_artifact_id="artifact-1",
+                codex_turn_id="turn-1",
+                codex_thread_id="thread-1",
+                artifact_ids=["artifact-1", "artifact-2"],
+            )
+
+            store.mark_delivery(
+                handoff["id"], "tool_response_failed_to_gemini", acknowledged=False
+            )
+
+            pending = store.pending_for_chat("chat-1")
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["delivery_state"], "tool_response_failed_to_gemini")
+            self.assertFalse(pending[0]["gemini_acknowledged"])
+            self.assertEqual(pending[0]["artifact_ids"], ["artifact-1", "artifact-2"])
+
+    def test_acknowledge_chat_stops_reinjecting_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CodexHandoffStore(Path(tmp) / "history.json")
+            store.create(
+                chat_id="chat-1",
+                project_id="project-1",
+                workdir="/tmp/project-1",
+                user_text="Fix reconnect handling",
+                tool_name="run_codex_task",
+                codex_status="completed",
+                result_summary="Changed reconnect context handling.",
+                result_artifact_id="artifact-1",
+                codex_turn_id="turn-1",
+                codex_thread_id="thread-1",
+                artifact_ids=["artifact-1"],
+            )
+
+            store.acknowledge_chat("chat-1")
+
+            self.assertEqual(store.pending_for_chat("chat-1"), [])
 
 
 class ProjectStoreTests(unittest.TestCase):

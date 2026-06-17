@@ -5,6 +5,7 @@ import type { useProjectStore } from "./useProjectStore";
 import type { ChatArtifact, CodexTimelineEvent, GeminiLiveUsage, Project } from "../types";
 import { chatTitleFrom } from "../utils";
 import { appendArtifacts } from "../utils/artifacts";
+import { liveVoiceDeliveryFailureMessage } from "../utils/liveVoice";
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
 
@@ -252,6 +253,25 @@ export function useLiveVoiceSessionHandlers({
           });
           activeVoiceActionIdRef.current = null;
         }
+      },
+      onHandoffDeliveryFailed: (message: string) => {
+        const ctx = voiceCtxRef.current;
+        if (!ctx || !activeAssistantVoiceMsgIdRef.current) return;
+        const displayMessage = liveVoiceDeliveryFailureMessage(message);
+        store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
+          ...m,
+          streaming: false,
+          text:
+            m.text ||
+            "Codex finished the local work. Gemini reconnected before reading the result, so the next voice session will include it.",
+        }));
+        addAction({
+          title: "Gemini missed Codex result",
+          status: "done",
+          detail: displayMessage,
+          streamingResponse: displayMessage,
+          workdir: ctx.project.path,
+        });
       },
       onHandoffTimeout: () => {
         const ctx = voiceCtxRef.current;
