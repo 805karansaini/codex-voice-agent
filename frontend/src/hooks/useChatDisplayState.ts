@@ -1,5 +1,6 @@
 import { Message } from "../types";
 import type { useLiveVoice } from "./useLiveVoice";
+import type { ActiveCodexJobStatus } from "./useLiveVoiceSessionHandlers";
 
 type LiveVoice = ReturnType<typeof useLiveVoice>;
 
@@ -15,28 +16,35 @@ export function useChatDisplayState({
   busy,
   mode,
   messages,
+  activeCodexJob,
 }: {
   liveVoice: LiveVoice;
   voiceActive: boolean;
   busy: boolean;
   mode: "agent" | "codex";
   messages: Message[];
+  activeCodexJob?: ActiveCodexJobStatus | null;
 }) {
+  const codexElapsed = activeCodexJob
+    ? Math.max(0, Math.floor((Date.now() - activeCodexJob.startedAt) / 1000))
+    : 0;
   const voiceTitle =
-    liveVoice.state === "connecting"
-      ? "Connecting…"
-      : liveVoice.state === "live"
-        ? "Live conversation"
-        : liveVoice.state === "thinking"
-          ? "Gemini is responding"
-          : liveVoice.state === "working"
-            ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
-            : liveVoice.state === "error"
-              ? "Voice needs attention"
-              : "Live voice";
+    activeCodexJob && !voiceActive
+      ? `Codex is working (${formatElapsed(codexElapsed)})`
+      : liveVoice.state === "connecting"
+        ? "Connecting…"
+        : liveVoice.state === "live"
+          ? "Live conversation"
+          : liveVoice.state === "thinking"
+            ? "Gemini is responding"
+            : liveVoice.state === "working"
+              ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
+              : liveVoice.state === "error"
+                ? "Voice needs attention"
+                : "Live voice";
   const liveStatusText = [
-    voiceActive ? voiceTitle : "",
-    voiceActive ? liveVoice.message : "",
+    voiceActive || activeCodexJob ? voiceTitle : "",
+    activeCodexJob && !voiceActive ? activeCodexJob.message : voiceActive ? liveVoice.message : "",
     busy ? "Assistant response in progress" : "",
   ]
     .filter(Boolean)
@@ -65,5 +73,7 @@ export function useChatDisplayState({
           "Explain the project structure",
         ];
 
-  return { voiceTitle, liveStatusText, streamingStatusText, suggestions };
+  const voiceMessage = activeCodexJob && !voiceActive ? activeCodexJob.message : liveVoice.message;
+
+  return { voiceTitle, voiceMessage, liveStatusText, streamingStatusText, suggestions };
 }

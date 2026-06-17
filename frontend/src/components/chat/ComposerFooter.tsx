@@ -9,6 +9,7 @@ type ComposerFooterProps = {
   liveStatusText: string;
   streamingStatusText: string;
   voiceActive: boolean;
+  codexActive: boolean;
   voiceTitle: string;
   voiceMessage: string;
   voiceContextLabel: string;
@@ -35,6 +36,7 @@ export default function ComposerFooter({
   liveStatusText,
   streamingStatusText,
   voiceActive,
+  codexActive,
   voiceTitle,
   voiceMessage,
   voiceContextLabel,
@@ -71,7 +73,7 @@ export default function ComposerFooter({
         <div className="sr-only" aria-live="polite" aria-atomic="false">
           {streamingStatusText}
         </div>
-        {voiceActive && (
+        {(voiceActive || codexActive) && (
           <div className="mb-3 rounded-lg border border-accent/25 bg-surface-2 p-3.5 shadow-lg flex items-center gap-3.5 animate-in slide-in-from-bottom-2 duration-200">
             <div className={cn("equalizer shrink-0", voiceMuted && "paused")}>
               <i />
@@ -98,62 +100,64 @@ export default function ComposerFooter({
               )}
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              {voiceInputMode === "push" ? (
+            {voiceActive && (
+              <div className="flex items-center gap-2 shrink-0">
+                {voiceInputMode === "push" ? (
+                  <button
+                    type="button"
+                    onPointerDown={onHoldToTalk}
+                    onPointerUp={onReleaseToMute}
+                    onPointerCancel={onReleaseToMute}
+                    onPointerLeave={onReleaseToMute}
+                    onKeyDown={(event) => {
+                      if (event.key === " " || event.key === "Enter") onHoldToTalk();
+                    }}
+                    onKeyUp={(event) => {
+                      if (event.key === " " || event.key === "Enter") onReleaseToMute();
+                    }}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11.5px] font-semibold transition-colors",
+                      voiceMuted
+                        ? "border-accent/30 bg-accent/10 text-accent"
+                        : "border-success/30 bg-success/10 text-success",
+                    )}
+                  >
+                    {voiceMuted ? (
+                      <MicOff className="h-3.5 w-3.5" />
+                    ) : (
+                      <Mic className="h-3.5 w-3.5" />
+                    )}
+                    {!isMobile && <span>{voiceMuted ? "Hold to talk" : "Listening"}</span>}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onToggleMute}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
+                      voiceMuted
+                        ? "border-danger/30 bg-danger/10 text-danger"
+                        : "border-line bg-surface-3 text-fg-muted hover:text-fg",
+                    )}
+                  >
+                    {voiceMuted ? (
+                      <MicOff className="h-3.5 w-3.5" />
+                    ) : (
+                      <Mic className="h-3.5 w-3.5" />
+                    )}
+                    {!isMobile && <span>{voiceMuted ? "Unmute" : "Mute"}</span>}
+                  </button>
+                )}
                 <button
                   type="button"
-                  onPointerDown={onHoldToTalk}
-                  onPointerUp={onReleaseToMute}
-                  onPointerCancel={onReleaseToMute}
-                  onPointerLeave={onReleaseToMute}
-                  onKeyDown={(event) => {
-                    if (event.key === " " || event.key === "Enter") onHoldToTalk();
-                  }}
-                  onKeyUp={(event) => {
-                    if (event.key === " " || event.key === "Enter") onReleaseToMute();
-                  }}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11.5px] font-semibold transition-colors",
-                    voiceMuted
-                      ? "border-accent/30 bg-accent/10 text-accent"
-                      : "border-success/30 bg-success/10 text-success",
-                  )}
+                  onClick={onToggleVoice}
+                  className="flex items-center gap-1.5 rounded-md bg-danger text-white px-3 py-1.5 text-[11.5px] font-semibold hover:brightness-110 transition-colors shadow-sm"
                 >
-                  {voiceMuted ? (
-                    <MicOff className="h-3.5 w-3.5" />
-                  ) : (
-                    <Mic className="h-3.5 w-3.5" />
-                  )}
-                  {!isMobile && <span>{voiceMuted ? "Hold to talk" : "Listening"}</span>}
+                  <MicOff className="h-3.5 w-3.5" />
+                  {!isMobile && <span>End</span>}
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onToggleMute}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
-                    voiceMuted
-                      ? "border-danger/30 bg-danger/10 text-danger"
-                      : "border-line bg-surface-3 text-fg-muted hover:text-fg",
-                  )}
-                >
-                  {voiceMuted ? (
-                    <MicOff className="h-3.5 w-3.5" />
-                  ) : (
-                    <Mic className="h-3.5 w-3.5" />
-                  )}
-                  {!isMobile && <span>{voiceMuted ? "Unmute" : "Mute"}</span>}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={onToggleVoice}
-                className="flex items-center gap-1.5 rounded-md bg-danger text-white px-3 py-1.5 text-[11.5px] font-semibold hover:brightness-110 transition-colors shadow-sm"
-              >
-                <MicOff className="h-3.5 w-3.5" />
-                {!isMobile && <span>End</span>}
-              </button>
-            </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -123,6 +123,7 @@ export function useAppController() {
     setVoiceContext,
     clearVoiceContext,
     ensureVoiceContext,
+    activeCodexJob,
     liveVoiceHandlers,
   } = useLiveVoiceSessionHandlers({
     store,
@@ -183,6 +184,7 @@ export function useAppController() {
     messageEndRef,
     messageCount: store.messages.length,
     busy,
+    activityKey: activeCodexJob?.message,
   });
 
   const { confirmCommitChangeReview, confirmRevertChangeReview } = useChangeReviewActions({
@@ -206,13 +208,15 @@ export function useAppController() {
     }
     liveVoice.cancelTask();
   }, [liveVoice]);
-  const { voiceTitle, liveStatusText, streamingStatusText, suggestions } = useChatDisplayState({
-    liveVoice,
-    voiceActive,
-    busy,
-    mode,
-    messages: store.messages,
-  });
+  const { voiceTitle, voiceMessage, liveStatusText, streamingStatusText, suggestions } =
+    useChatDisplayState({
+      liveVoice,
+      voiceActive,
+      busy,
+      mode,
+      messages: store.messages,
+      activeCodexJob,
+    });
 
   const titleBarProps: AppTitleBarProps = {
     isMobile,
@@ -258,7 +262,8 @@ export function useAppController() {
     liveStatusText,
     streamingStatusText,
     voiceTitle,
-    voiceMessage: liveVoice.message,
+    voiceMessage,
+    codexActive: Boolean(activeCodexJob),
     voiceContextLabel,
     voiceTranscriptPreview: liveVoice.transcriptPreview,
     voiceMuted: liveVoice.muted,

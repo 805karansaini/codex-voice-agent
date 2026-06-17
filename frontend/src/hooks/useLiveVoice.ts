@@ -422,8 +422,13 @@ export function useLiveVoice({
           log(`[Tool Call Failed] ${payload.name || "tool"}: ${payload.message}`);
         } else if (payload.type === "tool_result") {
           usedCodexRef.current = true;
-          setState("thinking");
-          setMessage("Codex task completed. Gemini is formulating a response.");
+          if (payload.background_job_id) {
+            setState("working");
+            setMessage("Codex is running in the background.");
+          } else {
+            setState("thinking");
+            setMessage("Codex task completed. Gemini is formulating a response.");
+          }
           setAssistantPreview("");
           cbRef.current.onHandoff(
             payload.name || "run_codex_task",
@@ -432,15 +437,19 @@ export function useLiveVoice({
             payload,
           );
           clearToolResultFallback();
-          toolResultFallbackTimerRef.current = window.setTimeout(() => {
-            setState("live");
-            setMessage(
-              "Codex result is available in chat. Gemini did not finish a final response.",
-            );
-            cbRef.current.onHandoffTimeout?.();
-            log("Gemini did not finish after Codex completed; surfaced the Codex result in chat.");
-            toolResultFallbackTimerRef.current = null;
-          }, TOOL_RESULT_FALLBACK_MS);
+          if (!payload.background_job_id) {
+            toolResultFallbackTimerRef.current = window.setTimeout(() => {
+              setState("live");
+              setMessage(
+                "Codex result is available in chat. Gemini did not finish a final response.",
+              );
+              cbRef.current.onHandoffTimeout?.();
+              log(
+                "Gemini did not finish after Codex completed; surfaced the Codex result in chat.",
+              );
+              toolResultFallbackTimerRef.current = null;
+            }, TOOL_RESULT_FALLBACK_MS);
+          }
           log(
             `[Tool Call Completed] ${payload.name || "tool"}. Result length: ${payload.result?.length || 0} chars.`,
           );

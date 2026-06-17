@@ -51,6 +51,7 @@ export type WorkspaceLayoutProps = {
   voiceMuted: boolean;
   voiceSupported: boolean;
   voiceActive: boolean;
+  codexActive: boolean;
   voiceInputMode: VoiceInputMode;
   input: string;
   error: string;
@@ -131,6 +132,7 @@ export default function WorkspaceLayout({
   voiceMuted,
   voiceSupported,
   voiceActive,
+  codexActive,
   voiceInputMode,
   input,
   error,
@@ -233,6 +235,7 @@ export default function WorkspaceLayout({
           exportDisabled={!activeChatId || messages.length === 0}
           voiceSupported={voiceSupported}
           voiceActive={voiceActive}
+          codexActive={codexActive}
           voiceDisabled={!activeProject}
           onToggleVoice={onToggleVoice}
           busy={busy}

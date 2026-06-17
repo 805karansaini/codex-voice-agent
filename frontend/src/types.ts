@@ -143,6 +143,8 @@ export type CodexJob = {
   status: "queued" | "running" | "done" | "failed";
   result: string;
   error: string;
+  latest_status?: string;
+  progress_updates?: string[];
   codex_events: CodexTimelineEvent[];
   codex_turn_id?: string;
   codex_thread_id?: string;

@@ -1,5 +1,6 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 
+import * as api from "../services/api";
 import type { ActionPatch } from "./useConsoleSession";
 import type { useProjectStore } from "./useProjectStore";
 import type { ChatArtifact, CodexTimelineEvent, GeminiLiveUsage, Project } from "../types";
@@ -20,6 +21,15 @@ type UseLiveVoiceSessionHandlersOptions = {
   }) => string;
   updateAction: (id: string, patch: ActionPatch) => void;
   addHandoff: (name: string, summary: string) => void;
+};
+
+export type ActiveCodexJobStatus = {
+  jobId: string;
+  chatId: string;
+  status: "queued" | "running" | "done" | "failed";
+  message: string;
+  startedAt: number;
+  workdir?: string;
 };
 
 function appendCodexEvent(
@@ -47,6 +57,9 @@ export function useLiveVoiceSessionHandlers({
   const activeVoiceActionIdRef = useRef<string | null>(null);
   const activeUserVoiceMsgIdRef = useRef<string | null>(null);
   const activeAssistantVoiceMsgIdRef = useRef<string | null>(null);
+  const activeCodexMsgIdRef = useRef<string | null>(null);
+  const activeVoiceJobIdRef = useRef<string | null>(null);
+  const [activeCodexJob, setActiveCodexJob] = useState<ActiveCodexJobStatus | null>(null);
 
   const getWorkdir = useCallback(
     () => voiceCtxRef.current?.project.path ?? store.activeProject?.path,
@@ -64,6 +77,13 @@ export function useLiveVoiceSessionHandlers({
   const stopActiveVoiceHandoff = useCallback(
     (detail = "Stopped before completion.") => {
       if (!activeVoiceActionIdRef.current) return;
+      if (activeVoiceJobIdRef.current) {
+        updateAction(activeVoiceActionIdRef.current, {
+          status: "running",
+          detail: "Voice session closed. Codex is still running.",
+        });
+        return;
+      }
       updateAction(activeVoiceActionIdRef.current, {
         status: "failed",
         detail,
@@ -104,6 +124,7 @@ export function useLiveVoiceSessionHandlers({
     setVoiceContext,
     clearVoiceContext,
     ensureVoiceContext,
+    activeCodexJob,
     liveVoiceHandlers: {
       onUserTranscript: (text: string) => {
         const ctx = voiceCtxRef.current;
@@ -223,10 +244,29 @@ export function useLiveVoiceSessionHandlers({
       },
       onHandoffStart: (_name: string, task: string, workdir?: string) => {
         const ctx = voiceCtxRef.current;
+        if (!ctx) return;
+        let codexMessageId = activeAssistantVoiceMsgIdRef.current;
+        if (!codexMessageId) {
+          codexMessageId = crypto.randomUUID();
+          activeAssistantVoiceMsgIdRef.current = codexMessageId;
+          store.appendMessage(ctx.chatId, {
+            id: codexMessageId,
+            role: "assistant",
+            text: "Codex is starting the local work.",
+            usedCodex: true,
+            streaming: true,
+            workdir: workdir || ctx.project.path,
+            codexStatus: "running",
+          });
+        }
+        activeCodexMsgIdRef.current = codexMessageId;
         if (ctx && activeAssistantVoiceMsgIdRef.current) {
           store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
             ...m,
             usedCodex: true,
+            streaming: true,
+            codexStatus: m.codexStatus || "running",
+            workdir: workdir || m.workdir,
           }));
         }
         const id = addAction({
@@ -237,6 +277,15 @@ export function useLiveVoiceSessionHandlers({
           workdir: workdir || voiceCtxRef.current?.project.path,
         });
         activeVoiceActionIdRef.current = id;
+        activeVoiceJobIdRef.current = null;
+        setActiveCodexJob({
+          jobId: "",
+          chatId: ctx.chatId,
+          status: "running",
+          message: task || "Codex is starting the local work.",
+          startedAt: Date.now(),
+          workdir: workdir || ctx.project.path,
+        });
       },
       onHandoffProgress: (_name: string, text: string) => {
         if (activeVoiceActionIdRef.current) {
@@ -252,6 +301,9 @@ export function useLiveVoiceSessionHandlers({
             streamingResponse: message || "Handoff failed",
           });
           activeVoiceActionIdRef.current = null;
+          activeVoiceJobIdRef.current = null;
+          activeCodexMsgIdRef.current = null;
+          setActiveCodexJob(null);
         }
       },
       onHandoffDeliveryFailed: (message: string) => {
@@ -318,6 +370,147 @@ export function useLiveVoiceSessionHandlers({
       ) => {
         addHandoff(name, summary);
         const ctx = voiceCtxRef.current;
+        const backgroundJobId =
+          typeof details?.background_job_id === "string" ? details.background_job_id : "";
+        if (backgroundJobId && activeVoiceActionIdRef.current) {
+          if (!ctx) return;
+          const codexMessageId =
+            activeCodexMsgIdRef.current || activeAssistantVoiceMsgIdRef.current;
+          activeVoiceJobIdRef.current = backgroundJobId;
+          updateAction(activeVoiceActionIdRef.current, {
+            status: "running",
+            detail: summary,
+            streamingResponse: summary,
+            workdir: workdir || voiceCtxRef.current?.project.path,
+          });
+          const actionId = activeVoiceActionIdRef.current;
+          const chatId = ctx.chatId;
+          const startedAt = Date.now();
+          const updateCodexMessage = (patch: {
+            text: string;
+            streaming: boolean;
+            status?: string;
+            events?: CodexTimelineEvent[];
+            artifacts?: ChatArtifact[];
+            workdir?: string;
+          }) => {
+            if (!codexMessageId) return;
+            store.updateMessage(chatId, codexMessageId, (message) => ({
+              ...message,
+              text: patch.text || message.text,
+              streaming: patch.streaming,
+              usedCodex: true,
+              workdir: patch.workdir || message.workdir,
+              codexEvents: patch.events || message.codexEvents || [],
+              codexStatus: patch.status || message.codexStatus || "running",
+              artifacts: appendArtifacts(message.artifacts, ...(patch.artifacts || [])),
+            }));
+          };
+          updateCodexMessage({
+            text: summary || "Codex is running the local task.",
+            streaming: true,
+            status: "running",
+            workdir,
+          });
+          setActiveCodexJob({
+            jobId: backgroundJobId,
+            chatId,
+            status: "running",
+            message: summary || "Codex is running the local task.",
+            startedAt,
+            workdir,
+          });
+          const pollJob = async () => {
+            try {
+              const job = await api.fetchCodexJob(backgroundJobId);
+              if (activeVoiceJobIdRef.current !== backgroundJobId) return;
+              const updates = job.progress_updates || [];
+              const progressText =
+                job.latest_status || updates[updates.length - 1] || "Codex is still working.";
+              if (job.status === "queued" || job.status === "running") {
+                updateCodexMessage({
+                  text: progressText,
+                  streaming: true,
+                  status: job.codex_status || "running",
+                  events: job.codex_events,
+                  workdir: job.workdir,
+                });
+                updateAction(actionId, {
+                  status: "running",
+                  streamingResponse: progressText,
+                  workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
+                });
+                setActiveCodexJob({
+                  jobId: backgroundJobId,
+                  chatId,
+                  status: job.status,
+                  message: progressText,
+                  startedAt,
+                  workdir: job.workdir || workdir,
+                });
+                window.setTimeout(() => void pollJob(), 1500);
+                return;
+              }
+              if (job.status === "done") {
+                const finalText = job.result || "Codex background task completed.";
+                updateCodexMessage({
+                  text: finalText,
+                  streaming: false,
+                  status: job.codex_status || "completed",
+                  events: job.codex_events,
+                  artifacts: job.artifacts,
+                  workdir: job.workdir,
+                });
+                updateAction(actionId, {
+                  status: "done",
+                  detail: job.task,
+                  streamingResponse: finalText,
+                  workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
+                });
+                addHandoff(name, finalText.slice(0, 160));
+                activeVoiceActionIdRef.current = null;
+                activeVoiceJobIdRef.current = null;
+                activeCodexMsgIdRef.current = null;
+                setActiveCodexJob(null);
+                return;
+              }
+              const failureText = job.error || "Codex background task failed.";
+              updateCodexMessage({
+                text: failureText,
+                streaming: false,
+                status: "failed",
+                events: job.codex_events,
+                workdir: job.workdir,
+              });
+              updateAction(actionId, {
+                status: "failed",
+                streamingResponse: failureText,
+                workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
+              });
+              activeVoiceActionIdRef.current = null;
+              activeVoiceJobIdRef.current = null;
+              activeCodexMsgIdRef.current = null;
+              setActiveCodexJob(null);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : "Failed to poll Codex job";
+              updateAction(actionId, {
+                status: "failed",
+                streamingResponse: message,
+              });
+              updateCodexMessage({
+                text: message,
+                streaming: false,
+                status: "failed",
+              });
+              activeVoiceActionIdRef.current = null;
+              activeVoiceJobIdRef.current = null;
+              activeCodexMsgIdRef.current = null;
+              setActiveCodexJob(null);
+            }
+          };
+          window.setTimeout(() => void pollJob(), 1000);
+          return;
+        }
         if (ctx) {
           const artifact = details?.artifact as ChatArtifact | undefined;
           const changeArtifact = details?.change_artifact as ChatArtifact | undefined;
@@ -355,6 +548,7 @@ export function useLiveVoiceSessionHandlers({
             workdir: workdir || voiceCtxRef.current?.project.path,
           });
           activeVoiceActionIdRef.current = null;
+          activeVoiceJobIdRef.current = null;
         } else {
           addAction({
             title: "Voice handoff to Codex",

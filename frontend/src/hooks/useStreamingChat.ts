@@ -76,13 +76,22 @@ export function useStreamingChat({
           try {
             const job = await api.fetchCodexJob(queued.id);
             if (job.status === "queued" || job.status === "running") {
+              const updates = job.progress_updates || [];
+              const progressText =
+                job.latest_status || updates[updates.length - 1] || "Codex is still working.";
               store.updateMessage(chatId, assistantId, (message) => ({
                 ...message,
+                text: progressText,
                 codexEvents: job.codex_events || message.codexEvents || [],
                 codexStatus: job.codex_status || message.codexStatus,
                 codexTurnId: job.codex_turn_id || message.codexTurnId,
                 codexThreadId: job.codex_thread_id || message.codexThreadId,
               }));
+              updateAction(actionId, {
+                status: "running",
+                streamingResponse: progressText,
+                workdir: job.workdir || project.path,
+              });
               window.setTimeout(() => void pollJob(), 1500);
               return;
             }

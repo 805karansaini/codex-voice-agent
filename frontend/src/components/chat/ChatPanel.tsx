@@ -16,6 +16,7 @@ type ChatPanelProps = {
   exportDisabled: boolean;
   voiceSupported: boolean;
   voiceActive: boolean;
+  codexActive: boolean;
   voiceDisabled: boolean;
   busy: boolean;
   activeProject?: Project | null;
@@ -57,6 +58,7 @@ export default function ChatPanel({
   exportDisabled,
   voiceSupported,
   voiceActive,
+  codexActive,
   voiceDisabled,
   busy,
   activeProject,
@@ -123,6 +125,7 @@ export default function ChatPanel({
         liveStatusText={liveStatusText}
         streamingStatusText={streamingStatusText}
         voiceActive={voiceActive}
+        codexActive={codexActive}
         voiceTitle={voiceTitle}
         voiceMessage={voiceMessage}
         voiceContextLabel={voiceContextLabel}
