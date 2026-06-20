@@ -12,6 +12,9 @@ import { liveVoiceDeliveryFailureMessage } from "../utils/liveVoice";
 import { audioContainsSpeech, isClearToReadCompletedResult } from "../utils/liveVoiceSpeech";
 
 const RECONNECT_DELAY_MS = 900;
+// Gemini Live currently starts retiring a connection at roughly ten minutes.
+// Rotate before that warning, but only after the current turn has settled.
+const PROACTIVE_SESSION_REFRESH_MS = 8 * 60 * 1000 + 30 * 1000;
 // Backend Codex status events start after about 20s, then repeat every 60s.
 // This waits slightly longer than the first status event before surfacing a
 // completed Codex result when Gemini does not produce a final voice response.
@@ -92,6 +95,7 @@ export function useLiveVoice({
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const bufferedAudioRef = useRef<string[]>([]);
   const reconnectTimerRef = useRef<number | null>(null);
+  const sessionRefreshTimerRef = useRef<number | null>(null);
   const toolResultFallbackTimerRef = useRef<number | null>(null);
   const manuallyStoppedRef = useRef(false);
   const usedCodexRef = useRef(false);
@@ -105,6 +109,8 @@ export function useLiveVoice({
   const lastSpeechActivityAtRef = useRef(0);
   const pendingSpeechRef = useRef<string | null>(null);
   const pendingSpeechTimerRef = useRef<number | null>(null);
+  const sessionRefreshRequestedRef = useRef(false);
+  const playbackIdleCallbackRef = useRef<() => void>(() => undefined);
 
   const clearToolResultFallback = useCallback(() => {
     if (toolResultFallbackTimerRef.current) {
@@ -120,9 +126,16 @@ export function useLiveVoice({
     }
   }, []);
 
+  const clearSessionRefreshTimer = useCallback(() => {
+    if (sessionRefreshTimerRef.current) {
+      window.clearTimeout(sessionRefreshTimerRef.current);
+      sessionRefreshTimerRef.current = null;
+    }
+  }, []);
+
   const getAudioPlayer = () => {
     if (!audioPlayerRef.current) {
-      audioPlayerRef.current = new AudioStreamPlayer();
+      audioPlayerRef.current = new AudioStreamPlayer(() => playbackIdleCallbackRef.current());
     }
     audioPlayerRef.current.init();
     return audioPlayerRef.current;
@@ -301,7 +314,7 @@ export function useLiveVoice({
     const websocket = websocketRef.current;
     const canSpeakNow =
       websocket?.readyState === WebSocket.OPEN &&
-      !["idle", "connecting", "error"].includes(stateRef.current) &&
+      !["idle", "connecting", "reconnecting", "error"].includes(stateRef.current) &&
       isClearToReadCompletedResult({
         voiceTurnActive: voiceTurnActiveRef.current,
         lastSpeechAt: lastSpeechActivityAtRef.current,
@@ -328,6 +341,42 @@ export function useLiveVoice({
     [flushPendingSpeech],
   );
 
+  const refreshGeminiSession = useCallback(() => {
+    if (manuallyStoppedRef.current) return;
+    const websocket = websocketRef.current;
+    if (!websocket || websocket.readyState === WebSocket.CLOSED) return;
+
+    // A connection rotation must never cut off either side of a voice turn, or
+    // a sentence that has started reaching the microphone but is not transcribed
+    // yet. Keep the request pending; turn_complete retries it at a safe pause.
+    // If Gemini reaches its hard limit first, normal reconnect remains the fallback.
+    const safePause = isClearToReadCompletedResult({
+      voiceTurnActive: voiceTurnActiveRef.current || Boolean(audioPlayerRef.current?.isPlaying()),
+      lastSpeechAt: lastSpeechActivityAtRef.current,
+      now: Date.now(),
+    });
+    if (!safePause) {
+      sessionRefreshRequestedRef.current = true;
+      return;
+    }
+
+    sessionRefreshRequestedRef.current = false;
+    clearSessionRefreshTimer();
+    setState("reconnecting");
+    setMessage("Reconnecting Gemini — your conversation is being preserved.");
+    log("[Session] Refreshing Gemini connection before it expires.");
+    if (websocket.readyState === WebSocket.OPEN) {
+      websocket.send(JSON.stringify({ type: "close" }));
+    }
+    websocket.close();
+  }, [clearSessionRefreshTimer, log]);
+
+  playbackIdleCallbackRef.current = () => {
+    if (sessionRefreshRequestedRef.current) {
+      refreshGeminiSession();
+    }
+  };
+
   const stop = useCallback(async () => {
     log("[Stop] Stopping session and microphone...");
     manuallyStoppedRef.current = true;
@@ -342,6 +391,7 @@ export function useLiveVoice({
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    clearSessionRefreshTimer();
     clearToolResultFallback();
     bufferedAudioRef.current = [];
     audioPlayerRef.current?.stop();
@@ -354,7 +404,13 @@ export function useLiveVoice({
     setState("idle");
     setMessage("Gemini Live voice is ready.");
     log("[Stop] Session stopped successfully.");
-  }, [clearPendingSpeechTimer, clearToolResultFallback, stopMicrophone, log]);
+  }, [
+    clearPendingSpeechTimer,
+    clearSessionRefreshTimer,
+    clearToolResultFallback,
+    stopMicrophone,
+    log,
+  ]);
 
   const connectSocket = useCallback(() => {
     const websocket = new WebSocket(getWebSocketUrl("/api/live"));
@@ -362,11 +418,18 @@ export function useLiveVoice({
 
     websocket.onopen = () => {
       reconnectNoticeSentRef.current = false;
+      sessionRefreshRequestedRef.current = false;
       log("Live channel connected.");
       sendSessionConfig(websocket);
       flushBufferedAudio(websocket);
       setState("live");
       setMessage("Live with Gemini — speak naturally, pause to let the agent answer.");
+      clearSessionRefreshTimer();
+      sessionRefreshTimerRef.current = window.setTimeout(() => {
+        sessionRefreshTimerRef.current = null;
+        sessionRefreshRequestedRef.current = true;
+        refreshGeminiSession();
+      }, PROACTIVE_SESSION_REFRESH_MS);
       websocket.onmessage = (event) => {
         const payload = JSON.parse(event.data);
         if (payload.type === "ready" || payload.type === "debug") {
@@ -382,7 +445,7 @@ export function useLiveVoice({
         } else if (payload.type === "assistant_delta") {
           clearToolResultFallback();
           voiceTurnActiveRef.current = true;
-          log(`[Assistant Delta] ${payload.text || ""}`);
+          // log(`[Assistant Delta] ${payload.text || ""}`);
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
           setMessage("Gemini is replying.");
@@ -409,6 +472,9 @@ export function useLiveVoice({
           audioSentSinceTurnEndRef.current = false;
           voiceTurnActiveRef.current = false;
           flushPendingSpeech();
+          if (sessionRefreshRequestedRef.current) {
+            refreshGeminiSession();
+          }
           setUserPreview("");
           setAssistantPreview("");
           if (payload.session_ended) {
@@ -434,6 +500,12 @@ export function useLiveVoice({
           audioPlayerRef.current?.stop();
           cbRef.current.onInterrupted?.();
           log("Response interrupted by new speech.");
+        } else if (payload.type === "session_refresh_requested") {
+          sessionRefreshRequestedRef.current = true;
+          log(
+            `[Session] Gemini requested a refresh with ${payload.time_left || "limited"} remaining.`,
+          );
+          refreshGeminiSession();
         } else if (payload.type === "assistant_audio_delta") {
           voiceTurnActiveRef.current = true;
           const audioB64 = payload.data;
@@ -550,6 +622,7 @@ export function useLiveVoice({
 
     websocket.onclose = () => {
       websocketRef.current = null;
+      clearSessionRefreshTimer();
       if (manuallyStoppedRef.current) {
         void stopMicrophone();
         setState("idle");
@@ -557,10 +630,8 @@ export function useLiveVoice({
         return;
       }
       if (streamRef.current) {
-        setState("connecting");
-        setMessage(
-          "Gemini Live is reconnecting. Context is preserved up to your last completed turn.",
-        );
+        setState("reconnecting");
+        setMessage("Reconnecting Gemini — your conversation is being preserved.");
         if (!reconnectNoticeSentRef.current) {
           reconnectNoticeSentRef.current = true;
           cbRef.current.onSessionRestarted?.();
@@ -580,9 +651,11 @@ export function useLiveVoice({
     return websocket;
   }, [
     clearToolResultFallback,
+    clearSessionRefreshTimer,
     flushBufferedAudio,
     flushPendingSpeech,
     log,
+    refreshGeminiSession,
     requestSpeech,
     sendSessionConfig,
     stopMicrophone,
@@ -597,7 +670,13 @@ export function useLiveVoice({
   }, [stop]);
 
   const start = useCallback(async () => {
-    if (state === "connecting" || state === "live" || state === "thinking" || state === "working")
+    if (
+      state === "connecting" ||
+      state === "reconnecting" ||
+      state === "live" ||
+      state === "thinking" ||
+      state === "working"
+    )
       return;
     if (!navigator.mediaDevices?.getUserMedia || typeof window.AudioContext === "undefined") {
       setState("error");
@@ -618,6 +697,8 @@ export function useLiveVoice({
     bufferedAudioRef.current = [];
     clearPendingSpeechTimer();
     pendingSpeechRef.current = null;
+    sessionRefreshRequestedRef.current = false;
+    clearSessionRefreshTimer();
     clearToolResultFallback();
     hasStreamedAudioRef.current = false;
     try {
@@ -705,6 +786,7 @@ export function useLiveVoice({
     }
   }, [
     clearPendingSpeechTimer,
+    clearSessionRefreshTimer,
     clearToolResultFallback,
     connectSocket,
     log,
@@ -736,7 +818,11 @@ export function useLiveVoice({
 
   return {
     active:
-      state === "connecting" || state === "live" || state === "thinking" || state === "working",
+      state === "connecting" ||
+      state === "reconnecting" ||
+      state === "live" ||
+      state === "thinking" ||
+      state === "working",
     supported: Boolean(
       typeof navigator.mediaDevices?.getUserMedia === "function" &&
       typeof window.AudioContext !== "undefined" &&

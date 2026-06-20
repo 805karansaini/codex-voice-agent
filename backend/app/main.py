@@ -234,9 +234,6 @@ model_context_log = JsonlEventLogger(settings.history_path.with_name("model_cont
 codex_handoffs = CodexHandoffStore(settings.history_path)
 _live_resumption_handles: dict[str, str] = {}
 _live_completion_subscribers: dict[str, set[asyncio.Queue[_LiveCompletion]]] = {}
-_LIVE_PROACTIVE_RECONNECT_SECONDS = 8 * 60 + 30
-
-
 def _artifact_summary(text: object, limit: int = 220) -> str:
     return artifact_summary(text, limit)
 
@@ -1772,7 +1769,6 @@ async def live_voice(websocket: WebSocket) -> None:
     current_task_cancel_token: CancellationToken | None = None
     active_turn_gen = None
     session_ended_by_tool = False
-    live_connection_started_at: datetime | None = None
     completion_queue: asyncio.Queue[_LiveCompletion] = asyncio.Queue()
 
     async def deliver_completions() -> None:
@@ -1923,10 +1919,22 @@ async def live_voice(websocket: WebSocket) -> None:
                         last_consumed_client_message_index=update.last_consumed_client_message_index,
                     )
                 if server_message.go_away:
+                    time_left = str(server_message.go_away.time_left)
                     live_log.write(
                         "gemini.go_away",
                         chat_id=session_chat_id,
-                        time_left=str(server_message.go_away.time_left),
+                        time_left=time_left,
+                    )
+                    # Gemini gives us a short warning before it retires a Live
+                    # connection. Let the browser rotate while the current turn
+                    # is idle instead of waiting for the next microphone frame to
+                    # discover that the connection has already expired.
+                    await websocket.send_json(
+                        {
+                            "type": "session_refresh_requested",
+                            "reason": "gemini_go_away",
+                            "time_left": time_left,
+                        }
                     )
 
                 if server_message.tool_call and server_message.tool_call.function_calls:
@@ -1976,16 +1984,6 @@ async def live_voice(websocket: WebSocket) -> None:
                             original_task=clip_text(request.task),
                             workdir=request.workdir,
                         )
-                        if live_connection_started_at:
-                            age = (datetime.now() - live_connection_started_at).total_seconds()
-                            if age >= _LIVE_PROACTIVE_RECONNECT_SECONDS:
-                                live_log.write(
-                                    "gemini.proactive_reconnect_recommended",
-                                    chat_id=session_chat_id,
-                                    connection_age_seconds=age,
-                                    name=call.name,
-                                )
-
                         await websocket.send_json(
                             {
                                 "type": "tool_call_started",
@@ -2335,7 +2333,6 @@ async def live_voice(websocket: WebSocket) -> None:
                 _live_completion_subscribers.setdefault(session_chat_id, set()).add(completion_queue)
                 for handoff in codex_handoffs.pending_completion_for_chat(session_chat_id):
                     completion_queue.put_nowait({"handoff": handoff, "result": _latest_artifact_replay(session_chat_id, "what was the result") or str(handoff["result_summary"]), "artifacts": []})
-            live_connection_started_at = datetime.now()
             live_log.write(
                 "gemini.connected",
                 chat_id=session_chat_id,

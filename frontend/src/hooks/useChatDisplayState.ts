@@ -33,15 +33,17 @@ export function useChatDisplayState({
       ? `Codex is working (${formatElapsed(codexElapsed)})`
       : liveVoice.state === "connecting"
         ? "Connecting…"
-        : liveVoice.state === "live"
-          ? "Live conversation"
-          : liveVoice.state === "thinking"
-            ? "Gemini is responding"
-            : liveVoice.state === "working"
-              ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
-              : liveVoice.state === "error"
-                ? "Voice needs attention"
-                : "Live voice";
+        : liveVoice.state === "reconnecting"
+          ? "Reconnecting Gemini…"
+          : liveVoice.state === "live"
+            ? "Live conversation"
+            : liveVoice.state === "thinking"
+              ? "Gemini is responding"
+              : liveVoice.state === "working"
+                ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
+                : liveVoice.state === "error"
+                  ? "Voice needs attention"
+                  : "Live voice";
   const liveStatusText = [
     voiceActive || activeCodexJob ? voiceTitle : "",
     activeCodexJob && !voiceActive ? activeCodexJob.message : voiceActive ? liveVoice.message : "",

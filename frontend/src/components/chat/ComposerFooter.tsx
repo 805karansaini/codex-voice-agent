@@ -90,6 +90,11 @@ export default function ComposerFooter({
               <p className="hidden sm:block text-[11.5px] text-fg-muted mt-1 truncate">
                 {voiceMessage}
               </p>
+              {voiceTitle === "Reconnecting Gemini…" && (
+                <p className="mt-1 text-[11.5px] font-medium text-accent">
+                  Briefly reconnecting — please hold on.
+                </p>
+              )}
               {voiceContextLabel && (
                 <p className="text-[10.5px] text-fg-dim mt-1 truncate">
                   Attached to {voiceContextLabel}

@@ -46,6 +46,8 @@ export class AudioStreamPlayer {
   private activeSources: AudioBufferSourceNode[] = [];
   private sampleRate: number = 24000;
 
+  constructor(private readonly onPlaybackIdle?: () => void) {}
+
   isPlaying(): boolean {
     return this.activeSources.length > 0;
   }
@@ -91,6 +93,9 @@ export class AudioStreamPlayer {
 
     source.onended = () => {
       this.activeSources = this.activeSources.filter((s) => s !== source);
+      if (this.activeSources.length === 0) {
+        this.onPlaybackIdle?.();
+      }
     };
 
     this.nextPlayTime += audioBuffer.duration;
