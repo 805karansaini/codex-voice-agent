@@ -22,6 +22,7 @@ type UseLiveVoiceSessionHandlersOptions = {
   updateAction: (id: string, patch: ActionPatch) => void;
   addHandoff: (name: string, summary: string) => void;
   requestVoiceSpeech?: (text: string) => void;
+  onBackgroundJobSettled?: () => void;
 };
 
 export type ActiveCodexJobStatus = {
@@ -54,6 +55,7 @@ export function useLiveVoiceSessionHandlers({
   updateAction,
   addHandoff,
   requestVoiceSpeech,
+  onBackgroundJobSettled,
 }: UseLiveVoiceSessionHandlersOptions) {
   const voiceCtxRef = useRef<{ project: Project; chatId: string } | null>(null);
   const activeVoiceActionIdRef = useRef<string | null>(null);
@@ -464,6 +466,7 @@ export function useLiveVoiceSessionHandlers({
                   workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
                 });
                 addHandoff(name, finalText.slice(0, 160));
+                onBackgroundJobSettled?.();
                 requestVoiceSpeech?.(finalText);
                 activeVoiceActionIdRef.current = null;
                 activeVoiceJobIdRef.current = null;
@@ -488,6 +491,7 @@ export function useLiveVoiceSessionHandlers({
               activeVoiceJobIdRef.current = null;
               activeCodexMsgIdRef.current = null;
               setActiveCodexJob(null);
+              onBackgroundJobSettled?.();
             } catch (err) {
               const message = err instanceof Error ? err.message : "Failed to poll Codex job";
               updateAction(actionId, {
@@ -503,6 +507,7 @@ export function useLiveVoiceSessionHandlers({
               activeVoiceJobIdRef.current = null;
               activeCodexMsgIdRef.current = null;
               setActiveCodexJob(null);
+              onBackgroundJobSettled?.();
             }
           };
           window.setTimeout(() => void pollJob(), 1000);

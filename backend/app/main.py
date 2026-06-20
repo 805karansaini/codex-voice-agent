@@ -81,6 +81,12 @@ class _LiveClientConfig(TypedDict):
     conversation_context: str
 
 
+class _LiveCompletion(TypedDict):
+    handoff: dict[str, object]
+    result: str
+    artifacts: list[dict[str, object]]
+
+
 @dataclass(frozen=True)
 class _LiveToolCallRequest:
     name: str
@@ -227,6 +233,7 @@ app_log = JsonlEventLogger(settings.history_path.with_name("app_events.jsonl"))
 model_context_log = JsonlEventLogger(settings.history_path.with_name("model_context_packets.jsonl"))
 codex_handoffs = CodexHandoffStore(settings.history_path)
 _live_resumption_handles: dict[str, str] = {}
+_live_completion_subscribers: dict[str, set[asyncio.Queue[_LiveCompletion]]] = {}
 _LIVE_PROACTIVE_RECONNECT_SECONDS = 8 * 60 + 30
 
 
@@ -390,7 +397,24 @@ def _persist_background_codex_handoff(job: CodexBackgroundJob) -> dict[str, obje
         codex_status=result.status,
         background_job_id=job.id,
     )
+    if handoff.get("id"):
+        codex_handoffs.mark_delivery(str(handoff["id"]), "background_completion_pending", acknowledged=False)
+        handoff = codex_handoffs.get(str(handoff["id"])) or handoff
+        for queue in _live_completion_subscribers.get(job.chat_id or "", set()):
+            queue.put_nowait({"handoff": handoff, "result": job.result, "artifacts": job.artifacts})
     return handoff
+
+
+def _acknowledge_background_completion(chat_id: str | None, handoff_id: str) -> bool:
+    if not chat_id or not handoff_id:
+        return False
+    handoff = codex_handoffs.get(handoff_id)
+    if handoff is None or handoff.get("chat_id") != chat_id:
+        return False
+    codex_handoffs.mark_delivery(
+        handoff_id, "background_completion_received", acknowledged=False
+    )
+    return True
 
 
 def _revert_changed_files(workdir: str, files: list[str]) -> _RevertResult:
@@ -1749,6 +1773,12 @@ async def live_voice(websocket: WebSocket) -> None:
     active_turn_gen = None
     session_ended_by_tool = False
     live_connection_started_at: datetime | None = None
+    completion_queue: asyncio.Queue[_LiveCompletion] = asyncio.Queue()
+
+    async def deliver_completions() -> None:
+        while True:
+            item = await completion_queue.get()
+            await websocket.send_json({"type": "background_job_completed", **item})
 
     async def send_client_audio(session: _LiveSession, initial: dict | None = None) -> None:
         nonlocal \
@@ -1829,6 +1859,20 @@ async def live_voice(websocket: WebSocket) -> None:
                 await websocket.send_json(
                     {"type": "debug", "message": "Queued completed Codex result for speech."}
                 )
+            elif event_type == "background_completion_received":
+                handoff_id = str(payload.get("handoff_id") or "")
+                if _acknowledge_background_completion(session_chat_id, handoff_id):
+                    live_log.write(
+                        "client.background_completion_received",
+                        chat_id=session_chat_id,
+                        handoff_id=handoff_id,
+                    )
+                elif handoff_id:
+                    live_log.write(
+                        "client.background_completion_rejected",
+                        chat_id=session_chat_id,
+                        handoff_id=handoff_id,
+                    )
             elif event_type == "cancel_task":
                 if current_task_cancel_token:
                     current_task_cancel_token.cancel()
@@ -2287,6 +2331,10 @@ async def live_voice(websocket: WebSocket) -> None:
             ),
         ) as raw_session:
             session = cast(_LiveSession, raw_session)
+            if session_chat_id:
+                _live_completion_subscribers.setdefault(session_chat_id, set()).add(completion_queue)
+                for handoff in codex_handoffs.pending_completion_for_chat(session_chat_id):
+                    completion_queue.put_nowait({"handoff": handoff, "result": _latest_artifact_replay(session_chat_id, "what was the result") or str(handoff["result_summary"]), "artifacts": []})
             live_connection_started_at = datetime.now()
             live_log.write(
                 "gemini.connected",
@@ -2304,8 +2352,9 @@ async def live_voice(websocket: WebSocket) -> None:
             ):
                 send_task = asyncio.create_task(send_client_audio(session, first_payload))
                 receive_task = asyncio.create_task(receive_gemini(session))
+                completion_task = asyncio.create_task(deliver_completions())
                 done, pending = await asyncio.wait(
-                    {send_task, receive_task}, return_when=asyncio.FIRST_COMPLETED
+                    {send_task, receive_task, completion_task}, return_when=asyncio.FIRST_COMPLETED
                 )
                 live_log.write(
                     "websocket.task_completed",
@@ -2333,6 +2382,8 @@ async def live_voice(websocket: WebSocket) -> None:
         except Exception:
             return
     finally:
+        if session_chat_id:
+            _live_completion_subscribers.get(session_chat_id, set()).discard(completion_queue)
         live_log.write(
             "websocket.finally",
             chat_id=session_chat_id,

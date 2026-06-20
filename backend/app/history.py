@@ -620,6 +620,17 @@ class CodexHandoffStore:
                 ).fetchall()
                 return [self._row_to_item(row) for row in reversed(rows)]
 
+    def pending_completion_for_chat(self, chat_id: str | None) -> list[dict[str, Any]]:
+        if not chat_id:
+            return []
+        with self.lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM codex_handoffs WHERE chat_id = ? AND delivery_state = 'background_completion_pending' ORDER BY created_at",
+                    (chat_id,),
+                ).fetchall()
+                return [self._row_to_item(row) for row in rows]
+
     def clear(self, chat_id: str | None = None) -> None:
         with self.lock:
             with self._connect() as conn:

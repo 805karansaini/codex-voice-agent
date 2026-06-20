@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.app import main
-from backend.app.history import ArtifactStore, HistoryStore
+from backend.app.history import ArtifactStore, CodexHandoffStore, HistoryStore
 
 
 class FakeAppLog:
@@ -76,6 +76,40 @@ class BackgroundJobTests(unittest.IsolatedAsyncioTestCase):
                 main.history = old_history
                 main.artifacts = old_artifacts
                 main.app_log = old_app_log
+
+    async def test_completion_receipt_must_match_live_chat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_handoffs = main.codex_handoffs
+            main.codex_handoffs = CodexHandoffStore(Path(tmp) / "history.json")
+            handoff = main.codex_handoffs.create(
+                chat_id="chat-a",
+                project_id="project-1",
+                workdir=tmp,
+                user_text="run tests",
+                tool_name="run_codex_task",
+                codex_status="completed",
+                result_summary="Tests passed.",
+                result_artifact_id=None,
+                codex_turn_id=None,
+                codex_thread_id=None,
+                artifact_ids=[],
+            )
+            main.codex_handoffs.mark_delivery(
+                handoff["id"], "background_completion_pending", acknowledged=False
+            )
+            try:
+                self.assertFalse(main._acknowledge_background_completion("chat-b", handoff["id"]))
+                rejected = main.codex_handoffs.get(handoff["id"])
+                self.assertIsNotNone(rejected)
+                assert rejected is not None
+                self.assertEqual(rejected["delivery_state"], "background_completion_pending")
+                self.assertTrue(main._acknowledge_background_completion("chat-a", handoff["id"]))
+                received = main.codex_handoffs.get(handoff["id"])
+                self.assertIsNotNone(received)
+                assert received is not None
+                self.assertEqual(received["delivery_state"], "background_completion_received")
+            finally:
+                main.codex_handoffs = old_handoffs
 
 
 if __name__ == "__main__":

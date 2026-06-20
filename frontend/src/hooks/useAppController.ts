@@ -110,6 +110,7 @@ export function useAppController() {
   } = useSpeechPlayback({ setError });
   const activeAbortControllerRef = useRef<AbortController | null>(null);
   const requestLiveVoiceSpeechRef = useRef<((text: string) => void) | null>(null);
+  const completeBackgroundCodexJobRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!syncError) return;
     setError(syncError);
@@ -133,6 +134,7 @@ export function useAppController() {
     updateAction,
     addHandoff,
     requestVoiceSpeech: (text) => requestLiveVoiceSpeechRef.current?.(text),
+    onBackgroundJobSettled: () => completeBackgroundCodexJobRef.current?.(),
   });
   const liveVoice = useLiveVoice({
     getWorkdir,
@@ -143,6 +145,7 @@ export function useAppController() {
     ...liveVoiceHandlers,
   });
   requestLiveVoiceSpeechRef.current = liveVoice.requestSpeech;
+  completeBackgroundCodexJobRef.current = liveVoice.completeBackgroundCodexJob;
   const {
     voiceActive,
     voiceContextLabel,

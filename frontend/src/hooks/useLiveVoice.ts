@@ -523,6 +523,21 @@ export function useLiveVoice({
           setMessage("Codex result is available in chat. Gemini is reconnecting with the result.");
           cbRef.current.onHandoffDeliveryFailed?.(deliveryFailureMessage);
           log(`[Tool Result Delivery Failed] ${deliveryFailureMessage}`);
+        } else if (payload.type === "background_job_completed") {
+          const result = String(payload.result || "Codex background task completed.").trim();
+          const handoffId = String(payload.handoff?.id || "");
+          setAssistantPreview("");
+          cbRef.current.onHandoff("run_codex_task", result, payload.handoff?.workdir || "", {
+            ...payload,
+            codex_status: payload.handoff?.codex_status || "completed",
+          });
+          if (handoffId && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(
+              JSON.stringify({ type: "background_completion_received", handoff_id: handoffId }),
+            );
+          }
+          requestSpeech(result);
+          log("[Codex] Received server-delivered background completion.");
         } else if (payload.type === "error") {
           setState("error");
           setMessage(payload.message || "Live voice failed.");
@@ -568,6 +583,7 @@ export function useLiveVoice({
     flushBufferedAudio,
     flushPendingSpeech,
     log,
+    requestSpeech,
     sendSessionConfig,
     stopMicrophone,
   ]);
@@ -703,6 +719,13 @@ export function useLiveVoice({
     }
   }, []);
 
+  const completeBackgroundCodexJob = useCallback(() => {
+    if (stateRef.current !== "working") return;
+    setState("live");
+    setMessage("Live with Gemini — speak again when ready.");
+    log("[Codex] Background task settled; cleared working status.");
+  }, [log]);
+
   useEffect(
     () => () => {
       clearToolResultFallback();
@@ -729,6 +752,7 @@ export function useLiveVoice({
     start,
     stop,
     cancelTask,
+    completeBackgroundCodexJob,
     requestSpeech,
   };
 }

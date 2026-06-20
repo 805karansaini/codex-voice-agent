@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from google.genai import types
 
-from backend.app.gemini_agent import live_connect_config
+from backend.app.gemini_agent import SYSTEM_INSTRUCTION, live_connect_config
 from backend.app.history import HistoryStore
 from backend.app.settings import Settings
 from backend.app import main
@@ -58,6 +58,10 @@ class LiveClientConfigTests(unittest.TestCase):
 
 
 class LiveModelConfigTests(unittest.TestCase):
+    def test_routine_local_work_is_authorized_without_confirmation(self) -> None:
+        self.assertIn("Treat ordinary local-work instructions as authorization to proceed.", SYSTEM_INSTRUCTION)
+        self.assertIn("for confirmation before routine inspection, edits, tests, builds, or commits.", SYSTEM_INSTRUCTION)
+
     def test_default_31_model_remains_sync_tool_model(self) -> None:
         settings = Settings(GEMINI_MODEL="gemini-3.1-flash-live-preview")
 
