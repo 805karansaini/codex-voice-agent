@@ -522,4 +522,36 @@
     line-height: 1.5;
     color: var(--color-fg);
   }
+
+  .file-preview {
+    color: var(--color-fg-muted);
+  }
+  .file-preview .token.comment,
+  .file-preview .token.prolog,
+  .file-preview .token.doctype,
+  .file-preview .token.cdata {
+    color: var(--color-fg-dim);
+  }
+  .file-preview .token.keyword,
+  .file-preview .token.atrule {
+    color: oklch(0.74 0.16 305);
+  }
+  .file-preview .token.string,
+  .file-preview .token.attr-value,
+  .file-preview .token.inserted {
+    color: oklch(0.8 0.15 145);
+  }
+  .file-preview .token.function,
+  .file-preview .token.class-name {
+    color: oklch(0.82 0.15 80);
+  }
+  .file-preview .token.number,
+  .file-preview .token.boolean,
+  .file-preview .token.constant {
+    color: oklch(0.76 0.15 35);
+  }
+  .file-preview .token.operator,
+  .file-preview .token.punctuation {
+    color: var(--color-fg-dim);
+  }
 }

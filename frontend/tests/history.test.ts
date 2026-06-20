@@ -16,7 +16,7 @@ test("historyRowsToMessages keeps only chat message roles", () => {
 
   assert.deepEqual(
     historyRowsToMessages(rows).map((message) => message.id),
-    ["user-1", "assistant-1"]
+    ["user-1", "assistant-1"],
   );
 });
 
@@ -114,7 +114,7 @@ test("historyRowsToMessages marks direct Codex and tool-call rows as Codex-backe
       ["direct", true],
       ["tool", true],
       ["plain", false],
-    ]
+    ],
   );
 });
 

@@ -5,6 +5,7 @@ import {
   CodexJob,
   HistoryRow,
   ProjectInfo,
+  ProjectFileEntry,
   SearchResult,
   DoctorCheck,
 } from "../types";
@@ -206,6 +207,28 @@ export async function getProjectInfo(path: string): Promise<ProjectInfo> {
     `/api/project/info?path=${encodeURIComponent(path)}`,
     {},
     "Failed to fetch project info",
+  );
+}
+
+export async function fetchProjectFiles(
+  projectId: string,
+  path = "",
+): Promise<{ root: string; entries: ProjectFileEntry[]; truncated: boolean }> {
+  return apiJson(
+    `/api/projects/${encodeURIComponent(projectId)}/files?path=${encodeURIComponent(path)}`,
+    {},
+    "Failed to load project files",
+  );
+}
+
+export async function fetchProjectFileContent(
+  projectId: string,
+  path: string,
+): Promise<{ path: string; content: string; size: number }> {
+  return apiJson(
+    `/api/projects/${encodeURIComponent(projectId)}/files/content?path=${encodeURIComponent(path)}`,
+    {},
+    "Failed to load file preview",
   );
 }
 

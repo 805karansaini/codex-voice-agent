@@ -15,6 +15,7 @@ import type {
 } from "../../types";
 import ActivityRail from "./ActivityRail";
 import WorkspaceSidebar from "./WorkspaceSidebar";
+import ProjectFilesPanel from "./ProjectFilesPanel";
 import ChatPanel from "../chat/ChatPanel";
 import ConsolePanel from "../console/ConsolePanel";
 
@@ -28,6 +29,7 @@ export type WorkspaceLayoutProps = {
   railWidth: number;
   panelWidth: number;
   theme: "dark" | "light";
+  activityView: "chats" | "files";
   projects: Project[];
   chats: Record<string, Chat[]>;
   activeProjectId: string | null;
@@ -66,6 +68,7 @@ export type WorkspaceLayoutProps = {
   selectedVoiceURI: string;
   pendingAudioUrl: string;
   onNewProject: () => void;
+  onActivityViewChange: (view: "chats" | "files") => void;
   onToggleTheme: () => void;
   onOpenConsoleSettings: () => void;
   onToggleProject: (projectId: string, expanded: boolean) => void;
@@ -109,6 +112,7 @@ export default function WorkspaceLayout({
   railWidth,
   panelWidth,
   theme,
+  activityView,
   projects,
   chats,
   activeProjectId,
@@ -147,6 +151,7 @@ export default function WorkspaceLayout({
   selectedVoiceURI,
   pendingAudioUrl,
   onNewProject,
+  onActivityViewChange,
   onToggleTheme,
   onOpenConsoleSettings,
   onToggleProject,
@@ -186,13 +191,15 @@ export default function WorkspaceLayout({
       {!isMobile && (
         <ActivityRail
           theme={theme}
+          activeView={activityView}
           onNewProject={onNewProject}
+          onViewChange={onActivityViewChange}
           onToggleTheme={onToggleTheme}
           onOpenConsoleSettings={onOpenConsoleSettings}
         />
       )}
 
-      {(!isMobile ? railOpen : mobileView === "explorer") && (
+      {activityView === "chats" && (!isMobile ? railOpen : mobileView === "explorer") && (
         <WorkspaceSidebar
           isMobile={isMobile}
           width={railWidth}
@@ -215,6 +222,10 @@ export default function WorkspaceLayout({
           onOpenVoiceSettings={onOpenVoiceSettings}
           onChatKeyDown={onChatKeyDown}
         />
+      )}
+
+      {activityView === "files" && !isMobile && (
+        <ProjectFilesPanel project={activeProject} width={railWidth} />
       )}
 
       {!isMobile && railOpen && (

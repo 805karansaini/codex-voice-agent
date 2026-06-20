@@ -35,6 +35,7 @@ export function useAppController() {
   const { syncError, clearSyncError } = store;
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"agent" | "codex">("agent");
+  const [activityView, setActivityView] = useState<"chats" | "files">("chats");
   const [showAdd, setShowAdd] = useState(false);
   const { voiceInputMode, setVoiceInputMode } = useVoiceInputMode();
   const { activeConsoleTab, setActiveConsoleTab, openVoiceTab } = useConsolePanelState();
@@ -248,6 +249,7 @@ export function useAppController() {
     railWidth,
     panelWidth,
     theme: store.theme,
+    activityView,
     projects: store.projects,
     chats: store.chats,
     activeProjectId: store.activeId,
@@ -286,6 +288,7 @@ export function useAppController() {
     selectedVoiceURI,
     pendingAudioUrl,
     onNewProject: () => setShowAdd(true),
+    onActivityViewChange: setActivityView,
     onToggleTheme: () => store.setTheme(store.theme === "dark" ? "light" : "dark"),
     onOpenConsoleSettings: () => {
       setPanelOpen(true);

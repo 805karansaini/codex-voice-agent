@@ -1280,6 +1280,43 @@ class ChatMetaRequest(BaseModel):
     createdAt: int
 
 
+_FILE_BROWSER_IGNORED_DIRECTORIES = {
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+}
+_FILE_BROWSER_MAX_BYTES = 512 * 1024
+
+
+def _is_file_browser_hidden(relative_path: Path) -> bool:
+    return any(part in _FILE_BROWSER_IGNORED_DIRECTORIES for part in relative_path.parts) or any(
+        part == ".DS_Store" or part == ".env" or part.startswith(".env.")
+        for part in relative_path.parts
+    )
+
+
+def _file_browser_root(project_id: str) -> Path:
+    root = _project_root(project_id)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return root
+
+
+def _file_browser_path(root: Path, relative_path: str) -> Path:
+    requested = Path(relative_path)
+    if not relative_path or requested.is_absolute() or ".." in requested.parts:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    candidate = (root / requested).resolve()
+    if not candidate.is_relative_to(root):
+        raise HTTPException(status_code=400, detail="File must be inside the selected project")
+    return candidate
+
+
 class ConsoleStateRequest(BaseModel):
     actions: list[dict[str, object]] = []
     handoffs: list[dict[str, object]] = []
@@ -1348,6 +1385,40 @@ async def search_content(q: str, limit: int = 20) -> list[dict[str, object]]:
 @app.get("/api/projects")
 async def list_projects() -> list[dict[str, object]]:
     return projects.list()
+
+
+@app.get("/api/projects/{project_id}/files")
+async def list_project_files(project_id: str, path: str = "") -> dict[str, object]:
+    """Return one directory level for the selected project's lazy file browser."""
+    root = _file_browser_root(project_id)
+    directory = root if not path else _file_browser_path(root, path)
+    if not directory.exists() or not directory.is_dir():
+        raise HTTPException(status_code=404, detail="Folder not found")
+    entries: list[dict[str, object]] = []
+    for child in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+        relative = child.relative_to(root)
+        if _is_file_browser_hidden(relative):
+            continue
+        entries.append({"path": relative.as_posix(), "is_directory": child.is_dir()})
+        if len(entries) >= 500:
+            break
+    return {"root": str(root), "entries": entries, "truncated": len(entries) >= 500}
+
+
+@app.get("/api/projects/{project_id}/files/content")
+async def read_project_file(project_id: str, path: str) -> dict[str, object]:
+    root = _file_browser_root(project_id)
+    file_path = _file_browser_path(root, path)
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    size = file_path.stat().st_size
+    if size > _FILE_BROWSER_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="This file is too large to preview")
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=415, detail="Binary files cannot be previewed") from exc
+    return {"path": path, "content": content, "size": size}
 
 
 @app.post("/api/projects")

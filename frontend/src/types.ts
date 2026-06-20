@@ -78,6 +78,11 @@ export type Project = {
   createdAt: number;
 };
 
+export type ProjectFileEntry = {
+  path: string;
+  is_directory: boolean;
+};
+
 export type Chat = {
   id: string;
   projectId: string;

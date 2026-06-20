@@ -20,10 +20,7 @@ test("appendArtifacts skips missing artifacts and preserves existing order", () 
   const first = artifact("a");
   const second = artifact("b");
 
-  assert.deepEqual(
-    appendArtifacts(undefined, null, first, undefined, second),
-    [first, second]
-  );
+  assert.deepEqual(appendArtifacts(undefined, null, first, undefined, second), [first, second]);
 });
 
 test("appendArtifacts deduplicates by artifact id", () => {

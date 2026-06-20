@@ -11,14 +11,18 @@ import {
 
 type ActivityRailProps = {
   theme: "dark" | "light";
+  activeView: "chats" | "files";
   onNewProject: () => void;
+  onViewChange: (view: "chats" | "files") => void;
   onToggleTheme: () => void;
   onOpenConsoleSettings: () => void;
 };
 
 export default function ActivityRail({
   theme,
+  activeView,
   onNewProject,
+  onViewChange,
   onToggleTheme,
   onOpenConsoleSettings,
 }: ActivityRailProps) {
@@ -27,17 +31,23 @@ export default function ActivityRail({
       <div className="flex flex-col gap-1 w-full px-2">
         <button
           title="Chats"
-          className="group relative flex h-11 w-full flex-col items-center justify-center gap-0.5 rounded-md bg-surface-2 text-accent"
+          onClick={() => onViewChange("chats")}
+          className={`group relative flex h-11 w-full flex-col items-center justify-center gap-0.5 rounded-md ${activeView === "chats" ? "bg-surface-2 text-accent" : "text-fg-dim hover:bg-surface-2 hover:text-fg"}`}
         >
-          <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-accent" />
+          {activeView === "chats" && (
+            <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-accent" />
+          )}
           <SquareTerminal className="h-4.5 w-4.5" />
           <span className="font-mono text-[9px] uppercase tracking-wider scale-90">Chats</span>
         </button>
         <button
-          title="Files coming soon"
-          disabled
-          className="group flex h-11 w-full cursor-not-allowed flex-col items-center justify-center gap-0.5 rounded-md text-fg-dim opacity-35"
+          title="Project files"
+          onClick={() => onViewChange("files")}
+          className={`group relative flex h-11 w-full flex-col items-center justify-center gap-0.5 rounded-md ${activeView === "files" ? "bg-surface-2 text-accent" : "text-fg-dim hover:bg-surface-2 hover:text-fg"}`}
         >
+          {activeView === "files" && (
+            <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-accent" />
+          )}
           <FileCode2 className="h-4.5 w-4.5" />
           <span className="font-mono text-[9px] uppercase tracking-wider scale-90">Files</span>
         </button>
