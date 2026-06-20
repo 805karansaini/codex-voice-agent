@@ -648,12 +648,29 @@ def _codex_status_for_chat(chat_id: str | None) -> str:
     jobs.sort(key=lambda item: item.updated_at, reverse=True)
     job = jobs[0]
     if job.status == "done":
-        summary = _artifact_summary(job.result, limit=260) if job.result else "Codex finished."
-        return f"Codex finished the latest task. {summary}"
+        result = str(job.result).strip() if job.result else "Codex finished."
+        return (
+            "Codex finished the latest task. Use this exact completed Codex result when the "
+            f"user asks what Codex found or asks you to read/summarize it:\n{result}"
+        )
     if job.status == "failed":
         return f"Codex failed the latest task. {job.error or 'No error details were recorded.'}"
     progress = job.latest_status or "Codex is still working."
     return f"Codex is still running. Latest progress: {progress}"
+
+
+def _background_result_speech_prompt(text: str) -> str:
+    return (
+        "A background Codex task finished while the voice session remained open. "
+        "Read the following result aloud clearly and with useful detail. Do not say only "
+        "that it is done. If the result is long, speak a concise but complete version "
+        "that preserves the important list items, decisions, and outcomes.\n\n"
+        f"Codex result:\n{text}"
+    )
+
+
+def _compact_spoken_text(text: object) -> str:
+    return " ".join(str(text or "").split())
 
 
 async def _run_live_codex_tool(
@@ -1042,7 +1059,7 @@ def _chat_context(chat_id: str | None, workdir: str | None = None) -> str:
             lines = ["Current and recent Codex background jobs for this chat:"]
             for job in jobs[:5]:
                 if job.status in {"done", "failed"} and job.result:
-                    detail = _artifact_summary(job.result, limit=220)
+                    detail = _artifact_summary(job.result, limit=4000)
                 else:
                     detail = job.latest_status or "No progress update yet."
                 lines.extend(
@@ -1050,11 +1067,11 @@ def _chat_context(chat_id: str | None, workdir: str | None = None) -> str:
                         "- Job id: " + job.id,
                         "  User request: " + job.task,
                         "  Status: " + job.status,
-                        "  Latest progress: " + detail,
+                        "  Completed result: " + detail,
                     ]
                 )
             lines.append(
-                "If the user asks for Codex status or progress, answer from these job records."
+                "If the user asks for Codex status, progress, or the previous Codex output, answer from these job records instead of guessing."
             )
             parts.append("\n".join(lines))
     recent_artifacts = artifacts.list(chat_id=chat_id)[-5:] if chat_id else []
@@ -1718,6 +1735,28 @@ async def live_voice(websocket: WebSocket) -> None:
                 await session.send_realtime_input(audio_stream_end=True)
                 await websocket.send_json(
                     {"type": "debug", "message": "Sent audio stream end to Gemini."}
+                )
+            elif event_type == "speak_text":
+                text = _compact_spoken_text(payload.get("text"))
+                if not text:
+                    continue
+                live_log.write(
+                    "client.speak_text",
+                    chat_id=session_chat_id,
+                    text_chars=len(text),
+                    text_preview=clip_text(text),
+                )
+                await session.send_client_content(
+                    turns=types.Content(
+                        role="user",
+                        parts=[
+                            types.Part(text=_background_result_speech_prompt(text))
+                        ],
+                    ),
+                    turn_complete=True,
+                )
+                await websocket.send_json(
+                    {"type": "debug", "message": "Queued completed Codex result for speech."}
                 )
             elif event_type == "cancel_task":
                 if current_task_cancel_token:

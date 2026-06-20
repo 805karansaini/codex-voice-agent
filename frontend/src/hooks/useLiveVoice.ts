@@ -9,12 +9,14 @@ import {
   encodePcmChunk,
 } from "./liveVoiceAudio";
 import { liveVoiceDeliveryFailureMessage } from "../utils/liveVoice";
+import { audioContainsSpeech, isClearToReadCompletedResult } from "../utils/liveVoiceSpeech";
 
 const RECONNECT_DELAY_MS = 900;
 // Backend Codex status events start after about 20s, then repeat every 60s.
 // This waits slightly longer than the first status event before surfacing a
 // completed Codex result when Gemini does not produce a final voice response.
 const TOOL_RESULT_FALLBACK_MS = 25000;
+const SPEAK_RESULT_RETRY_MS = 700;
 
 interface UseLiveVoiceProps {
   getWorkdir: () => string | undefined;
@@ -67,8 +69,10 @@ export function useLiveVoice({
   const [userPreview, setUserPreview] = useState("");
   const [assistantPreview, setAssistantPreview] = useState("");
   const [muted, setMuted] = useState(false);
+  const stateRef = useRef<LiveVoiceState>("idle");
 
   useEffect(() => {
+    stateRef.current = state;
     if (state === "working") {
       setElapsed(0);
       const interval = setInterval(() => {
@@ -97,11 +101,22 @@ export function useLiveVoice({
   const connectSocketRef = useRef<(() => WebSocket | undefined) | null>(null);
   const stopRef = useRef<(() => Promise<void>) | null>(null);
   const audioSentSinceTurnEndRef = useRef(false);
+  const voiceTurnActiveRef = useRef(false);
+  const lastSpeechActivityAtRef = useRef(0);
+  const pendingSpeechRef = useRef<string | null>(null);
+  const pendingSpeechTimerRef = useRef<number | null>(null);
 
   const clearToolResultFallback = useCallback(() => {
     if (toolResultFallbackTimerRef.current) {
       window.clearTimeout(toolResultFallbackTimerRef.current);
       toolResultFallbackTimerRef.current = null;
+    }
+  }, []);
+
+  const clearPendingSpeechTimer = useCallback(() => {
+    if (pendingSpeechTimerRef.current) {
+      window.clearTimeout(pendingSpeechTimerRef.current);
+      pendingSpeechTimerRef.current = null;
     }
   }, []);
 
@@ -237,6 +252,9 @@ export function useLiveVoice({
 
   const sendAudioInput = useCallback((input: Float32Array, sampleRate: number) => {
     if (mutedRef.current) return;
+    if (audioContainsSpeech(input)) {
+      lastSpeechActivityAtRef.current = Date.now();
+    }
     const payload = JSON.stringify({
       type: "audio",
       mime_type: `audio/pcm;rate=${LIVE_AUDIO_RATE}`,
@@ -276,12 +294,50 @@ export function useLiveVoice({
     [log],
   );
 
+  const flushPendingSpeech = useCallback(() => {
+    clearPendingSpeechTimer();
+    const text = pendingSpeechRef.current;
+    if (!text) return;
+    const websocket = websocketRef.current;
+    const canSpeakNow =
+      websocket?.readyState === WebSocket.OPEN &&
+      !["idle", "connecting", "error"].includes(stateRef.current) &&
+      isClearToReadCompletedResult({
+        voiceTurnActive: voiceTurnActiveRef.current,
+        lastSpeechAt: lastSpeechActivityAtRef.current,
+        now: Date.now(),
+      });
+    if (!canSpeakNow) {
+      pendingSpeechTimerRef.current = window.setTimeout(flushPendingSpeech, SPEAK_RESULT_RETRY_MS);
+      return;
+    }
+    pendingSpeechRef.current = null;
+    websocket.send(JSON.stringify({ type: "speak_text", text }));
+    setState("thinking");
+    setMessage("Reading the completed Codex result.");
+    log("[Voice] Queued completed Codex result for speech.");
+  }, [clearPendingSpeechTimer, log]);
+
+  const requestSpeech = useCallback(
+    (text: string) => {
+      const spokenText = text.trim();
+      if (!spokenText) return;
+      pendingSpeechRef.current = spokenText;
+      flushPendingSpeech();
+    },
+    [flushPendingSpeech],
+  );
+
   const stop = useCallback(async () => {
     log("[Stop] Stopping session and microphone...");
     manuallyStoppedRef.current = true;
     setMuted(false);
     mutedRef.current = false;
     audioSentSinceTurnEndRef.current = false;
+    voiceTurnActiveRef.current = false;
+    lastSpeechActivityAtRef.current = 0;
+    clearPendingSpeechTimer();
+    pendingSpeechRef.current = null;
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -298,7 +354,7 @@ export function useLiveVoice({
     setState("idle");
     setMessage("Gemini Live voice is ready.");
     log("[Stop] Session stopped successfully.");
-  }, [clearToolResultFallback, stopMicrophone, log]);
+  }, [clearPendingSpeechTimer, clearToolResultFallback, stopMicrophone, log]);
 
   const connectSocket = useCallback(() => {
     const websocket = new WebSocket(getWebSocketUrl("/api/live"));
@@ -317,6 +373,7 @@ export function useLiveVoice({
           log(payload.message || payload.type);
         } else if (payload.type === "user_transcript") {
           clearToolResultFallback();
+          voiceTurnActiveRef.current = true;
           log(`[User Transcript] ${payload.text || ""}`);
           setUserPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
@@ -324,6 +381,7 @@ export function useLiveVoice({
           cbRef.current.onUserTranscript?.(payload.text || "");
         } else if (payload.type === "assistant_delta") {
           clearToolResultFallback();
+          voiceTurnActiveRef.current = true;
           log(`[Assistant Delta] ${payload.text || ""}`);
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
           setState("thinking");
@@ -348,6 +406,9 @@ export function useLiveVoice({
             cbRef.current.onAudio(payload.audio_data_url);
           }
           hasStreamedAudioRef.current = false;
+          audioSentSinceTurnEndRef.current = false;
+          voiceTurnActiveRef.current = false;
+          flushPendingSpeech();
           setUserPreview("");
           setAssistantPreview("");
           if (payload.session_ended) {
@@ -369,10 +430,12 @@ export function useLiveVoice({
           }
         } else if (payload.type === "interrupted") {
           setAssistantPreview("");
+          voiceTurnActiveRef.current = false;
           audioPlayerRef.current?.stop();
           cbRef.current.onInterrupted?.();
           log("Response interrupted by new speech.");
         } else if (payload.type === "assistant_audio_delta") {
+          voiceTurnActiveRef.current = true;
           const audioB64 = payload.data;
           if (audioB64) {
             try {
@@ -500,7 +563,14 @@ export function useLiveVoice({
     };
 
     return websocket;
-  }, [clearToolResultFallback, flushBufferedAudio, log, sendSessionConfig, stopMicrophone]);
+  }, [
+    clearToolResultFallback,
+    flushBufferedAudio,
+    flushPendingSpeech,
+    log,
+    sendSessionConfig,
+    stopMicrophone,
+  ]);
 
   useEffect(() => {
     connectSocketRef.current = connectSocket;
@@ -527,7 +597,11 @@ export function useLiveVoice({
     setMuted(false);
     mutedRef.current = false;
     audioSentSinceTurnEndRef.current = false;
+    voiceTurnActiveRef.current = false;
+    lastSpeechActivityAtRef.current = 0;
     bufferedAudioRef.current = [];
+    clearPendingSpeechTimer();
+    pendingSpeechRef.current = null;
     clearToolResultFallback();
     hasStreamedAudioRef.current = false;
     try {
@@ -613,7 +687,15 @@ export function useLiveVoice({
       setState("error");
       setMessage(err instanceof Error ? err.message : "Could not start live voice.");
     }
-  }, [clearToolResultFallback, connectSocket, log, sendAudioInput, state, stopMicrophone]);
+  }, [
+    clearPendingSpeechTimer,
+    clearToolResultFallback,
+    connectSocket,
+    log,
+    sendAudioInput,
+    state,
+    stopMicrophone,
+  ]);
 
   const cancelTask = useCallback(() => {
     if (websocketRef.current?.readyState === WebSocket.OPEN) {
@@ -647,5 +729,6 @@ export function useLiveVoice({
     start,
     stop,
     cancelTask,
+    requestSpeech,
   };
 }

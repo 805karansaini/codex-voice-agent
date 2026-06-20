@@ -223,6 +223,66 @@ class LiveToolCallRequestTests(unittest.TestCase):
 
 
 class LiveCodexToolTests(unittest.IsolatedAsyncioTestCase):
+    def test_background_result_speech_prompt_preserves_result_detail(self) -> None:
+        prompt = main._background_result_speech_prompt("Day one: inspect. Day two: fix.")
+
+        self.assertIn("Read the following result aloud", prompt)
+        self.assertIn("Do not say only that it is done", prompt)
+        self.assertIn("Day one: inspect. Day two: fix.", prompt)
+
+    def test_codex_status_returns_completed_result_detail(self) -> None:
+        old_jobs = dict(main._codex_jobs)
+        try:
+            main._codex_jobs.clear()
+            main._codex_jobs["job-1"] = main._CodexBackgroundJob(
+                id="job-1",
+                task="read plan",
+                enhanced_task="read plan",
+                workdir="/tmp/project",
+                project_id="project-1",
+                chat_id="chat-1",
+                status="done",
+                result=(
+                    "Days 1-2 are a fast revision block. "
+                    "Day 1: OOP basics. Day 2: SOLID. Day 3: LLD diagrams."
+                ),
+                codex_status="completed",
+            )
+
+            status = main._codex_status_for_chat("chat-1")
+
+            self.assertIn("Use this exact completed Codex result", status)
+            self.assertIn("Day 1: OOP basics", status)
+            self.assertIn("Day 3: LLD diagrams", status)
+        finally:
+            main._codex_jobs.clear()
+            main._codex_jobs.update(old_jobs)
+
+    def test_codex_status_does_not_truncate_completed_result(self) -> None:
+        old_jobs = dict(main._codex_jobs)
+        try:
+            main._codex_jobs.clear()
+            full_result = "first detail\n" + ("important detail\n" * 800) + "final detail"
+            main._codex_jobs["job-1"] = main._CodexBackgroundJob(
+                id="job-1",
+                task="read plan",
+                enhanced_task="read plan",
+                workdir="/tmp/project",
+                project_id="project-1",
+                chat_id="chat-1",
+                status="done",
+                result=full_result,
+                codex_status="completed",
+            )
+
+            status = main._codex_status_for_chat("chat-1")
+
+            self.assertIn("first detail", status)
+            self.assertIn("final detail", status)
+        finally:
+            main._codex_jobs.clear()
+            main._codex_jobs.update(old_jobs)
+
     async def test_live_codex_background_start_returns_running_job(self) -> None:
         sent: list[dict[str, object]] = []
         live_log = FakeLiveLog()

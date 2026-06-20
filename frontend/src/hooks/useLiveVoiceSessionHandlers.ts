@@ -21,6 +21,7 @@ type UseLiveVoiceSessionHandlersOptions = {
   }) => string;
   updateAction: (id: string, patch: ActionPatch) => void;
   addHandoff: (name: string, summary: string) => void;
+  requestVoiceSpeech?: (text: string) => void;
 };
 
 export type ActiveCodexJobStatus = {
@@ -52,6 +53,7 @@ export function useLiveVoiceSessionHandlers({
   addAction,
   updateAction,
   addHandoff,
+  requestVoiceSpeech,
 }: UseLiveVoiceSessionHandlersOptions) {
   const voiceCtxRef = useRef<{ project: Project; chatId: string } | null>(null);
   const activeVoiceActionIdRef = useRef<string | null>(null);
@@ -189,12 +191,6 @@ export function useLiveVoiceSessionHandlers({
             streaming: false,
           }));
         }
-        store.appendMessage(ctx.chatId, {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          text: "Voice session restarted. Context is preserved up to your last completed turn.",
-          workdir: ctx.project.path,
-        });
         resetActiveVoiceMessages();
       },
       onTurnComplete: (
@@ -468,6 +464,7 @@ export function useLiveVoiceSessionHandlers({
                   workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
                 });
                 addHandoff(name, finalText.slice(0, 160));
+                requestVoiceSpeech?.(finalText);
                 activeVoiceActionIdRef.current = null;
                 activeVoiceJobIdRef.current = null;
                 activeCodexMsgIdRef.current = null;

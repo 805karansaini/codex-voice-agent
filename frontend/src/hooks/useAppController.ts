@@ -108,6 +108,7 @@ export function useAppController() {
     playResponseAudio,
   } = useSpeechPlayback({ setError });
   const activeAbortControllerRef = useRef<AbortController | null>(null);
+  const requestLiveVoiceSpeechRef = useRef<((text: string) => void) | null>(null);
   useEffect(() => {
     if (!syncError) return;
     setError(syncError);
@@ -130,6 +131,7 @@ export function useAppController() {
     addAction,
     updateAction,
     addHandoff,
+    requestVoiceSpeech: (text) => requestLiveVoiceSpeechRef.current?.(text),
   });
   const liveVoice = useLiveVoice({
     getWorkdir,
@@ -139,6 +141,7 @@ export function useAppController() {
     onDebug: addDebug,
     ...liveVoiceHandlers,
   });
+  requestLiveVoiceSpeechRef.current = liveVoice.requestSpeech;
   const {
     voiceActive,
     voiceContextLabel,
