@@ -87,7 +87,9 @@ export default function ComposerFooter({
                 <span className="h-1.5 w-1.5 rounded-full bg-accent pulse-dot" />
                 {voiceTitle}
               </p>
-              <p className="text-[11.5px] text-fg-muted mt-1 truncate">{voiceMessage}</p>
+              <p className="hidden sm:block text-[11.5px] text-fg-muted mt-1 truncate">
+                {voiceMessage}
+              </p>
               {voiceContextLabel && (
                 <p className="text-[10.5px] text-fg-dim mt-1 truncate">
                   Attached to {voiceContextLabel}
@@ -116,16 +118,16 @@ export default function ComposerFooter({
                       if (event.key === " " || event.key === "Enter") onReleaseToMute();
                     }}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11.5px] font-semibold transition-colors",
+                      "flex min-h-14 min-w-14 items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-[11.5px] font-semibold transition-colors sm:min-h-0 sm:min-w-0",
                       voiceMuted
                         ? "border-accent/30 bg-accent/10 text-accent"
                         : "border-success/30 bg-success/10 text-success",
                     )}
                   >
                     {voiceMuted ? (
-                      <MicOff className="h-3.5 w-3.5" />
+                      <MicOff className="h-5 w-5 sm:h-3.5 sm:w-3.5" />
                     ) : (
-                      <Mic className="h-3.5 w-3.5" />
+                      <Mic className="h-5 w-5 sm:h-3.5 sm:w-3.5" />
                     )}
                     {!isMobile && <span>{voiceMuted ? "Hold to talk" : "Listening"}</span>}
                   </button>
@@ -134,16 +136,16 @@ export default function ComposerFooter({
                     type="button"
                     onClick={onToggleMute}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
+                      "flex min-h-14 min-w-14 items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors sm:min-h-0 sm:min-w-0",
                       voiceMuted
                         ? "border-danger/30 bg-danger/10 text-danger"
                         : "border-line bg-surface-3 text-fg-muted hover:text-fg",
                     )}
                   >
                     {voiceMuted ? (
-                      <MicOff className="h-3.5 w-3.5" />
+                      <MicOff className="h-5 w-5 sm:h-3.5 sm:w-3.5" />
                     ) : (
-                      <Mic className="h-3.5 w-3.5" />
+                      <Mic className="h-5 w-5 sm:h-3.5 sm:w-3.5" />
                     )}
                     {!isMobile && <span>{voiceMuted ? "Unmute" : "Mute"}</span>}
                   </button>
@@ -151,9 +153,9 @@ export default function ComposerFooter({
                 <button
                   type="button"
                   onClick={onToggleVoice}
-                  className="flex items-center gap-1.5 rounded-md bg-danger text-white px-3 py-1.5 text-[11.5px] font-semibold hover:brightness-110 transition-colors shadow-sm"
+                  className="flex min-h-14 min-w-14 items-center justify-center gap-1.5 rounded-md bg-danger px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition-colors hover:brightness-110 sm:min-h-0 sm:min-w-0"
                 >
-                  <MicOff className="h-3.5 w-3.5" />
+                  <MicOff className="h-5 w-5 sm:h-3.5 sm:w-3.5" />
                   {!isMobile && <span>End</span>}
                 </button>
               </div>
