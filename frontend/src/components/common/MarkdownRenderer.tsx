@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Copy, Check } from "lucide-react";
+import { highlightCode, languageForCodeFence } from "../../utils/syntaxHighlight";
 
 interface MarkdownRendererProps {
   content: string;
@@ -37,6 +38,8 @@ interface CodeBlockProps {
 
 const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
   const [copied, setCopied] = useState(false);
+  const highlightLanguage = languageForCodeFence(language);
+  const highlighted = highlightCode(code.trim(), highlightLanguage);
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(code);
@@ -57,8 +60,13 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
           <span>{copied ? "Copied!" : "Copy"}</span>
         </button>
       </div>
-      <pre className="code-block-pre">
-        <code className="code-block-code">{code.trim()}</code>
+      <pre className="code-block-pre file-preview">
+        <code
+          className={`code-block-code${highlightLanguage ? ` language-${highlightLanguage}` : ""}`}
+          dangerouslySetInnerHTML={highlighted ? { __html: highlighted } : undefined}
+        >
+          {highlighted ? undefined : code.trim()}
+        </code>
       </pre>
     </div>
   );
