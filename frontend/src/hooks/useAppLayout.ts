@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { loadJSON, saveJSON } from "../utils";
 
-export type MobileView = "explorer" | "chat" | "console";
+export type MobileView = "explorer" | "files" | "chat" | "console";
 
 export function useAppLayout() {
   const [railOpen, setRailOpen] = useState(true);
@@ -13,6 +13,9 @@ export function useAppLayout() {
   const [mobileView, setMobileView] = useState<MobileView>("chat");
   const [railWidth, setRailWidth] = useState(() => loadJSON<number>("cva.railWidth.v2", 268));
   const [panelWidth, setPanelWidth] = useState(() => loadJSON<number>("cva.panelWidth.v2", 380));
+  const [fileViewerWidth, setFileViewerWidth] = useState(() =>
+    loadJSON<number>("cva.fileViewerWidth.v1", 420),
+  );
   const [isDragging, setIsDragging] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
@@ -33,24 +36,51 @@ export function useAppLayout() {
     document.addEventListener("mouseup", handleMouseUp);
   }, []);
 
-  const startPanelDrag = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(260, Math.min(600, window.innerWidth - moveEvent.clientX));
-      setPanelWidth(newWidth);
-    };
-    const handleMouseUp = () => {
-      setIsDragging(false);
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-  }, []);
+  const startPanelDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      const startX = e.clientX;
+      const startWidth = panelWidth;
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const newWidth = Math.max(260, Math.min(600, startWidth + startX - moveEvent.clientX));
+        setPanelWidth(newWidth);
+      };
+      const handleMouseUp = () => {
+        setIsDragging(false);
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+      };
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    },
+    [panelWidth],
+  );
+
+  const startFileViewerDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      const startX = e.clientX;
+      const startWidth = fileViewerWidth;
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const newWidth = Math.max(260, Math.min(900, startWidth + startX - moveEvent.clientX));
+        setFileViewerWidth(newWidth);
+      };
+      const handleMouseUp = () => {
+        setIsDragging(false);
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+      };
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    },
+    [fileViewerWidth],
+  );
 
   useEffect(() => saveJSON("cva.railWidth.v2", railWidth), [railWidth]);
   useEffect(() => saveJSON("cva.panelWidth.v2", panelWidth), [panelWidth]);
+  useEffect(() => saveJSON("cva.fileViewerWidth.v1", fileViewerWidth), [fileViewerWidth]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -93,8 +123,10 @@ export function useAppLayout() {
           setMobileView("chat");
         } else if (mobileView === "chat") {
           setMobileView("explorer");
+        } else if (mobileView === "files") {
+          setMobileView("explorer");
         }
-      } else if (mobileView === "explorer") {
+      } else if (mobileView === "explorer" || mobileView === "files") {
         setMobileView("chat");
       } else if (mobileView === "chat") {
         setMobileView("console");
@@ -115,9 +147,11 @@ export function useAppLayout() {
     setMobileView,
     railWidth,
     panelWidth,
+    fileViewerWidth,
     isDragging,
     startRailDrag,
     startPanelDrag,
+    startFileViewerDrag,
     handleTouchStart,
     handleTouchEnd,
   };

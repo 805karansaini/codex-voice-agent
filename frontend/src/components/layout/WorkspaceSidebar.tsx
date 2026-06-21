@@ -1,11 +1,15 @@
 import {
+  Activity,
+  Cable,
   ChevronRight,
+  FileCode2,
   FolderPlus,
   Moon,
   MoreHorizontal,
   Pencil,
   Plus,
   Settings,
+  SquareTerminal,
   Sun,
   Trash2,
 } from "lucide-react";
@@ -24,6 +28,7 @@ type WorkspaceSidebarProps = {
   expandedProjects: Record<string, boolean>;
   visibleChatsCount: Record<string, number>;
   theme: "dark" | "light";
+  activeView: "chats" | "files";
   onAddProject: () => void;
   onToggleProject: (projectId: string, expanded: boolean) => void;
   onCreateChat: (projectId: string) => void;
@@ -34,6 +39,7 @@ type WorkspaceSidebarProps = {
   onShowMoreChats: (projectId: string) => void;
   onToggleTheme: () => void;
   onOpenVoiceSettings: () => void;
+  onViewChange: (view: "chats" | "files") => void;
   onChatKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 };
 
@@ -63,6 +69,7 @@ export default function WorkspaceSidebar({
   expandedProjects,
   visibleChatsCount,
   theme,
+  activeView,
   onAddProject,
   onToggleProject,
   onCreateChat,
@@ -73,6 +80,7 @@ export default function WorkspaceSidebar({
   onShowMoreChats,
   onToggleTheme,
   onOpenVoiceSettings,
+  onViewChange,
   onChatKeyDown,
 }: WorkspaceSidebarProps) {
   return (
@@ -239,22 +247,67 @@ export default function WorkspaceSidebar({
       </nav>
 
       {isMobile && (
-        <div className="border-t border-line bg-surface-2 p-3 flex items-center justify-between gap-3 shrink-0">
-          <button
-            onClick={onToggleTheme}
-            className="flex items-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface-3 flex-1 justify-center"
+        <div className="border-t border-line bg-surface-2 shrink-0">
+          <nav
+            className="grid grid-cols-4 gap-1 border-b border-line-soft px-3 py-2"
+            aria-label="Workspace views"
           >
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
-          </button>
+            <button
+              onClick={() => onViewChange("chats")}
+              className={cn(
+                "flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] font-medium",
+                activeView === "chats"
+                  ? "bg-accent/10 text-accent"
+                  : "text-fg-dim hover:bg-surface-3 hover:text-fg",
+              )}
+            >
+              <SquareTerminal className="h-4 w-4" />
+              Chats
+            </button>
+            <button
+              onClick={() => onViewChange("files")}
+              className={cn(
+                "flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] font-medium",
+                activeView === "files"
+                  ? "bg-accent/10 text-accent"
+                  : "text-fg-dim hover:bg-surface-3 hover:text-fg",
+              )}
+            >
+              <FileCode2 className="h-4 w-4" />
+              Files
+            </button>
+            <button
+              disabled
+              className="flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] text-fg-dim opacity-40"
+            >
+              <Activity className="h-4 w-4" />
+              Runs
+            </button>
+            <button
+              disabled
+              className="flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] text-fg-dim opacity-40"
+            >
+              <Cable className="h-4 w-4" />
+              MCP
+            </button>
+          </nav>
+          <div className="flex items-center justify-between gap-3 p-3">
+            <button
+              onClick={onToggleTheme}
+              className="flex flex-1 items-center justify-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:bg-surface-3 hover:text-fg"
+            >
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
+            </button>
 
-          <button
-            onClick={onOpenVoiceSettings}
-            className="flex items-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface-3 flex-1 justify-center"
-          >
-            <Settings className="h-4 w-4" />
-            <span>Voice Settings</span>
-          </button>
+            <button
+              onClick={onOpenVoiceSettings}
+              className="flex flex-1 items-center justify-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:bg-surface-3 hover:text-fg"
+            >
+              <Settings className="h-4 w-4" />
+              <span>Voice Settings</span>
+            </button>
+          </div>
         </div>
       )}
     </aside>

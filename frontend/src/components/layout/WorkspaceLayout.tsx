@@ -16,8 +16,10 @@ import type {
 import ActivityRail from "./ActivityRail";
 import WorkspaceSidebar from "./WorkspaceSidebar";
 import ProjectFilesPanel from "./ProjectFilesPanel";
+import FileReaderPanel from "./FileReaderPanel";
 import ChatPanel from "../chat/ChatPanel";
 import ConsolePanel from "../console/ConsolePanel";
+import { useEffect, useState } from "react";
 
 type ChatMode = "agent" | "codex";
 
@@ -26,8 +28,10 @@ export type WorkspaceLayoutProps = {
   mobileView: MobileView;
   railOpen: boolean;
   panelOpen: boolean;
+  filePanelOpen: boolean;
   railWidth: number;
   panelWidth: number;
+  fileViewerWidth: number;
   theme: "dark" | "light";
   activityView: "chats" | "files";
   projects: Project[];
@@ -82,6 +86,7 @@ export type WorkspaceLayoutProps = {
   onChatKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   onStartRailDrag: (event: MouseEvent) => void;
   onStartPanelDrag: (event: MouseEvent) => void;
+  onStartFileViewerDrag: (event: MouseEvent) => void;
   onModeChange: (mode: ChatMode) => void;
   onExportChat: () => void;
   onToggleVoice: () => void;
@@ -109,8 +114,10 @@ export default function WorkspaceLayout({
   mobileView,
   railOpen,
   panelOpen,
+  filePanelOpen,
   railWidth,
   panelWidth,
+  fileViewerWidth,
   theme,
   activityView,
   projects,
@@ -165,6 +172,7 @@ export default function WorkspaceLayout({
   onChatKeyDown,
   onStartRailDrag,
   onStartPanelDrag,
+  onStartFileViewerDrag,
   onModeChange,
   onExportChat,
   onToggleVoice,
@@ -186,6 +194,12 @@ export default function WorkspaceLayout({
   onVoiceInputModeChange,
   onPlayResponseAudio,
 }: WorkspaceLayoutProps) {
+  const [openFilePath, setOpenFilePath] = useState("");
+
+  useEffect(() => {
+    setOpenFilePath("");
+  }, [activeProject?.id]);
+
   return (
     <div className="flex flex-1 min-h-0 min-w-0">
       {!isMobile && (
@@ -210,6 +224,7 @@ export default function WorkspaceLayout({
           expandedProjects={expandedProjects}
           visibleChatsCount={visibleChatsCount}
           theme={theme}
+          activeView={activityView}
           onAddProject={onNewProject}
           onToggleProject={onToggleProject}
           onCreateChat={onCreateChat}
@@ -220,13 +235,29 @@ export default function WorkspaceLayout({
           onShowMoreChats={onShowMoreChats}
           onToggleTheme={onToggleTheme}
           onOpenVoiceSettings={onOpenVoiceSettings}
+          onViewChange={onActivityViewChange}
           onChatKeyDown={onChatKeyDown}
         />
       )}
 
-      {activityView === "files" && !isMobile && (
-        <ProjectFilesPanel project={activeProject} width={railWidth} />
-      )}
+      {activityView === "files" &&
+        (!isMobile || mobileView === "files") &&
+        (isMobile && openFilePath && activeProject ? (
+          <FileReaderPanel
+            project={activeProject}
+            path={openFilePath}
+            width={railWidth}
+            isMobile
+            onClose={() => setOpenFilePath("")}
+          />
+        ) : (
+          <ProjectFilesPanel
+            project={activeProject}
+            width={railWidth}
+            isMobile={isMobile}
+            onOpenFile={isMobile ? setOpenFilePath : undefined}
+          />
+        ))}
 
       {!isMobile && railOpen && (
         <div
@@ -279,38 +310,74 @@ export default function WorkspaceLayout({
         />
       )}
 
-      {!isMobile && panelOpen && (
+      {!isMobile && (panelOpen || filePanelOpen) && (
         <div
-          className="w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent transition-colors bg-line-soft shrink-0"
-          onMouseDown={onStartPanelDrag}
+          role="separator"
+          aria-label={
+            filePanelOpen && openFilePath
+              ? "Resize file viewer"
+              : filePanelOpen
+                ? "Resize file tree"
+                : "Resize console panel"
+          }
+          aria-orientation="vertical"
+          className="w-2 cursor-col-resize shrink-0 bg-line-soft transition-colors hover:bg-accent/40 active:bg-accent"
+          onMouseDown={filePanelOpen && openFilePath ? onStartFileViewerDrag : onStartPanelDrag}
         />
       )}
 
-      {(!isMobile ? panelOpen : mobileView === "console") && (
-        <ConsolePanel
-          isMobile={isMobile}
-          width={panelWidth}
-          status={status}
-          canClear={Boolean(activeChatId)}
-          activeTab={activeConsoleTab}
-          debugEntries={debugEntries}
-          actions={actions}
-          handoffs={handoffs}
-          messages={messages}
-          doctorChecks={doctorChecks}
-          voices={voices}
-          selectedVoiceURI={selectedVoiceURI}
-          voiceInputMode={voiceInputMode}
-          pendingAudioUrl={pendingAudioUrl}
-          onHide={onHideConsole}
-          onBackToChat={onBackToChat}
-          onClear={onClearThread}
-          onTabChange={onConsoleTabChange}
-          onRefreshDoctor={onRefreshDoctor}
-          onSelectedVoiceChange={onSelectedVoiceChange}
-          onVoiceInputModeChange={onVoiceInputModeChange}
-          onPlayResponseAudio={onPlayResponseAudio}
-        />
+      {!isMobile && filePanelOpen ? (
+        <>
+          {openFilePath && activeProject && (
+            <>
+              <FileReaderPanel
+                project={activeProject}
+                path={openFilePath}
+                width={fileViewerWidth}
+                onClose={() => setOpenFilePath("")}
+              />
+              <div
+                role="separator"
+                aria-label="Resize file tree"
+                aria-orientation="vertical"
+                className="w-2 cursor-col-resize shrink-0 bg-line-soft transition-colors hover:bg-accent/40 active:bg-accent"
+                onMouseDown={onStartPanelDrag}
+              />
+            </>
+          )}
+          <ProjectFilesPanel
+            project={activeProject}
+            width={panelWidth}
+            onOpenFile={setOpenFilePath}
+          />
+        </>
+      ) : (
+        (!isMobile ? panelOpen : mobileView === "console") && (
+          <ConsolePanel
+            isMobile={isMobile}
+            width={panelWidth}
+            status={status}
+            canClear={Boolean(activeChatId)}
+            activeTab={activeConsoleTab}
+            debugEntries={debugEntries}
+            actions={actions}
+            handoffs={handoffs}
+            messages={messages}
+            doctorChecks={doctorChecks}
+            voices={voices}
+            selectedVoiceURI={selectedVoiceURI}
+            voiceInputMode={voiceInputMode}
+            pendingAudioUrl={pendingAudioUrl}
+            onHide={onHideConsole}
+            onBackToChat={onBackToChat}
+            onClear={onClearThread}
+            onTabChange={onConsoleTabChange}
+            onRefreshDoctor={onRefreshDoctor}
+            onSelectedVoiceChange={onSelectedVoiceChange}
+            onVoiceInputModeChange={onVoiceInputModeChange}
+            onPlayResponseAudio={onPlayResponseAudio}
+          />
+        )
       )}
     </div>
   );

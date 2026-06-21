@@ -1,3 +1,4 @@
+import type { MobileView } from "./useAppLayout";
 import { Chat, SearchResult } from "../types";
 
 export function useSearchResultNavigation({
@@ -11,7 +12,7 @@ export function useSearchResultNavigation({
   selectChat: (projectId: string, chatId: string) => void;
   clearSearch: () => void;
   isMobile: boolean;
-  setMobileView: (view: "explorer" | "chat" | "console") => void;
+  setMobileView: (view: MobileView) => void;
 }) {
   return (result: SearchResult) => {
     if (!result.chat_id) return;

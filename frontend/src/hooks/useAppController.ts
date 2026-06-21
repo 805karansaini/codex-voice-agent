@@ -36,6 +36,7 @@ export function useAppController() {
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"agent" | "codex">("agent");
   const [activityView, setActivityView] = useState<"chats" | "files">("chats");
+  const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const { voiceInputMode, setVoiceInputMode } = useVoiceInputMode();
   const { activeConsoleTab, setActiveConsoleTab, openVoiceTab } = useConsolePanelState();
@@ -58,9 +59,11 @@ export function useAppController() {
     setMobileView,
     railWidth,
     panelWidth,
+    fileViewerWidth,
     isDragging,
     startRailDrag,
     startPanelDrag,
+    startFileViewerDrag,
     handleTouchStart,
     handleTouchEnd,
   } = useAppLayout();
@@ -236,12 +239,18 @@ export function useAppController() {
     searching,
     railOpen,
     panelOpen,
+    filePanelOpen,
     voiceActive,
-    onMobileViewChange: setMobileView,
+    onMobileViewChange: (view) => {
+      setMobileView(view);
+      if (view === "explorer") setActivityView("chats");
+      if (view === "files") setActivityView("files");
+    },
     onSearchQueryChange: setSearchQuery,
     onOpenSearchResult: openSearchResult,
     onToggleRail: () => setRailOpen((open) => !open),
     onTogglePanel: () => setPanelOpen((open) => !open),
+    onToggleFilePanel: () => setFilePanelOpen((open) => !open),
   };
 
   const workspaceLayoutProps: WorkspaceLayoutProps = {
@@ -249,8 +258,10 @@ export function useAppController() {
     mobileView,
     railOpen,
     panelOpen,
+    filePanelOpen,
     railWidth,
     panelWidth,
+    fileViewerWidth,
     theme: store.theme,
     activityView,
     projects: store.projects,
@@ -291,7 +302,10 @@ export function useAppController() {
     selectedVoiceURI,
     pendingAudioUrl,
     onNewProject: () => setShowAdd(true),
-    onActivityViewChange: setActivityView,
+    onActivityViewChange: (view) => {
+      setActivityView(view);
+      if (isMobile) setMobileView(view === "files" ? "files" : "explorer");
+    },
     onToggleTheme: () => store.setTheme(store.theme === "dark" ? "light" : "dark"),
     onOpenConsoleSettings: () => {
       setPanelOpen(true);
@@ -322,6 +336,7 @@ export function useAppController() {
     onChatKeyDown: handleChatSwitcherKeyDown,
     onStartRailDrag: startRailDrag,
     onStartPanelDrag: startPanelDrag,
+    onStartFileViewerDrag: startFileViewerDrag,
     onModeChange: setMode,
     onExportChat: () => void handleExportChat(),
     onToggleVoice: toggleVoice,

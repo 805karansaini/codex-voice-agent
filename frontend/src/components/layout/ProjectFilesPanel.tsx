@@ -7,24 +7,18 @@ import {
   FolderOpen,
   RefreshCw,
 } from "lucide-react";
-import Prism from "prismjs";
-import "prismjs/components/prism-bash";
-import "prismjs/components/prism-java";
-import "prismjs/components/prism-json";
-import "prismjs/components/prism-jsx";
-import "prismjs/components/prism-python";
-import "prismjs/components/prism-sql";
-import "prismjs/components/prism-typescript";
-import "prismjs/components/prism-tsx";
-import "prismjs/components/prism-yaml";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, ProjectFileEntry } from "../../types";
 import * as api from "../../services/api";
 import { cn, loadJSON, saveJSON } from "../../utils";
-import MarkdownRenderer from "../common/MarkdownRenderer";
 
-type ProjectFilesPanelProps = { project: Project | null | undefined; width: number };
+type ProjectFilesPanelProps = {
+  project: Project | null | undefined;
+  width: number;
+  isMobile?: boolean;
+  onOpenFile?: (path: string) => void;
+};
 type FileTree = { name: string; path: string; isDirectory: boolean; children: FileTree[] };
 const EXPANDED_FOLDERS_KEY = "cva.fileTreeExpanded.v1";
 
@@ -39,30 +33,6 @@ function mergeFileEntries(
 
 function fileIcon(path: string) {
   return /\.(md|mdx|txt)$/i.test(path) ? FileText : FileCode2;
-}
-
-function languageFor(path: string): string | null {
-  const extension = path.split(".").pop()?.toLowerCase();
-  return (
-    (
-      {
-        js: "javascript",
-        jsx: "jsx",
-        ts: "typescript",
-        tsx: "tsx",
-        py: "python",
-        json: "json",
-        sh: "bash",
-        bash: "bash",
-        zsh: "bash",
-        java: "java",
-        sql: "sql",
-        css: "css",
-        yml: "yaml",
-        yaml: "yaml",
-      } as Record<string, string>
-    )[extension || ""] || null
-  );
 }
 
 function makeTree(entries: ProjectFileEntry[]): FileTree[] {
@@ -99,10 +69,13 @@ function makeTree(entries: ProjectFileEntry[]): FileTree[] {
   return root.children;
 }
 
-export default function ProjectFilesPanel({ project, width }: ProjectFilesPanelProps) {
+export default function ProjectFilesPanel({
+  project,
+  width,
+  isMobile = false,
+  onOpenFile,
+}: ProjectFilesPanelProps) {
   const [entries, setEntries] = useState<ProjectFileEntry[]>([]);
-  const [selectedPath, setSelectedPath] = useState("");
-  const [content, setContent] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadedDirectories, setLoadedDirectories] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -139,8 +112,6 @@ export default function ProjectFilesPanel({ project, width }: ProjectFilesPanelP
 
   useEffect(() => {
     setEntries([]);
-    setSelectedPath("");
-    setContent("");
     setTruncated(false);
     setExpanded(new Set());
     setLoadedDirectories(new Set());
@@ -169,27 +140,11 @@ export default function ProjectFilesPanel({ project, width }: ProjectFilesPanelP
     }
   };
 
-  const selectFile = async (path: string) => {
+  const selectFile = (path: string) => {
     if (!project) return;
-    setSelectedPath(path);
-    setContent("");
-    setError("");
-    setLoading(true);
-    setExpanded((current) => {
-      const next = new Set(current);
-      path
-        .split("/")
-        .slice(0, -1)
-        .forEach((_, index, parts) => next.add(parts.slice(0, index + 1).join("/")));
-      return next;
-    });
-    try {
-      const result = await api.fetchProjectFileContent(project.id, path);
-      setContent(result.content);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load file preview");
-    } finally {
-      setLoading(false);
+    if (onOpenFile) {
+      onOpenFile(path);
+      return;
     }
   };
 
@@ -237,14 +192,9 @@ export default function ProjectFilesPanel({ project, width }: ProjectFilesPanelP
     return (
       <button
         key={node.path}
-        onClick={() => void selectFile(node.path)}
+        onClick={() => selectFile(node.path)}
         title={node.path}
-        className={cn(
-          "flex w-full items-center gap-2 py-1 text-left text-[12.5px] transition-colors",
-          selectedPath === node.path
-            ? "bg-accent/10 text-fg"
-            : "text-fg-muted hover:bg-surface-2 hover:text-fg",
-        )}
+        className="flex w-full items-center gap-2 py-1 text-left text-[12.5px] text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg"
         style={{ paddingLeft: `${30 + depth * 14}px`, paddingRight: "8px" }}
       >
         <Icon className="h-3.5 w-3.5 shrink-0 text-fg-dim" />
@@ -256,23 +206,17 @@ export default function ProjectFilesPanel({ project, width }: ProjectFilesPanelP
   if (!project)
     return (
       <aside
-        style={{ width: `${width}px` }}
-        className="flex shrink-0 items-center justify-center border-r border-line bg-surface-1 p-6 text-center text-sm text-fg-dim"
+        style={{ width: isMobile ? "100%" : `${width}px` }}
+        className="flex shrink-0 items-center justify-center bg-surface-1 p-6 text-center text-sm text-fg-dim"
       >
         Choose a project to browse its files.
       </aside>
     );
 
-  const isMarkdown = /\.mdx?$/i.test(selectedPath);
-  const language = languageFor(selectedPath);
-  const highlighted =
-    language && content
-      ? Prism.highlight(content, Prism.languages[language] || Prism.languages.plain, language)
-      : "";
   return (
     <aside
-      style={{ width: `${width}px` }}
-      className="flex min-h-0 shrink-0 flex-col border-r border-line bg-surface-1"
+      style={{ width: isMobile ? "100%" : `${width}px` }}
+      className="flex min-h-0 shrink-0 flex-col bg-surface-1"
     >
       <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5">
         <div className="min-w-0">
@@ -315,30 +259,6 @@ export default function ProjectFilesPanel({ project, width }: ProjectFilesPanelP
           </p>
         )}
       </div>
-      {selectedPath && (
-        <section className="max-h-[48%] shrink-0 overflow-hidden border-t border-line bg-surface-0">
-          <div className="flex items-center gap-1 border-b border-line-soft px-3 py-2 text-[11px] text-fg-muted">
-            <ChevronRight className="h-3 w-3" />
-            <span className="truncate">{selectedPath}</span>
-          </div>
-          <div className="h-full overflow-auto p-3 text-[12.5px]">
-            {loading ? (
-              <p className="text-fg-dim">Loading preview…</p>
-            ) : isMarkdown ? (
-              <MarkdownRenderer content={content} />
-            ) : (
-              <pre className="file-preview whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
-                <code
-                  className={language ? `language-${language}` : undefined}
-                  dangerouslySetInnerHTML={highlighted ? { __html: highlighted } : undefined}
-                >
-                  {highlighted ? undefined : content}
-                </code>
-              </pre>
-            )}
-          </div>
-        </section>
-      )}
     </aside>
   );
 }

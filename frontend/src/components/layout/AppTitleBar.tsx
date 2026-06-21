@@ -1,5 +1,6 @@
 import {
   Folder,
+  FileCode2,
   GitBranch,
   Menu,
   PanelLeftClose,
@@ -26,12 +27,14 @@ export type AppTitleBarProps = {
   searching: boolean;
   railOpen: boolean;
   panelOpen: boolean;
+  filePanelOpen: boolean;
   voiceActive: boolean;
   onMobileViewChange: (view: MobileView) => void;
   onSearchQueryChange: (query: string) => void;
   onOpenSearchResult: (result: SearchResult) => void;
   onToggleRail: () => void;
   onTogglePanel: () => void;
+  onToggleFilePanel: () => void;
 };
 
 export default function AppTitleBar({
@@ -45,21 +48,28 @@ export default function AppTitleBar({
   searching,
   railOpen,
   panelOpen,
+  filePanelOpen,
   voiceActive,
   onMobileViewChange,
   onSearchQueryChange,
   onOpenSearchResult,
   onToggleRail,
   onTogglePanel,
+  onToggleFilePanel,
 }: AppTitleBarProps) {
   if (isMobile) {
     return (
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-line bg-surface-1 px-3">
         <button
-          onClick={() => onMobileViewChange(mobileView === "explorer" ? "chat" : "explorer")}
+          onClick={() =>
+            onMobileViewChange(
+              mobileView === "explorer" || mobileView === "files" ? "chat" : "explorer",
+            )
+          }
           className={cn(
             "flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface-2 text-fg-muted",
-            mobileView === "explorer" && "bg-surface-3 text-accent border-accent/30",
+            (mobileView === "explorer" || mobileView === "files") &&
+              "bg-surface-3 text-accent border-accent/30",
           )}
         >
           <Menu className="h-4.5 w-4.5" />
@@ -69,9 +79,11 @@ export default function AppTitleBar({
           <span className="text-[13px] font-semibold tracking-tight truncate max-w-[200px]">
             {mobileView === "explorer"
               ? "Workspace"
-              : mobileView === "console"
-                ? "Console"
-                : activeProjectName}
+              : mobileView === "files"
+                ? "Files"
+                : mobileView === "console"
+                  ? "Console"
+                  : activeProjectName}
           </span>
           {mobileView === "chat" && activeChatTitle && (
             <span className="text-[10px] text-fg-dim truncate max-w-[200px] leading-tight">
@@ -188,6 +200,20 @@ export default function AppTitleBar({
           ) : (
             <PanelLeftOpen className="h-3.5 w-3.5" />
           )}
+        </button>
+        <button
+          title={filePanelOpen ? "Hide files" : "Show files"}
+          aria-label={filePanelOpen ? "Hide files" : "Show files"}
+          aria-pressed={filePanelOpen}
+          onClick={onToggleFilePanel}
+          className={cn(
+            "grid h-7 w-7 place-items-center rounded-md border transition-colors",
+            filePanelOpen
+              ? "border-line bg-surface-3 text-accent"
+              : "border-line bg-surface-2 text-fg-muted hover:text-fg hover:bg-surface-3",
+          )}
+        >
+          <FileCode2 className="h-3.5 w-3.5" />
         </button>
         <button
           title={panelOpen ? "Hide console panel" : "Show console panel"}
