@@ -12,6 +12,7 @@ export type Message = {
   codexStatus?: string;
   codexTurnId?: string;
   codexThreadId?: string;
+  backgroundJobId?: string;
   geminiLiveUsage?: GeminiLiveUsage;
 };
 
@@ -113,6 +114,8 @@ export type HistoryRow = {
     workdir?: string;
     project_id?: string;
     chat_id?: string;
+    background_job_id?: string;
+    user_visible?: boolean;
   };
 };
 

@@ -20,6 +20,28 @@ test("historyRowsToMessages keeps only chat message roles", () => {
   );
 });
 
+test("historyRowsToMessages keeps user-facing background Codex requests", () => {
+  const messages = historyRowsToMessages([
+    {
+      id: "direct-request",
+      role: "user",
+      text: "List all files in the current repository.",
+      meta: { direct_codex: true, background_job_id: "job-1", user_visible: true },
+    },
+    {
+      id: "internal-request",
+      role: "user",
+      text: "Internal voice handoff",
+      meta: { direct_codex: true, background_job_id: "job-2" },
+    },
+  ] as HistoryRow[]);
+
+  assert.deepEqual(
+    messages.map((message) => message.id),
+    ["direct-request"],
+  );
+});
+
 test("historyRowsToMessages preserves artifact and Codex metadata", () => {
   const artifact: ChatArtifact = {
     id: "artifact-1",
@@ -161,5 +183,92 @@ test("mergeBackendHistoryWithLocalMessages keeps pending local messages", () => 
   assert.deepEqual(
     mergeBackendHistoryWithLocalMessages(rows, localMessages).map((message) => message.id),
     ["user-1", "assistant-stream"],
+  );
+});
+
+test("mergeBackendHistoryWithLocalMessages removes a completed background job placeholder", () => {
+  const rows = [
+    {
+      id: "completed-job-message",
+      role: "assistant",
+      text: "Completed output",
+      meta: { background_job_id: "job-1", direct_codex: true },
+    },
+  ] as HistoryRow[];
+  const localMessages = [
+    {
+      id: "streaming-placeholder",
+      role: "assistant",
+      text: "Codex is writing its response.",
+      streaming: true,
+      backgroundJobId: "job-1",
+    },
+  ] as Message[];
+
+  assert.deepEqual(
+    mergeBackendHistoryWithLocalMessages(rows, localMessages).map((message) => message.id),
+    ["completed-job-message"],
+  );
+});
+
+test("mergeBackendHistoryWithLocalMessages replaces local direct Codex messages with history", () => {
+  const rows = [
+    {
+      id: "saved-request",
+      role: "user",
+      text: "Run the task",
+      meta: { direct_codex: true, background_job_id: "job-1", user_visible: true },
+    },
+    {
+      id: "saved-result",
+      role: "assistant",
+      text: "Completed output",
+      meta: { direct_codex: true, background_job_id: "job-1" },
+    },
+  ] as HistoryRow[];
+  const localMessages = [
+    {
+      id: "local-request",
+      role: "user",
+      text: "Run the task",
+      backgroundJobId: "job-1",
+    },
+    {
+      id: "local-result",
+      role: "assistant",
+      text: "Codex is working.",
+      streaming: true,
+      backgroundJobId: "job-1",
+    },
+  ] as Message[];
+
+  assert.deepEqual(
+    mergeBackendHistoryWithLocalMessages(rows, localMessages).map((message) => message.id),
+    ["saved-request", "saved-result"],
+  );
+});
+
+test("mergeBackendHistoryWithLocalMessages keeps a placeholder while its request is the only saved row", () => {
+  const rows = [
+    {
+      id: "job-request",
+      role: "user",
+      text: "Run the task",
+      meta: { background_job_id: "job-1", direct_codex: true },
+    },
+  ] as HistoryRow[];
+  const localMessages = [
+    {
+      id: "streaming-placeholder",
+      role: "assistant",
+      text: "Codex is working.",
+      streaming: true,
+      backgroundJobId: "job-1",
+    },
+  ] as Message[];
+
+  assert.deepEqual(
+    mergeBackendHistoryWithLocalMessages(rows, localMessages).map((message) => message.id),
+    ["streaming-placeholder"],
   );
 });

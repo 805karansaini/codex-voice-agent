@@ -2,7 +2,16 @@ import type { HistoryRow, Message } from "../types";
 
 export function historyRowsToMessages(rows: HistoryRow[]): Message[] {
   return rows
-    .filter((row) => row.role === "user" || row.role === "assistant")
+    .filter(
+      (row) =>
+        (row.role === "user" || row.role === "assistant") &&
+        !(
+          row.role === "user" &&
+          row.meta?.direct_codex &&
+          row.meta?.background_job_id &&
+          !row.meta?.user_visible
+        ),
+    )
     .map((row) => ({
       id: row.id,
       role: row.role,
@@ -18,6 +27,7 @@ export function historyRowsToMessages(rows: HistoryRow[]): Message[] {
       codexStatus: row.meta?.codex_status,
       codexTurnId: row.meta?.codex_turn_id,
       codexThreadId: row.meta?.codex_thread_id,
+      ...(row.meta?.background_job_id ? { backgroundJobId: row.meta.background_job_id } : {}),
       geminiLiveUsage: row.meta?.gemini_live_usage,
     }));
 }
@@ -28,8 +38,18 @@ export function mergeBackendHistoryWithLocalMessages(
 ): Message[] {
   const serverMessages = historyRowsToMessages(rows);
   const serverIds = new Set(serverMessages.map((message) => message.id));
+  const persistedBackgroundMessages = new Set(
+    serverMessages.flatMap((message) =>
+      message.backgroundJobId ? [`${message.role}:${message.backgroundJobId}`] : [],
+    ),
+  );
   const pendingLocalMessages = localMessages.filter(
-    (message) => message.streaming || !serverIds.has(message.id),
+    (message) =>
+      !(
+        message.backgroundJobId &&
+        persistedBackgroundMessages.has(`${message.role}:${message.backgroundJobId}`)
+      ) &&
+      (message.streaming || !serverIds.has(message.id)),
   );
   return [...serverMessages, ...pendingLocalMessages];
 }

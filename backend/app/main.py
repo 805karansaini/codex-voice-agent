@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncIterator, Protocol, TypedDict, cast
+from typing import Any, AsyncIterator, NotRequired, Protocol, TypedDict, cast
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,6 +85,7 @@ class _LiveCompletion(TypedDict):
     handoff: dict[str, object]
     result: str
     artifacts: list[dict[str, object]]
+    background_job_id: NotRequired[str]
 
 
 @dataclass(frozen=True)
@@ -398,7 +399,14 @@ def _persist_background_codex_handoff(job: CodexBackgroundJob) -> dict[str, obje
         codex_handoffs.mark_delivery(str(handoff["id"]), "background_completion_pending", acknowledged=False)
         handoff = codex_handoffs.get(str(handoff["id"])) or handoff
         for queue in _live_completion_subscribers.get(job.chat_id or "", set()):
-            queue.put_nowait({"handoff": handoff, "result": job.result, "artifacts": job.artifacts})
+            queue.put_nowait(
+                {
+                    "handoff": handoff,
+                    "background_job_id": job.id,
+                    "result": job.result,
+                    "artifacts": job.artifacts,
+                }
+            )
     return handoff
 
 
@@ -490,6 +498,7 @@ async def _enqueue_codex_background_job(
         {
             "direct_codex": True,
             "background_job_id": job.id,
+            "user_visible": source == "direct",
             "workdir": workdir,
             "project_id": project_id,
             "chat_id": chat_id,
@@ -832,6 +841,7 @@ async def _start_live_codex_background_job(
             "type": "tool_result",
             "name": call_name,
             "result": message,
+            "task": job.task,
             "workdir": job.workdir,
             "artifact": None,
             "change_artifact": None,

@@ -28,25 +28,24 @@ export function useChatDisplayState({
   const codexElapsed = activeCodexJob
     ? Math.max(0, Math.floor((Date.now() - activeCodexJob.startedAt) / 1000))
     : 0;
-  const voiceTitle =
-    activeCodexJob && !voiceActive
-      ? `Codex is working (${formatElapsed(codexElapsed)})`
-      : liveVoice.state === "connecting"
-        ? "Connecting…"
-        : liveVoice.state === "reconnecting"
-          ? "Reconnecting Gemini…"
-          : liveVoice.state === "live"
-            ? "Live conversation"
-            : liveVoice.state === "thinking"
-              ? "Gemini is responding"
-              : liveVoice.state === "working"
-                ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
-                : liveVoice.state === "error"
-                  ? "Voice needs attention"
-                  : "Live voice";
+  const voiceTitle = activeCodexJob
+    ? `Codex is working (${formatElapsed(codexElapsed)})`
+    : liveVoice.state === "connecting"
+      ? "Connecting…"
+      : liveVoice.state === "reconnecting"
+        ? "Reconnecting Gemini…"
+        : liveVoice.state === "live"
+          ? "Live conversation"
+          : liveVoice.state === "thinking"
+            ? "Gemini is responding"
+            : liveVoice.state === "working"
+              ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
+              : liveVoice.state === "error"
+                ? "Voice needs attention"
+                : "Live voice";
   const liveStatusText = [
     voiceActive || activeCodexJob ? voiceTitle : "",
-    activeCodexJob && !voiceActive ? activeCodexJob.message : voiceActive ? liveVoice.message : "",
+    activeCodexJob ? activeCodexJob.task : voiceActive ? liveVoice.message : "",
     busy ? "Assistant response in progress" : "",
   ]
     .filter(Boolean)
@@ -75,7 +74,7 @@ export function useChatDisplayState({
           "Explain the project structure",
         ];
 
-  const voiceMessage = activeCodexJob && !voiceActive ? activeCodexJob.message : liveVoice.message;
+  const voiceMessage = activeCodexJob ? activeCodexJob.task : liveVoice.message;
 
   return { voiceTitle, voiceMessage, liveStatusText, streamingStatusText, suggestions };
 }

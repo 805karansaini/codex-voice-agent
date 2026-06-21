@@ -21,7 +21,6 @@ type UseLiveVoiceSessionHandlersOptions = {
   }) => string;
   updateAction: (id: string, patch: ActionPatch) => void;
   addHandoff: (name: string, summary: string) => void;
-  requestVoiceSpeech?: (text: string) => void;
   onBackgroundJobSettled?: () => void;
 };
 
@@ -29,6 +28,7 @@ export type ActiveCodexJobStatus = {
   jobId: string;
   chatId: string;
   status: "queued" | "running" | "done" | "failed";
+  task: string;
   message: string;
   startedAt: number;
   workdir?: string;
@@ -54,7 +54,6 @@ export function useLiveVoiceSessionHandlers({
   addAction,
   updateAction,
   addHandoff,
-  requestVoiceSpeech,
   onBackgroundJobSettled,
 }: UseLiveVoiceSessionHandlersOptions) {
   const voiceCtxRef = useRef<{ project: Project; chatId: string } | null>(null);
@@ -250,7 +249,7 @@ export function useLiveVoiceSessionHandlers({
           store.appendMessage(ctx.chatId, {
             id: codexMessageId,
             role: "assistant",
-            text: "Codex is starting the local work.",
+            text: task || "Codex is starting the local work.",
             usedCodex: true,
             streaming: true,
             workdir: workdir || ctx.project.path,
@@ -280,6 +279,7 @@ export function useLiveVoiceSessionHandlers({
           jobId: "",
           chatId: ctx.chatId,
           status: "running",
+          task: task || "Codex is starting the local work.",
           message: task || "Codex is starting the local work.",
           startedAt: Date.now(),
           workdir: workdir || ctx.project.path,
@@ -374,11 +374,12 @@ export function useLiveVoiceSessionHandlers({
           if (!ctx) return;
           const codexMessageId =
             activeCodexMsgIdRef.current || activeAssistantVoiceMsgIdRef.current;
+          const task = stringValue(details?.task, summary) || "Codex is running the local task.";
           activeVoiceJobIdRef.current = backgroundJobId;
           updateAction(activeVoiceActionIdRef.current, {
             status: "running",
-            detail: summary,
-            streamingResponse: summary,
+            detail: task,
+            streamingResponse: task,
             workdir: workdir || voiceCtxRef.current?.project.path,
           });
           const actionId = activeVoiceActionIdRef.current;
@@ -397,6 +398,7 @@ export function useLiveVoiceSessionHandlers({
               ...message,
               text: patch.text || message.text,
               streaming: patch.streaming,
+              backgroundJobId,
               usedCodex: true,
               workdir: patch.workdir || message.workdir,
               codexEvents: patch.events || message.codexEvents || [],
@@ -405,7 +407,7 @@ export function useLiveVoiceSessionHandlers({
             }));
           };
           updateCodexMessage({
-            text: summary || "Codex is running the local task.",
+            text: task,
             streaming: true,
             status: "running",
             workdir,
@@ -414,7 +416,8 @@ export function useLiveVoiceSessionHandlers({
             jobId: backgroundJobId,
             chatId,
             status: "running",
-            message: summary || "Codex is running the local task.",
+            task,
+            message: task,
             startedAt,
             workdir,
           });
@@ -442,6 +445,7 @@ export function useLiveVoiceSessionHandlers({
                   jobId: backgroundJobId,
                   chatId,
                   status: job.status,
+                  task: job.task || task,
                   message: progressText,
                   startedAt,
                   workdir: job.workdir || workdir,
@@ -467,7 +471,6 @@ export function useLiveVoiceSessionHandlers({
                 });
                 addHandoff(name, finalText.slice(0, 160));
                 onBackgroundJobSettled?.();
-                requestVoiceSpeech?.(finalText);
                 activeVoiceActionIdRef.current = null;
                 activeVoiceJobIdRef.current = null;
                 activeCodexMsgIdRef.current = null;
@@ -519,6 +522,8 @@ export function useLiveVoiceSessionHandlers({
           if (activeAssistantVoiceMsgIdRef.current) {
             store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
               ...m,
+              text: summary || m.text,
+              streaming: false,
               usedCodex: true,
               codexEvents: (details?.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
               codexStatus: stringValue(details?.codex_status, m.codexStatus),
@@ -551,6 +556,9 @@ export function useLiveVoiceSessionHandlers({
           });
           activeVoiceActionIdRef.current = null;
           activeVoiceJobIdRef.current = null;
+          activeCodexMsgIdRef.current = null;
+          setActiveCodexJob(null);
+          onBackgroundJobSettled?.();
         } else {
           addAction({
             title: "Voice handoff to Codex",

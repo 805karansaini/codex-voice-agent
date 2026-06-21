@@ -601,6 +601,8 @@ export function useLiveVoice({
           setAssistantPreview("");
           cbRef.current.onHandoff("run_codex_task", result, payload.handoff?.workdir || "", {
             ...payload,
+            background_job_id: payload.background_job_id || "",
+            workdir: payload.handoff?.workdir || "",
             codex_status: payload.handoff?.codex_status || "completed",
           });
           if (handoffId && websocket.readyState === WebSocket.OPEN) {

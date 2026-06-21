@@ -43,7 +43,7 @@ export function useStreamingChat({
   setError,
 }: UseStreamingChatOptions) {
   const streamCodex = useCallback(
-    async (task: string, project: Project, chatId: string) => {
+    async (task: string, project: Project, chatId: string, userMessageId: string) => {
       const actionId = addAction({
         title: "Background Codex task",
         status: "running",
@@ -67,6 +67,14 @@ export function useStreamingChat({
           projectId: project.id,
           chatId,
         });
+        store.updateMessage(chatId, assistantId, (message) => ({
+          ...message,
+          backgroundJobId: queued.id,
+        }));
+        store.updateMessage(chatId, userMessageId, (message) => ({
+          ...message,
+          backgroundJobId: queued.id,
+        }));
         updateAction(actionId, {
           detail: `${task}\n\nJob ${queued.id} is ${queued.status}.`,
           workdir: queued.workdir || project.path,

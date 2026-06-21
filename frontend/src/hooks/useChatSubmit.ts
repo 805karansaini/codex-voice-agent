@@ -13,7 +13,12 @@ type UseChatSubmitOptions = {
   resetComposer: () => void;
   store: ProjectStore;
   streamAgent: (message: string, project: Project, chatId: string) => Promise<void>;
-  streamCodex: (task: string, project: Project, chatId: string) => Promise<void>;
+  streamCodex: (
+    task: string,
+    project: Project,
+    chatId: string,
+    userMessageId: string,
+  ) => Promise<void>;
   activeAbortControllerRef: { current: AbortController | null };
   setError: (message: string) => void;
 };
@@ -51,8 +56,9 @@ export function useChatSubmit({
         store.renameChat(project.id, chatId, chatTitleFrom(text));
       }
 
+      const userMessageId = crypto.randomUUID();
       store.appendMessage(chatId, {
-        id: crypto.randomUUID(),
+        id: userMessageId,
         role: "user",
         text,
         workdir: project.path,
@@ -60,7 +66,7 @@ export function useChatSubmit({
 
       try {
         if (mode === "codex") {
-          await streamCodex(text, project, chatId);
+          await streamCodex(text, project, chatId, userMessageId);
         } else {
           await streamAgent(text, project, chatId);
         }
