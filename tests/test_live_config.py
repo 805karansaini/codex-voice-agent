@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from google.genai import types
 
-from backend.app.gemini_agent import SYSTEM_INSTRUCTION, live_connect_config
+from backend.app.gemini_agent import SYSTEM_INSTRUCTION, _system_instruction, live_connect_config
 from backend.app.history import HistoryStore
 from backend.app.settings import Settings
 from backend.app import main
@@ -57,7 +57,43 @@ class LiveClientConfigTests(unittest.TestCase):
             self.assertEqual(config["conversation_context"], "existing context")
 
 
+class LiveResumptionRecoveryTests(unittest.TestCase):
+    def test_only_an_immediately_dead_resume_discards_its_handle(self) -> None:
+        self.assertTrue(
+            main._should_discard_live_resumption_handle(
+                has_resumption_handle=True,
+                received_server_message=False,
+                receive_task_completed=True,
+            )
+        )
+        self.assertFalse(
+            main._should_discard_live_resumption_handle(
+                has_resumption_handle=False,
+                received_server_message=False,
+                receive_task_completed=True,
+            )
+        )
+        self.assertFalse(
+            main._should_discard_live_resumption_handle(
+                has_resumption_handle=True,
+                received_server_message=True,
+                receive_task_completed=True,
+            )
+        )
+
+
 class LiveModelConfigTests(unittest.TestCase):
+    def test_system_instruction_includes_current_date_context(self) -> None:
+        with patch(
+            "backend.app.gemini_agent._current_date_context",
+            return_value="Current date: Friday, June 26, 2026.",
+        ):
+            instruction = _system_instruction("/tmp/project", "recent context")
+
+        self.assertIn("Current date: Friday, June 26, 2026.", instruction)
+        self.assertIn("The current working directory for local work is: /tmp/project", instruction)
+        self.assertIn("Recent conversation in this chat:\nrecent context", instruction)
+
     def test_routine_local_work_is_authorized_without_confirmation(self) -> None:
         self.assertIn("Treat ordinary local-work instructions as authorization to proceed.", SYSTEM_INSTRUCTION)
         self.assertIn("for confirmation before routine inspection, edits, tests, builds, or commits.", SYSTEM_INSTRUCTION)

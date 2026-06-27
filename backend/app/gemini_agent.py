@@ -1,5 +1,6 @@
 import base64
 import wave
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any, AsyncIterator, cast
@@ -62,6 +63,11 @@ If the user indicates they are done, wants to end the conversation, or says good
 """
 
 
+def _current_date_context() -> str:
+    now = datetime.now().astimezone()
+    return f"Current date: {now.strftime('%A, %B')} {now.day}, {now.year}."
+
+
 def _turn_input(message: str, conversation_context: str | None) -> dict[str, str]:
     """Readable trace input for a turn: the new user message plus the running
     conversation so the whole context is visible on the trace. Cross-turn flow
@@ -82,7 +88,7 @@ def _resolve_tool_workdir(requested: object, session_workdir: str, project_root:
 
 
 def _system_instruction(workdir: str | None = None, conversation_context: str | None = None) -> str:
-    parts = [SYSTEM_INSTRUCTION.strip()]
+    parts = [SYSTEM_INSTRUCTION.strip(), _current_date_context()]
     if workdir:
         parts.append(f"The current working directory for local work is: {workdir}")
     if conversation_context:

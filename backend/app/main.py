@@ -1055,6 +1055,16 @@ def _is_gemini_disconnect_cleanup_exception(exc: Exception) -> bool:
     return isinstance(exc, RuntimeError) and "generator didn't stop after throw()" in str(exc)
 
 
+def _should_discard_live_resumption_handle(
+    *,
+    has_resumption_handle: bool,
+    received_server_message: bool,
+    receive_task_completed: bool,
+) -> bool:
+    """Identify a resume that opened at transport level but never became usable."""
+    return has_resumption_handle and receive_task_completed and not received_server_message
+
+
 def _project_briefing(workdir: str | None) -> str:
     if not workdir:
         return ""
@@ -1780,6 +1790,7 @@ async def live_voice(websocket: WebSocket) -> None:
     active_turn_gen = None
     session_ended_by_tool = False
     completion_queue: asyncio.Queue[_LiveCompletion] = asyncio.Queue()
+    received_gemini_server_message = False
 
     async def deliver_completions() -> None:
         while True:
@@ -1892,6 +1903,7 @@ async def live_voice(websocket: WebSocket) -> None:
     async def receive_gemini(session: _LiveSession) -> None:
         nonlocal session_conversation_context, current_task_cancel_token
         nonlocal active_turn_gen, session_ended_by_tool
+        nonlocal received_gemini_server_message
 
         # One Langfuse generation per voice turn. Created lazily when the turn
         # produces its first signal (user transcript or tool call) and closed at
@@ -1911,6 +1923,7 @@ async def live_voice(websocket: WebSocket) -> None:
             received_message = False
             async for server_message in session.receive():
                 received_message = True
+                received_gemini_server_message = True
                 if server_message.setup_complete:
                     live_log.write("gemini.setup_complete", chat_id=session_chat_id)
                     await websocket.send_json(
@@ -2329,6 +2342,7 @@ async def live_voice(websocket: WebSocket) -> None:
         session_resumption_handle = (
             _live_resumption_handles.get(session_chat_id) if session_chat_id else None
         )
+        has_resumption_handle = bool(session_resumption_handle)
         async with client.aio.live.connect(
             model=settings.gemini_model,
             config=live_connect_config(
@@ -2363,6 +2377,25 @@ async def live_voice(websocket: WebSocket) -> None:
                 done, pending = await asyncio.wait(
                     {send_task, receive_task, completion_task}, return_when=asyncio.FIRST_COMPLETED
                 )
+                if _should_discard_live_resumption_handle(
+                    has_resumption_handle=has_resumption_handle,
+                    received_server_message=received_gemini_server_message,
+                    receive_task_completed=receive_task in done,
+                ):
+                    # A resume handle can outlive a connection but still fail before Gemini
+                    # returns any protocol message. Drop only that handle; the browser's
+                    # normal reconnect will then start a fresh Live session from this chat.
+                    _live_resumption_handles.pop(session_chat_id or "", None)
+                    live_log.write("gemini.resumption_discarded", chat_id=session_chat_id)
+                    await websocket.send_json(
+                        {
+                            "type": "session_resume_failed",
+                            "message": (
+                                "Saved Gemini session could not resume. Reconnecting from "
+                                "this chat instead."
+                            ),
+                        }
+                    )
                 live_log.write(
                     "websocket.task_completed",
                     chat_id=session_chat_id,

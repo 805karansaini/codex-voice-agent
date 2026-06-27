@@ -506,6 +506,10 @@ export function useLiveVoice({
             `[Session] Gemini requested a refresh with ${payload.time_left || "limited"} remaining.`,
           );
           refreshGeminiSession();
+        } else if (payload.type === "session_resume_failed") {
+          setState("reconnecting");
+          setMessage("Reconnecting Gemini from your saved chat.");
+          log(payload.message || "Saved Gemini session could not resume; using chat context.");
         } else if (payload.type === "assistant_audio_delta") {
           voiceTurnActiveRef.current = true;
           const audioB64 = payload.data;
