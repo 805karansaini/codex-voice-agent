@@ -1055,6 +1055,17 @@ def _is_gemini_disconnect_cleanup_exception(exc: Exception) -> bool:
     return isinstance(exc, RuntimeError) and "generator didn't stop after throw()" in str(exc)
 
 
+def _live_connect_context(conversation_context: str, has_resumption_handle: bool) -> str:
+    """Choose one source of conversational continuity for a Live connection.
+
+    Gemini restores prior turns when a resumption handle is supplied. Replaying the
+    saved chat as a system instruction in that case duplicates those turns and can
+    make Gemini repeat its previous response. A fresh connection still receives the
+    saved-chat context so it can continue the same app thread after a failed resume.
+    """
+    return "" if has_resumption_handle else conversation_context
+
+
 def _should_discard_live_resumption_handle(
     *,
     has_resumption_handle: bool,
@@ -2343,12 +2354,15 @@ async def live_voice(websocket: WebSocket) -> None:
             _live_resumption_handles.get(session_chat_id) if session_chat_id else None
         )
         has_resumption_handle = bool(session_resumption_handle)
+        live_connect_context = _live_connect_context(
+            session_conversation_context, has_resumption_handle
+        )
         async with client.aio.live.connect(
             model=settings.gemini_model,
             config=live_connect_config(
                 settings,
                 session_workdir,
-                session_conversation_context,
+                live_connect_context,
                 session_resumption_handle=session_resumption_handle,
             ),
         ) as raw_session:

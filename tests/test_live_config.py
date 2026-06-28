@@ -58,6 +58,12 @@ class LiveClientConfigTests(unittest.TestCase):
 
 
 class LiveResumptionRecoveryTests(unittest.TestCase):
+    def test_resumed_connection_does_not_replay_saved_chat_context(self) -> None:
+        self.assertEqual(main._live_connect_context("recent context", True), "")
+
+    def test_fresh_connection_uses_saved_chat_context(self) -> None:
+        self.assertEqual(main._live_connect_context("recent context", False), "recent context")
+
     def test_only_an_immediately_dead_resume_discards_its_handle(self) -> None:
         self.assertTrue(
             main._should_discard_live_resumption_handle(
