@@ -431,7 +431,6 @@ class LiveCodexToolTests(unittest.IsolatedAsyncioTestCase):
                 call_name="run_codex_task",
                 send_json=send_json,
                 live_log=live_log,  # type: ignore[arg-type]
-                turn_gen=None,
             )
 
         self.assertEqual(result.response, "final")
@@ -479,7 +478,6 @@ class LiveCodexToolTests(unittest.IsolatedAsyncioTestCase):
                 call_name="run_codex_task",
                 send_json=send_json,
                 live_log=live_log,  # type: ignore[arg-type]
-                turn_gen=None,
             )
 
         self.assertEqual(result.response, "Error: boom")

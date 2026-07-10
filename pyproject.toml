@@ -13,8 +13,6 @@ dependencies = [
     "python-dotenv==1.1.1",
     "pydantic>=2.12",
     "pydantic-settings>=2.10",
-    "langfuse>=4,<5",
-    "openinference-instrumentation-google-genai>=0.1",
 ]
 
 [tool.uv]

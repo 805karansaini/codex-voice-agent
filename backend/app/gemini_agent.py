@@ -8,7 +8,6 @@ from typing import Any, AsyncIterator, cast
 from google import genai
 from google.genai import types
 
-from . import tracing
 from .codex_runner import run_codex_stream_with_timer, CancellationToken
 from .prompting import improve_codex_task_prompt
 from .settings import Settings
@@ -68,17 +67,9 @@ def _current_date_context() -> str:
     return f"Current date: {now.strftime('%A, %B')} {now.day}, {now.year}."
 
 
-def _turn_input(message: str, conversation_context: str | None) -> dict[str, str]:
-    """Readable trace input for a turn: the new user message plus the running
-    conversation so the whole context is visible on the trace. Cross-turn flow
-    is best viewed in the Langfuse Sessions tab (grouped by chat_id)."""
-    return {
-        "user_message": message,
-        "conversation_so_far": conversation_context or "(start of conversation)",
-    }
-
-
-def _resolve_tool_workdir(requested: object, session_workdir: str, project_root: str | None = None) -> str:
+def _resolve_tool_workdir(
+    requested: object, session_workdir: str, project_root: str | None = None
+) -> str:
     raw = str(requested or "").strip() or session_workdir
     root = Path(project_root or session_workdir).expanduser().resolve(strict=True)
     resolved = Path(raw).expanduser().resolve(strict=True)
@@ -158,8 +149,8 @@ def _get_tools() -> list[types.Tool]:
                     description=(
                         "End the conversation and gracefully close/disconnect the voice session. "
                         "MUST be called immediately when the user explicitly requests to end the conversation, "
-                        "says goodbye, or indicates they are finished/done with the voice session (e.g., \"goodbye\", "
-                        "\"bye\", \"bye-bye\", \"I'm done\", \"close session\", \"that is all\", \"theek hai bye\")."
+                        'says goodbye, or indicates they are finished/done with the voice session (e.g., "goodbye", '
+                        '"bye", "bye-bye", "I\'m done", "close session", "that is all", "theek hai bye").'
                     ),
                     parameters=end_conversation_parameters,
                 ),
@@ -197,7 +188,9 @@ def live_connect_config(
         speech_config=types.SpeechConfig(
             language_code=settings.gemini_language_code,
             voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=settings.gemini_voice_name)
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=settings.gemini_voice_name
+                )
             ),
         ),
         tools=_get_tools(),
@@ -241,7 +234,9 @@ async def ask_gemini_stream(
         response_mime_type="text/plain",
         tools=_get_tools(),
         tool_config=types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.AUTO)
+            function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.AUTO
+            )
         ),
     )
 
@@ -253,11 +248,7 @@ async def ask_gemini_stream(
     codex_status = None
 
     def _finalize_generation() -> str:
-        final_text = "".join(text_chunks).strip() or "Done."
-        tracing.update_current_generation(
-            output=final_text, metadata={"tool_calls": len(tool_calls)}
-        )
-        return final_text
+        return "".join(text_chunks).strip() or "Done."
 
     def _done_event() -> dict[str, Any]:
         return {
@@ -272,175 +263,153 @@ async def ask_gemini_stream(
             "audio_data_url": None,
         }
 
-    with tracing.session_context(
-        session_id=conversation_id,
-        metadata={"workdir": session_workdir},
-        tags=["text-chat", "stream"],
-    ), tracing.generation(
-        "gemini-text-turn",
-        model=settings.gemini_text_model,
-        input=_turn_input(message, conversation_context),
-    ) as gen:
-        try:
-            contents: list[types.Content] = [
-                types.Content(role="user", parts=[types.Part(text=message)])
-            ]
+    try:
+        contents: list[types.Content] = [
+            types.Content(role="user", parts=[types.Part(text=message)])
+        ]
 
-            while True:
-                function_calls: list[types.FunctionCall] = []
-                model_parts: list[types.Part] = []
-                stream = await client.aio.models.generate_content_stream(
-                    model=settings.gemini_text_model,
-                    contents=contents,
-                    config=config,
+        while True:
+            function_calls: list[types.FunctionCall] = []
+            model_parts: list[types.Part] = []
+            stream = await client.aio.models.generate_content_stream(
+                model=settings.gemini_text_model,
+                contents=contents,
+                config=config,
+            )
+            async for chunk in stream:
+                for candidate in chunk.candidates or []:
+                    content = candidate.content
+                    if not content:
+                        continue
+                    for part in content.parts or []:
+                        if part.function_call:
+                            function_calls.append(part.function_call)
+                            model_parts.append(types.Part(function_call=part.function_call))
+                        if part.text:
+                            text_chunks.append(part.text)
+                            model_parts.append(types.Part(text=part.text))
+                            yield {"type": "delta", "text": part.text}
+
+            if not function_calls:
+                yield _done_event()
+                return
+
+            contents.append(types.Content(role="model", parts=model_parts))
+            response_parts: list[types.Part] = []
+            for call in function_calls:
+                if call.name == "end_conversation":
+                    response = types.FunctionResponse(
+                        id=call.id,
+                        name=call.name,
+                        response={"result": "Session ended successfully."},
+                    )
+                    tool_calls.append(
+                        {
+                            "name": call.name,
+                            "args": {},
+                            "result": "Session ended successfully.",
+                            "workdir": session_workdir,
+                        }
+                    )
+                    response_parts.append(types.Part(function_response=response))
+                    continue
+                if call.name == "get_codex_status":
+                    status_text = _codex_status_from_context(conversation_context)
+                    response = types.FunctionResponse(
+                        id=call.id,
+                        name=call.name,
+                        response={"result": status_text},
+                    )
+                    tool_calls.append(
+                        {
+                            "name": call.name,
+                            "args": {},
+                            "result": status_text,
+                            "workdir": session_workdir,
+                        }
+                    )
+                    response_parts.append(types.Part(function_response=response))
+                    continue
+
+                args = dict(call.args or {})
+                task = str(args.get("task") or message)
+                enhanced_task = improve_codex_task_prompt(task)
+                chosen_workdir = _resolve_tool_workdir(
+                    args.get("workdir"),
+                    session_workdir or settings.codex_default_workdir,
+                    project_root,
                 )
-                async for chunk in stream:
-                    for candidate in chunk.candidates or []:
-                        content = candidate.content
-                        if not content:
-                            continue
-                        for part in content.parts or []:
-                            if part.function_call:
-                                function_calls.append(part.function_call)
-                                model_parts.append(types.Part(function_call=part.function_call))
-                            if part.text:
-                                text_chunks.append(part.text)
-                                model_parts.append(types.Part(text=part.text))
-                                yield {"type": "delta", "text": part.text}
-
-                if not function_calls:
-                    yield _done_event()
-                    return
-
-                contents.append(types.Content(role="model", parts=model_parts))
-                response_parts: list[types.Part] = []
-                for call in function_calls:
-                    if call.name == "end_conversation":
-                        response = types.FunctionResponse(
+                yield {
+                    "type": "tool_call",
+                    "name": call.name,
+                    "task": enhanced_task,
+                    "original_task": task,
+                    "workdir": chosen_workdir,
+                }
+                final_response = ""
+                resolved_workdir = chosen_workdir
+                async for event in run_codex_stream_with_timer(
+                    enhanced_task,
+                    chosen_workdir,
+                    settings,
+                    cancel_token,
+                    conversation_id,
+                ):
+                    if event.get("type") == "codex_event":
+                        codex_events.append(event)
+                        codex_turn_id = event.get("turn_id") or codex_turn_id
+                        codex_thread_id = event.get("thread_id") or codex_thread_id
+                        yield {"type": "codex_event", "event": event}
+                    elif event.get("type") == "delta":
+                        text_delta = event.get("text", "")
+                        final_response += text_delta
+                        yield {
+                            "type": "tool_progress",
+                            "name": call.name,
+                            "text": text_delta,
+                        }
+                    elif event.get("type") == "status":
+                        yield {
+                            "type": "status",
+                            "message": event.get("message"),
+                            "elapsed": event.get("elapsed"),
+                        }
+                    elif event.get("type") == "done":
+                        final_response = event.get("text", final_response)
+                        resolved_workdir = event.get("workdir", chosen_workdir)
+                        codex_events[:] = list(event.get("events") or codex_events)
+                        codex_turn_id = event.get("turn_id") or codex_turn_id
+                        codex_thread_id = event.get("thread_id") or codex_thread_id
+                        codex_status = event.get("status") or codex_status
+                    elif event.get("type") == "error":
+                        final_response = f"Error: {event.get('message')}"
+                        yield {"type": "error", "message": event.get("message")}
+                tool_call = {
+                    "name": call.name,
+                    "args": {**args, "enhanced_task": enhanced_task},
+                    "result": final_response,
+                    "workdir": resolved_workdir,
+                }
+                tool_calls.append(tool_call)
+                yield {
+                    "type": "tool_result",
+                    "name": call.name,
+                    "result": final_response,
+                    "workdir": resolved_workdir,
+                    "codex_events": codex_events[-200:],
+                    "codex_turn_id": codex_turn_id,
+                    "codex_thread_id": codex_thread_id,
+                    "codex_status": codex_status,
+                }
+                response_parts.append(
+                    types.Part(
+                        function_response=types.FunctionResponse(
                             id=call.id,
                             name=call.name,
-                            response={"result": "Session ended successfully."},
-                        )
-                        tool_calls.append(
-                            {
-                                "name": call.name,
-                                "args": {},
-                                "result": "Session ended successfully.",
-                                "workdir": session_workdir,
-                            }
-                        )
-                        response_parts.append(types.Part(function_response=response))
-                        continue
-                    if call.name == "get_codex_status":
-                        status_text = _codex_status_from_context(conversation_context)
-                        response = types.FunctionResponse(
-                            id=call.id,
-                            name=call.name,
-                            response={"result": status_text},
-                        )
-                        tool_calls.append(
-                            {
-                                "name": call.name,
-                                "args": {},
-                                "result": status_text,
-                                "workdir": session_workdir,
-                            }
-                        )
-                        response_parts.append(types.Part(function_response=response))
-                        continue
-
-                    args = dict(call.args or {})
-                    task = str(args.get("task") or message)
-                    enhanced_task = improve_codex_task_prompt(task)
-                    chosen_workdir = _resolve_tool_workdir(
-                        args.get("workdir"),
-                        session_workdir or settings.codex_default_workdir,
-                        project_root,
-                    )
-                    yield {
-                        "type": "tool_call",
-                        "name": call.name,
-                        "task": enhanced_task,
-                        "original_task": task,
-                        "workdir": chosen_workdir,
-                    }
-                    final_response = ""
-                    resolved_workdir = chosen_workdir
-                    call_name = str(call.name or "")
-                    with tracing.tool_call(
-                        call_name,
-                        parent=gen,
-                        input={"task": enhanced_task, "workdir": chosen_workdir},
-                    ) as tool_obs:
-                        async for event in run_codex_stream_with_timer(
-                            enhanced_task,
-                            chosen_workdir,
-                            settings,
-                            cancel_token,
-                            conversation_id,
-                        ):
-                            if event.get("type") == "codex_event":
-                                codex_events.append(event)
-                                codex_turn_id = event.get("turn_id") or codex_turn_id
-                                codex_thread_id = event.get("thread_id") or codex_thread_id
-                                yield {"type": "codex_event", "event": event}
-                            elif event.get("type") == "delta":
-                                text_delta = event.get("text", "")
-                                final_response += text_delta
-                                yield {
-                                    "type": "tool_progress",
-                                    "name": call.name,
-                                    "text": text_delta,
-                                }
-                            elif event.get("type") == "status":
-                                yield {
-                                    "type": "status",
-                                    "message": event.get("message"),
-                                    "elapsed": event.get("elapsed"),
-                                }
-                            elif event.get("type") == "done":
-                                final_response = event.get("text", final_response)
-                                resolved_workdir = event.get("workdir", chosen_workdir)
-                                codex_events[:] = list(event.get("events") or codex_events)
-                                codex_turn_id = event.get("turn_id") or codex_turn_id
-                                codex_thread_id = event.get("thread_id") or codex_thread_id
-                                codex_status = event.get("status") or codex_status
-                            elif event.get("type") == "error":
-                                final_response = f"Error: {event.get('message')}"
-                                yield {"type": "error", "message": event.get("message")}
-                        tracing.update_observation(
-                            tool_obs,
-                            output=final_response,
-                            metadata={"workdir": resolved_workdir, "status": codex_status},
-                        )
-
-                    tool_call = {
-                        "name": call.name,
-                        "args": {**args, "enhanced_task": enhanced_task},
-                        "result": final_response,
-                        "workdir": resolved_workdir,
-                    }
-                    tool_calls.append(tool_call)
-                    yield {
-                        "type": "tool_result",
-                        "name": call.name,
-                        "result": final_response,
-                        "workdir": resolved_workdir,
-                        "codex_events": codex_events[-200:],
-                        "codex_turn_id": codex_turn_id,
-                        "codex_thread_id": codex_thread_id,
-                        "codex_status": codex_status,
-                    }
-                    response_parts.append(
-                        types.Part(
-                            function_response=types.FunctionResponse(
-                                id=call.id,
-                                name=call.name,
-                                response={"result": final_response, "workdir": resolved_workdir},
-                            )
+                            response={"result": final_response, "workdir": resolved_workdir},
                         )
                     )
-                contents.append(types.Content(role="user", parts=response_parts))
-        except Exception as exc:
-            tracing.update_current_generation(level="ERROR", status_message=str(exc))
-            yield {"type": "error", "message": str(exc)}
+                )
+            contents.append(types.Content(role="user", parts=response_parts))
+    except Exception as exc:
+        yield {"type": "error", "message": str(exc)}

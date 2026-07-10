@@ -17,8 +17,7 @@ runs an autonomous coding agent with `CODEX_SANDBOX_MODE=danger-full-access` and
   `0.0.0.0:5173` with `allowedHosts: true`, and the CORS regex in `main.py:48`
   deliberately allows every `192.168.*`, `10.*`, and `172.16-31.*` origin. Anyone on
   your Wi-Fi can `POST /api/codex` and execute arbitrary commands on your Mac with
-  full filesystem access. The iOS wrapper makes this worse because it *requires* LAN
-  exposure.
+  full filesystem access.
   **Fix:** add a shared bearer token (env var, checked by FastAPI dependency + WS
   query param, sent by the frontend from `VITE_API_TOKEN`). One afternoon of work,
   closes the whole class.
@@ -43,20 +42,10 @@ runs an autonomous coding agent with `CODEX_SANDBOX_MODE=danger-full-access` and
 
 ## 2. P0 — Real bugs found in the code
 
-- **B1. `ensure_turn_gen` never sets `active_turn_gen` (`main.py:627-634`).**
-  Inside the closure, only `nonlocal turn_gen` is declared, so
-  `active_turn_gen = turn_gen` creates a *local* variable in `ensure_turn_gen` and
-  the outer `active_turn_gen` stays `None`. Consequence: the `finally` block at
-  `main.py:1091` (`tracing.end_observation(active_turn_gen, ...)`) is a no-op, so
-  voice turns aborted mid-stream leak unclosed Langfuse generations. Fix: add
-  `nonlocal active_turn_gen` to `ensure_turn_gen` (and note the later
-  `active_turn_gen = turn_gen`/`= None` assignments at lines 839/903/977 are fine
-  because `receive_gemini` declares them nonlocal).
-
 - **B2. Infinite sleep loop to "park" the session (`main.py:884-885`).**
   After `end_conversation`, the server does `while True: await asyncio.sleep(3600)`
   inside the receive task and relies on the *client* to close the socket. If the
-  client never does (iOS app killed, network drop without FIN), the task, the
+  client never does (browser closed, network drop without FIN), the task, the
   Gemini Live connection, and the websocket all leak until the process restarts.
   Fix: break out of the receive loop and let the normal teardown path
   (`asyncio.wait(FIRST_COMPLETED)` → cancel → `websocket.close()`) run, optionally
@@ -195,9 +184,8 @@ runs an autonomous coding agent with `CODEX_SANDBOX_MODE=danger-full-access` and
 - **R7. `speak()` truncates TTS to 500 chars mid-word** (`App.tsx:499`). Truncate at
   sentence boundary and say so.
 - **R8. Native `window.prompt`/`window.confirm` for rename/delete** (`App.tsx:1116-1132`)
-  — blocks the event loop, looks broken inside the Capacitor iOS shell (prompts get
-  suppressed). Replace with small in-app modals (AddProjectModal already sets the
-  pattern).
+  — blocks the event loop and behaves inconsistently across browsers. Replace with
+  small in-app modals (AddProjectModal already sets the pattern).
 - **R9. `transcribe` endpoint + `pendingAudioUrl`/`SILENT_WAV` plumbing appear to be
   vestiges of the pre-Live push-to-talk flow.** If nothing calls `/api/transcribe`,
   delete it and the autoplay-unlock machinery, or keep it and document it as the
@@ -283,8 +271,7 @@ the tool-call loop; the 20s status timer is a band-aid). Instead:
   has ended.
 - The Console "Actions" tab becomes the job monitor (it already renders
   running/done/failed — wire it to real jobs instead of UI-local state).
-- Pairs perfectly with the iOS wrapper: local push notification when a job finishes
-  while the phone is locked.
+- Add a local desktop notification when a background job finishes.
 
 ### F3: Persistent Codex threads across restarts
 

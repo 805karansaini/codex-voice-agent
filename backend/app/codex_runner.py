@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, cast
 
-from . import tracing
 from .settings import Settings, get_settings
 
 
@@ -183,8 +182,16 @@ def create_pre_codex_checkpoint(
 def _codex_modes(settings: Settings):
     from openai_codex import ApprovalMode, Sandbox
 
-    approval_mode = ApprovalMode.deny_all if settings.codex_approval_mode == "never" else ApprovalMode.auto_review
-    sandbox = Sandbox.full_access if settings.codex_sandbox_mode == "danger-full-access" else Sandbox.workspace_write
+    approval_mode = (
+        ApprovalMode.deny_all
+        if settings.codex_approval_mode == "never"
+        else ApprovalMode.auto_review
+    )
+    sandbox = (
+        Sandbox.full_access
+        if settings.codex_sandbox_mode == "danger-full-access"
+        else Sandbox.workspace_write
+    )
     return approval_mode, sandbox
 
 
@@ -321,7 +328,9 @@ async def _evict_idle_sessions_locked() -> list[_ThreadSession]:
     return stale
 
 
-async def _get_thread_session(workdir: str, settings: Settings, conversation_id: str | None = None) -> _ThreadSession:
+async def _get_thread_session(
+    workdir: str, settings: Settings, conversation_id: str | None = None
+) -> _ThreadSession:
     from openai_codex import AsyncCodex, CodexConfig
 
     if not conversation_id:
@@ -515,7 +524,12 @@ def _find_token_usage(value: Any) -> dict[str, int] | None:
         usage: dict[str, int] = {}
         for key, amount in value.items():
             normalized_key = str(key).replace("-", "_").lower()
-            if normalized_key in {"input_tokens", "output_tokens", "total_tokens", "cached_input_tokens"}:
+            if normalized_key in {
+                "input_tokens",
+                "output_tokens",
+                "total_tokens",
+                "cached_input_tokens",
+            }:
                 try:
                     usage[normalized_key] = int(amount)
                 except (TypeError, ValueError):
@@ -610,16 +624,6 @@ async def _stream_turn(
 ) -> AsyncIterator[dict[str, Any]]:
     parts: list[str] = []
     events: list[dict[str, Any]] = []
-    # Treat each Codex turn as a generation: it is an autonomous coding agent
-    # acting on the prompt. The full text response is the output; command/file
-    # activity is summarised in metadata.
-    codex_obs = tracing.start_observation(
-        "generation",
-        "codex-turn",
-        model="codex",
-        input=prompt,
-        metadata={"workdir": workdir},
-    )
     turn = await thread.turn(prompt)
     if cancel_token:
         cancel_token.bind_turn(turn)
@@ -650,18 +654,6 @@ async def _stream_turn(
                         item = _root_item(raw_item)
                         if getattr(item, "type", None) == "agentMessage":
                             final = str(getattr(item, "text", "") or "").strip()
-                tracing.end_observation(
-                    codex_obs,
-                    output=final or "Done.",
-                    metadata={
-                        "workdir": workdir,
-                        "status": status,
-                        "thread_id": getattr(thread, "id", None),
-                        "turn_id": getattr(turn, "id", None),
-                        "event_count": len(events),
-                    },
-                )
-                codex_obs = None
                 yield {
                     "type": "done",
                     "text": final or "Done.",
@@ -673,14 +665,12 @@ async def _stream_turn(
                 }
                 return
     except Exception as exc:
-        tracing.end_observation(
-            codex_obs, level="ERROR", status_message=str(exc), output=f"Error: {exc}"
-        )
-        codex_obs = None
-        yield {"type": "error", "message": str(exc), "events": [_strip_payload(e) for e in events[-200:]]}
+        yield {
+            "type": "error",
+            "message": str(exc),
+            "events": [_strip_payload(e) for e in events[-200:]],
+        }
     finally:
-        # Ensure the observation is closed even on cancellation / early return.
-        tracing.end_observation(codex_obs)
         if cancel_token:
             cancel_token.clear_turn(turn)
         if session:
@@ -688,14 +678,18 @@ async def _stream_turn(
             session.active_turn = None
 
 
-async def run_codex(prompt: str, workdir: str, settings: Settings, conversation_id: str | None = None) -> CodexRun:
+async def run_codex(
+    prompt: str, workdir: str, settings: Settings, conversation_id: str | None = None
+) -> CodexRun:
     final = ""
     resolved_workdir = str(resolve_workdir(workdir))
     thread_id = None
     turn_id = None
     status = None
     events: list[dict[str, Any]] = []
-    async for event in run_codex_stream(prompt, resolved_workdir, settings, conversation_id=conversation_id):
+    async for event in run_codex_stream(
+        prompt, resolved_workdir, settings, conversation_id=conversation_id
+    ):
         if event.get("type") == "codex_event":
             events.append(dict(event))
         elif event.get("type") == "done":
@@ -730,7 +724,9 @@ async def run_codex_stream(
     if conversation_id:
         session = await _get_thread_session(workdir, settings, conversation_id)
         async with session.lock:
-            async for item in _stream_turn(session.thread, prompt, session.workdir, cancel_token, session):
+            async for item in _stream_turn(
+                session.thread, prompt, session.workdir, cancel_token, session
+            ):
                 yield item
         return
 
@@ -752,7 +748,9 @@ async def run_codex_stream_with_timer(
     async def stream_reader():
         nonlocal done, latest_status
         try:
-            async for event in run_codex_stream(prompt, workdir, settings, cancel_token, conversation_id):
+            async for event in run_codex_stream(
+                prompt, workdir, settings, cancel_token, conversation_id
+            ):
                 if event.get("type") == "codex_event":
                     latest_status = str(event.get("summary") or latest_status)
                 await queue.put(event)
@@ -770,7 +768,13 @@ async def run_codex_stream_with_timer(
             await asyncio.sleep(_CODEX_STATUS_FIRST_DELAY_SECONDS)
             while not done:
                 elapsed = int(time.time() - start_time)
-                await queue.put({"type": "status", "message": f"{latest_status} (elapsed: {elapsed}s)", "elapsed": elapsed})
+                await queue.put(
+                    {
+                        "type": "status",
+                        "message": f"{latest_status} (elapsed: {elapsed}s)",
+                        "elapsed": elapsed,
+                    }
+                )
                 await asyncio.sleep(_CODEX_STATUS_REPEAT_SECONDS)
         except asyncio.CancelledError:
             pass

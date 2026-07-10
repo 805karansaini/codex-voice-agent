@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repo is a local voice app with a Python backend and a React frontend. Backend code lives in `backend/app`, with FastAPI routes, settings, history storage, Gemini integration, Codex orchestration, and tracing split into focused modules. Backend tests live in `tests/`. Frontend code lives in `frontend/src`, with hooks in `hooks`, UI in `components`, helpers in `utils`, and styles in `styles.css`. Frontend unit tests live in `frontend/tests`. Product notes and architecture references are in `PRODUCT_REVIEW.md`, `PRODUCT_PROGRESS.md`, and `docs/`.
+This repo is a local voice app with a Python backend and a React frontend. Backend code lives in `backend/app`, with FastAPI routes, settings, history storage, Gemini integration, and Codex orchestration split into focused modules. Backend tests live in `tests/`. Frontend code lives in `frontend/src`, with hooks in `hooks`, UI in `components`, helpers in `utils`, and styles in `styles.css`. Frontend unit tests live in `frontend/tests`. Product notes and architecture references are in `PRODUCT_REVIEW.md`, `PRODUCT_PROGRESS.md`, and `docs/`.
 
 ## Build, Test, and Development Commands
 
@@ -31,4 +31,4 @@ Recent commits use short, imperative summaries such as `Persist Codex thread map
 
 ## Security & Configuration Tips
 
-Copy `.env.example` to `.env` for local setup. Never commit API keys, Codex tokens, Langfuse secrets, local databases, logs, or generated data from `backend/data`. Keep Google GenAI SDK updates intentional because the Live API surface changes quickly.
+Copy `.env.example` to `.env` for local setup. Never commit API keys, Codex tokens, local databases, logs, or generated data from `backend/data`. Keep Google GenAI SDK updates intentional because the Live API surface changes quickly.

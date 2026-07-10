@@ -27,7 +27,6 @@ This file tracks what has been completed from the product review and what still 
 
 ### P0 Bugs
 
-- [x] Fixed the unclosed voice tracing generation issue.
   - Commit: `4a99bc4` - Harden local agent access and fix review bugs
   - Covers review item: B1
 - [x] Stopped the live session from parking forever after conversation end.
@@ -339,10 +338,10 @@ This file tracks what has been completed from the product review and what still 
 - [x] Updated README around auth, data storage, and removed stale transcription references.
   - Commits: `4a99bc4`, `c6950ee`, `fbc9944`, `cc3f545`
   - Partially covers review item: Q8
-- [x] Archived loose planning notes and ignored generated local app artifacts.
+- [x] Archived loose planning notes and ignored generated local artifacts.
   - Commit: Archive planning notes
   - Partially covers review items: Q4, Q8
-  - Notes: `HANDOVER.md`, `REALTIME_VOICE_AGENT_PLAN.md`, and `frontend-updated.md` now live under `docs/archive/`; generated iOS app files are ignored.
+  - Notes: `HANDOVER.md`, `REALTIME_VOICE_AGENT_PLAN.md`, and `frontend-updated.md` now live under `docs/archive/`.
 - [x] Documented the project docs layout and archive decision.
   - Commit: `73bbabd` - Document project docs layout
   - Covers remaining review items: Q4, Q8
@@ -539,7 +538,6 @@ This file tracks what has been completed from the product review and what still 
 | 2026-06-14 | `2c3b85c` | Extract live handler helpers |
 | 2026-06-14 | `7b093cb` | Prefer backend project and chat lists |
 | 2026-06-14 | `d806145` | Archive planning notes |
-| 2026-06-14 | `4b299eb` | Add Capacitor frontend config |
 | 2026-06-14 | `5b070a9` | Add type-aware frontend linting |
 | 2026-06-14 | `8a54a26` | Update product progress tracker |
 | 2026-06-14 | `2edb10f` | Refresh product progress log |

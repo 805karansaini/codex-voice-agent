@@ -21,5 +21,4 @@ backend/data/*.jsonl*
 frontend-verification.png
 
 Code-Companion-Pro/
-frontend/ios/
 docs/

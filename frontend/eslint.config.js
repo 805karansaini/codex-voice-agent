@@ -35,7 +35,7 @@ const nodeGlobals = {
 
 export default tseslint.config(
   {
-    ignores: ["dist", "node_modules", "ios"],
+    ignores: ["dist", "node_modules"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -54,7 +54,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/**/*.{ts,tsx}", "vite.config.ts", "capacitor.config.ts"],
+    files: ["src/**/*.{ts,tsx}", "vite.config.ts"],
     extends: [tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       ecmaVersion: 2020,
