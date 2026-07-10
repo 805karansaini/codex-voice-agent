@@ -30,7 +30,7 @@ export default function CodexTimeline({
     <div className="codex-timeline">
       <div className="codex-timeline-title">
         <Zap className="h-3 w-3" />
-        <span>Codex turn</span>
+        <span>Vodex turn</span>
         {status && <span className="codex-timeline-status">{status}</span>}
       </div>
       <div className="codex-timeline-list">

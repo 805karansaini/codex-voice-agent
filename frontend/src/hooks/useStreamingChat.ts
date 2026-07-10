@@ -45,7 +45,7 @@ export function useStreamingChat({
   const streamCodex = useCallback(
     async (task: string, project: Project, chatId: string, userMessageId: string) => {
       const actionId = addAction({
-        title: "Background Codex task",
+        title: "Background Vodex task",
         status: "running",
         detail: task,
         workdir: project.path,
@@ -54,7 +54,7 @@ export function useStreamingChat({
       store.appendMessage(chatId, {
         id: assistantId,
         role: "assistant",
-        text: "Started a background Codex task. I will update this message when it finishes.",
+        text: "Started a background Vodex task. I will update this message when it finishes.",
         usedCodex: true,
         streaming: true,
         workdir: project.path,
@@ -86,7 +86,7 @@ export function useStreamingChat({
             if (job.status === "queued" || job.status === "running") {
               const updates = job.progress_updates || [];
               const progressText =
-                job.latest_status || updates[updates.length - 1] || "Codex is still working.";
+                job.latest_status || updates[updates.length - 1] || "Vodex is still working.";
               store.updateMessage(chatId, assistantId, (message) => ({
                 ...message,
                 text: progressText,
@@ -104,7 +104,7 @@ export function useStreamingChat({
               return;
             }
             if (job.status === "done") {
-              const finalText = job.result || "Codex background task completed.";
+              const finalText = job.result || "Vodex background task completed.";
               store.updateMessage(chatId, assistantId, (message) => ({
                 ...message,
                 text: finalText,
@@ -125,7 +125,7 @@ export function useStreamingChat({
               speak(finalText);
               return;
             }
-            const message = job.error || "Codex background task failed.";
+            const message = job.error || "Vodex background task failed.";
             store.updateMessage(chatId, assistantId, (current) => ({
               ...current,
               streaming: false,
@@ -137,7 +137,7 @@ export function useStreamingChat({
             });
             setError(message);
           } catch (err) {
-            const message = err instanceof Error ? err.message : "Failed to poll Codex job";
+            const message = err instanceof Error ? err.message : "Failed to poll Vodex job";
             updateAction(actionId, {
               status: "failed",
               streamingResponse: message,
@@ -150,11 +150,11 @@ export function useStreamingChat({
         store.updateMessage(chatId, assistantId, (message) => ({
           ...message,
           streaming: false,
-          text: message.text || "Codex request failed.",
+          text: message.text || "Vodex request failed.",
         }));
         updateAction(actionId, {
           status: "failed",
-          streamingResponse: err instanceof Error ? err.message : "Codex request failed",
+          streamingResponse: err instanceof Error ? err.message : "Vodex request failed",
         });
         throw err;
       } finally {
@@ -222,7 +222,7 @@ export function useStreamingChat({
           } else if (evt.type === "tool_call") {
             usedCodex = true;
             activeActionId = addAction({
-              title: "Agent handoff to Codex",
+              title: "Agent handoff to Vodex",
               status: "running",
               detail: String(evt.task || "Local task"),
               streamingResponse: "",

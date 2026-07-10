@@ -52,7 +52,7 @@ export default function ConsoleStatsFooter({ messages }: ConsoleStatsFooterProps
         </div>
       </div>
       <div className="px-3 py-1.5 border-l border-line-soft">
-        <div className="label text-[9px]">codex usage</div>
+        <div className="label text-[9px]">vodex usage</div>
         <div className="mt-0.5 flex items-baseline gap-0.5">
           <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
             {codexTokenTotal(messages).toLocaleString()}

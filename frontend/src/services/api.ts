@@ -278,12 +278,12 @@ export async function enqueueCodexJob(options: StreamOptions): Promise<CodexJob>
   return apiJson(
     "/api/codex/jobs",
     jsonPost(streamPayload(options)),
-    "Failed to enqueue Codex job",
+    "Failed to enqueue Vodex job",
   );
 }
 
 export async function fetchCodexJob(jobId: string): Promise<CodexJob> {
-  return apiJson(`/api/codex/jobs/${encodeURIComponent(jobId)}`, {}, "Failed to fetch Codex job");
+  return apiJson(`/api/codex/jobs/${encodeURIComponent(jobId)}`, {}, "Failed to fetch Vodex job");
 }
 
 export async function postChatStream(

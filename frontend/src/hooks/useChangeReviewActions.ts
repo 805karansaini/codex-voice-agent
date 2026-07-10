@@ -15,8 +15,8 @@ interface UseChangeReviewActionsOptions {
 
 const commitMessageForChangeReview = (artifact: ChatArtifact) => {
   const files = artifact.changed_files || [];
-  if (files.length === 1) return `Apply Codex changes to ${files[0]}`;
-  return `Apply Codex changes to ${files.length} files`;
+  if (files.length === 1) return `Apply Vodex changes to ${files[0]}`;
+  return `Apply Vodex changes to ${files.length} files`;
 };
 
 export function useChangeReviewActions({
@@ -33,7 +33,7 @@ export function useChangeReviewActions({
         return;
       }
       const actionId = addAction({
-        title: "Revert Codex changes",
+        title: "Revert Vodex changes",
         status: "running",
         detail: files.join(", "),
         workdir: artifact.workdir,
@@ -62,7 +62,7 @@ export function useChangeReviewActions({
       }
       const message = commitMessageForChangeReview(artifact);
       const actionId = addAction({
-        title: "Commit Codex changes",
+        title: "Commit Vodex changes",
         status: "running",
         detail: message,
         workdir: artifact.workdir,
@@ -86,7 +86,7 @@ export function useChangeReviewActions({
     (artifact: ChatArtifact) => {
       const files = artifact.changed_files || [];
       setConfirmDialog({
-        title: "Commit Codex changes?",
+        title: "Commit Vodex changes?",
         body: `Stage and commit ${files.length} changed file${files.length === 1 ? "" : "s"} from this turn. Other local files will not be staged.`,
         actionLabel: "Commit",
         onConfirm: () => void handleCommitChangeReview(artifact),
@@ -99,7 +99,7 @@ export function useChangeReviewActions({
     (artifact: ChatArtifact) => {
       const files = artifact.changed_files || [];
       setConfirmDialog({
-        title: "Revert Codex changes?",
+        title: "Revert Vodex changes?",
         body: `Restore ${files.length} changed file${files.length === 1 ? "" : "s"} from this turn back to HEAD. Untracked files in this change set will be removed.`,
         actionLabel: "Revert",
         danger: true,

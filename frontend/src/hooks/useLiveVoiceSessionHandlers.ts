@@ -83,7 +83,7 @@ export function useLiveVoiceSessionHandlers({
       if (activeVoiceJobIdRef.current) {
         updateAction(activeVoiceActionIdRef.current, {
           status: "running",
-          detail: "Voice session closed. Codex is still running.",
+          detail: "Voice session closed. Vodex is still running.",
         });
         return;
       }
@@ -249,7 +249,7 @@ export function useLiveVoiceSessionHandlers({
           store.appendMessage(ctx.chatId, {
             id: codexMessageId,
             role: "assistant",
-            text: task || "Codex is starting the local work.",
+            text: task || "Vodex is starting the local work.",
             usedCodex: true,
             streaming: true,
             workdir: workdir || ctx.project.path,
@@ -267,7 +267,7 @@ export function useLiveVoiceSessionHandlers({
           }));
         }
         const id = addAction({
-          title: "Voice handoff to Codex",
+          title: "Voice handoff to Vodex",
           status: "running",
           detail: task,
           streamingResponse: "",
@@ -279,8 +279,8 @@ export function useLiveVoiceSessionHandlers({
           jobId: "",
           chatId: ctx.chatId,
           status: "running",
-          task: task || "Codex is starting the local work.",
-          message: task || "Codex is starting the local work.",
+          task: task || "Vodex is starting the local work.",
+          message: task || "Vodex is starting the local work.",
           startedAt: Date.now(),
           workdir: workdir || ctx.project.path,
         });
@@ -313,10 +313,10 @@ export function useLiveVoiceSessionHandlers({
           streaming: false,
           text:
             m.text ||
-            "Codex finished the local work. Gemini reconnected before reading the result, so the next voice session will include it.",
+            "Vodex finished the local work. Gemini reconnected before reading the result, so the next voice session will include it.",
         }));
         addAction({
-          title: "Gemini missed Codex result",
+          title: "Gemini missed Vodex result",
           status: "done",
           detail: displayMessage,
           streamingResponse: displayMessage,
@@ -331,7 +331,7 @@ export function useLiveVoiceSessionHandlers({
           streaming: false,
           text:
             m.text ||
-            "Codex finished the local work. The full output is available below, but Gemini did not finish a final response.",
+            "Vodex finished the local work. The full output is available below, but Gemini did not finish a final response.",
         }));
       },
       onCodexEvent: (event: unknown) => {
@@ -374,7 +374,7 @@ export function useLiveVoiceSessionHandlers({
           if (!ctx) return;
           const codexMessageId =
             activeCodexMsgIdRef.current || activeAssistantVoiceMsgIdRef.current;
-          const task = stringValue(details?.task, summary) || "Codex is running the local task.";
+          const task = stringValue(details?.task, summary) || "Vodex is running the local task.";
           activeVoiceJobIdRef.current = backgroundJobId;
           updateAction(activeVoiceActionIdRef.current, {
             status: "running",
@@ -427,7 +427,7 @@ export function useLiveVoiceSessionHandlers({
               if (activeVoiceJobIdRef.current !== backgroundJobId) return;
               const updates = job.progress_updates || [];
               const progressText =
-                job.latest_status || updates[updates.length - 1] || "Codex is still working.";
+                job.latest_status || updates[updates.length - 1] || "Vodex is still working.";
               if (job.status === "queued" || job.status === "running") {
                 updateCodexMessage({
                   text: progressText,
@@ -454,7 +454,7 @@ export function useLiveVoiceSessionHandlers({
                 return;
               }
               if (job.status === "done") {
-                const finalText = job.result || "Codex background task completed.";
+                const finalText = job.result || "Vodex background task completed.";
                 updateCodexMessage({
                   text: finalText,
                   streaming: false,
@@ -477,7 +477,7 @@ export function useLiveVoiceSessionHandlers({
                 setActiveCodexJob(null);
                 return;
               }
-              const failureText = job.error || "Codex background task failed.";
+              const failureText = job.error || "Vodex background task failed.";
               updateCodexMessage({
                 text: failureText,
                 streaming: false,
@@ -496,7 +496,7 @@ export function useLiveVoiceSessionHandlers({
               setActiveCodexJob(null);
               onBackgroundJobSettled?.();
             } catch (err) {
-              const message = err instanceof Error ? err.message : "Failed to poll Codex job";
+              const message = err instanceof Error ? err.message : "Failed to poll Vodex job";
               updateAction(actionId, {
                 status: "failed",
                 streamingResponse: message,
@@ -537,7 +537,7 @@ export function useLiveVoiceSessionHandlers({
             store.appendMessage(ctx.chatId, {
               id,
               role: "assistant",
-              text: "Codex finished the local work. The full output is available below while Gemini prepares the final response.",
+              text: "Vodex finished the local work. The full output is available below while Gemini prepares the final response.",
               usedCodex: true,
               streaming: true,
               workdir,
@@ -561,7 +561,7 @@ export function useLiveVoiceSessionHandlers({
           onBackgroundJobSettled?.();
         } else {
           addAction({
-            title: "Voice handoff to Codex",
+            title: "Voice handoff to Vodex",
             status: "done",
             detail: summary,
             streamingResponse: summary,

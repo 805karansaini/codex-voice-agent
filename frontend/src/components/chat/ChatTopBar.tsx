@@ -60,7 +60,7 @@ export default function ChatTopBar({
                 mode === item ? "bg-surface-3 text-fg" : "text-fg-dim hover:text-fg",
               )}
             >
-              {item}
+              {item === "codex" ? "vodex" : item}
             </button>
           ))}
         </div>

@@ -114,7 +114,7 @@ export default function AppTitleBar({
         <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent/15 text-accent">
           <Sparkles className="h-3.5 w-3.5" />
         </div>
-        <span className="text-[13px] font-semibold tracking-tight">Codex</span>
+        <span className="text-[13px] font-semibold tracking-tight">Vodex</span>
         <span className="mx-1 text-fg-dim">/</span>
         <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted hover:bg-surface-2 hover:text-fg">
           <Folder className="h-3.5 w-3.5 text-accent/80" />

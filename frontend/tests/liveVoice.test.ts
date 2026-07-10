@@ -11,8 +11,8 @@ import {
 
 test("liveVoiceDeliveryFailureMessage preserves backend detail", () => {
   assert.equal(
-    liveVoiceDeliveryFailureMessage("Codex completed, but Gemini Live closed first."),
-    "Codex completed, but Gemini Live closed first.",
+    liveVoiceDeliveryFailureMessage("Vodex completed, but Gemini Live closed first."),
+    "Vodex completed, but Gemini Live closed first.",
   );
 });
 

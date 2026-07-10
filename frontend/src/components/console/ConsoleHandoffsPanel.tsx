@@ -16,7 +16,7 @@ export default function ConsoleHandoffsPanel({ handoffs }: ConsoleHandoffsPanelP
     >
       {handoffs.length === 0 ? (
         <div className="text-center py-12 text-fg-dim italic">
-          No handoffs between Agent and Codex.
+          No handoffs between Agent and Vodex.
         </div>
       ) : (
         handoffs.map((handoff, index) => (
@@ -24,7 +24,7 @@ export default function ConsoleHandoffsPanel({ handoffs }: ConsoleHandoffsPanelP
             <div className="flex items-center gap-2 font-mono text-[10.5px]">
               <span className="text-fg-muted">agent</span>
               <ChevronRight className="h-3 w-3 text-accent" />
-              <span className="text-accent">codex</span>
+              <span className="text-accent">vodex</span>
               <span className="ml-auto text-fg-dim font-semibold">#{handoffs.length - index}</span>
             </div>
             <p className="mt-1.5 text-[11.5px] text-fg-muted leading-relaxed whitespace-pre-wrap">

@@ -29,7 +29,7 @@ export function useChatDisplayState({
     ? Math.max(0, Math.floor((Date.now() - activeCodexJob.startedAt) / 1000))
     : 0;
   const voiceTitle = activeCodexJob
-    ? `Codex is working (${formatElapsed(codexElapsed)})`
+    ? `Vodex is working (${formatElapsed(codexElapsed)})`
     : liveVoice.state === "connecting"
       ? "Connecting…"
       : liveVoice.state === "reconnecting"
@@ -39,7 +39,7 @@ export function useChatDisplayState({
           : liveVoice.state === "thinking"
             ? "Gemini is responding"
             : liveVoice.state === "working"
-              ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
+              ? `Vodex is working (${formatElapsed(liveVoice.elapsed)})`
               : liveVoice.state === "error"
                 ? "Voice needs attention"
                 : "Live voice";
