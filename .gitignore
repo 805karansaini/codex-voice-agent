@@ -17,8 +17,9 @@ backend/data/projects.json
 backend/data/chats.json
 backend/data/console.json
 backend/data/*.sqlite3
-backend/data/*.jsonl
+backend/data/*.jsonl*
 frontend-verification.png
 
 Code-Companion-Pro/
 frontend/ios/
+docs/
