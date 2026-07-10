@@ -1,15 +1,15 @@
 {
-  "name": "codex-voice-agent",
+  "name": "vodex",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "node scripts/dev-network.mjs",
     "build": "tsc && vite build",
     "lint": "eslint .",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{ts,js,json}\"",
     "format": "prettier --write .",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
   "dependencies": {
     "@capacitor/core": "^8.4.0",

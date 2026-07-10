@@ -6,7 +6,7 @@ import basicSsl from "@vitejs/plugin-basic-ssl";
 export default defineConfig({
   plugins: [react(), tailwindcss(), basicSsl()],
   server: {
-    host: "0.0.0.0",
+    host: process.env.FRONTEND_HOST ?? "127.0.0.1",
     port: 5173,
     allowedHosts: true,
     proxy: {
@@ -18,7 +18,7 @@ export default defineConfig({
     },
   },
   preview: {
-    host: "0.0.0.0",
-    port: 5173,
+    host: process.env.FRONTEND_HOST ?? "127.0.0.1",
+    port: 4173,
   },
 });

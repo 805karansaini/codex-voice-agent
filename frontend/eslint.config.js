@@ -28,6 +28,11 @@ const browserGlobals = {
   window: "readonly",
 };
 
+const nodeGlobals = {
+  console: "readonly",
+  process: "readonly",
+};
+
 export default tseslint.config(
   {
     ignores: ["dist", "node_modules", "ios"],
@@ -41,6 +46,12 @@ export default tseslint.config(
   {
     files: ["tests/**/*.ts"],
     extends: [tseslint.configs.disableTypeChecked],
+  },
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: nodeGlobals,
+    },
   },
   {
     files: ["src/**/*.{ts,tsx}", "vite.config.ts", "capacitor.config.ts"],
