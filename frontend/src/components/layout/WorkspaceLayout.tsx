@@ -24,176 +24,206 @@ import { useEffect, useState } from "react";
 type ChatMode = "agent" | "codex";
 
 export type WorkspaceLayoutProps = {
-  isMobile: boolean;
-  mobileView: MobileView;
-  railOpen: boolean;
-  panelOpen: boolean;
-  filePanelOpen: boolean;
-  railWidth: number;
-  panelWidth: number;
-  fileViewerWidth: number;
-  theme: "dark" | "light";
-  activityView: "chats" | "files";
-  projects: Project[];
-  chats: Record<string, Chat[]>;
-  activeProjectId: string | null;
-  activeProject?: Project | null;
-  activeChatId: string | null;
-  activeChatTitle?: string;
-  activeChatByProject: Record<string, string>;
-  expandedProjects: Record<string, boolean>;
-  visibleChatsCount: Record<string, number>;
-  messages: Message[];
-  mode: ChatMode;
-  busy: boolean;
-  suggestions: string[];
-  messageEndRef: RefObject<HTMLDivElement | null>;
-  liveStatusText: string;
-  streamingStatusText: string;
-  voiceTitle: string;
-  voiceMessage: string;
-  voiceContextLabel: string;
-  voiceTranscriptPreview: string;
-  voiceMuted: boolean;
-  voiceSupported: boolean;
-  voiceActive: boolean;
-  codexActive: boolean;
-  voiceInputMode: VoiceInputMode;
-  input: string;
-  error: string;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
-  status: string;
-  activeConsoleTab: ConsoleTabId;
-  debugEntries: DebugEntry[];
-  actions: ActionEntry[];
-  handoffs: Handoff[];
-  doctorChecks: DoctorCheck[];
-  voices: SpeechSynthesisVoice[];
-  selectedVoiceURI: string;
-  pendingAudioUrl: string;
-  onNewProject: () => void;
-  onActivityViewChange: (view: "chats" | "files") => void;
-  onToggleTheme: () => void;
-  onOpenConsoleSettings: () => void;
-  onToggleProject: (projectId: string, expanded: boolean) => void;
-  onCreateChat: (projectId: string) => void;
-  onRemoveProject: (projectId: string, name: string) => void;
-  onSelectChat: (projectId: string, chatId: string) => void;
-  onRenameChat: (projectId: string, chatId: string, title: string) => void;
-  onRemoveChat: (projectId: string, chatId: string) => void;
-  onShowMoreChats: (projectId: string) => void;
-  onOpenVoiceSettings: () => void;
-  onChatKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
-  onStartRailDrag: (event: MouseEvent) => void;
-  onStartPanelDrag: (event: MouseEvent) => void;
-  onStartFileViewerDrag: (event: MouseEvent) => void;
-  onModeChange: (mode: ChatMode) => void;
-  onExportChat: () => void;
-  onToggleVoice: () => void;
-  onSuggestion: (suggestion: string) => void;
-  onCommitChangeReview: (artifact: ChatArtifact) => void;
-  onRevertChangeReview: (artifact: ChatArtifact) => void;
-  onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
-  onSubmit: () => void;
-  onCancelTask: () => void;
-  onToggleMute: () => void;
-  onHoldToTalk: () => void;
-  onReleaseToMute: () => void;
-  onHideConsole: () => void;
-  onBackToChat: () => void;
-  onClearThread: () => void;
-  onConsoleTabChange: (tab: ConsoleTabId) => void;
-  onRefreshDoctor: () => void;
-  onSelectedVoiceChange: (voiceURI: string) => void;
-  onVoiceInputModeChange: (mode: VoiceInputMode) => void;
-  onPlayResponseAudio: (audioUrl: string) => void;
+  layout: {
+    isMobile: boolean;
+    mobileView: MobileView;
+    railOpen: boolean;
+    panelOpen: boolean;
+    filePanelOpen: boolean;
+    railWidth: number;
+    panelWidth: number;
+    fileViewerWidth: number;
+    theme: "dark" | "light";
+    activityView: "chats" | "files";
+  };
+  workspace: {
+    projects: Project[];
+    chats: Record<string, Chat[]>;
+    activeProjectId: string | null;
+    activeProject?: Project | null;
+    activeChatId: string | null;
+    activeChatTitle?: string;
+    activeChatByProject: Record<string, string>;
+    expandedProjects: Record<string, boolean>;
+    visibleChatsCount: Record<string, number>;
+  };
+  chat: {
+    messages: Message[];
+    mode: ChatMode;
+    busy: boolean;
+    suggestions: string[];
+    messageEndRef: RefObject<HTMLDivElement | null>;
+    liveStatusText: string;
+    streamingStatusText: string;
+    input: string;
+    error: string;
+    textareaRef: RefObject<HTMLTextAreaElement | null>;
+  };
+  voice: {
+    title: string;
+    message: string;
+    contextLabel: string;
+    transcriptPreview: string;
+    muted: boolean;
+    supported: boolean;
+    active: boolean;
+    codexActive: boolean;
+    inputMode: VoiceInputMode;
+  };
+  console: {
+    status: string;
+    activeTab: ConsoleTabId;
+    debugEntries: DebugEntry[];
+    actions: ActionEntry[];
+    handoffs: Handoff[];
+    doctorChecks: DoctorCheck[];
+    voices: SpeechSynthesisVoice[];
+    selectedVoiceURI: string;
+    pendingAudioUrl: string;
+  };
+  handlers: {
+    onNewProject: () => void;
+    onActivityViewChange: (view: "chats" | "files") => void;
+    onToggleTheme: () => void;
+    onOpenConsoleSettings: () => void;
+    onToggleProject: (projectId: string, expanded: boolean) => void;
+    onCreateChat: (projectId: string) => void;
+    onRemoveProject: (projectId: string, name: string) => void;
+    onSelectChat: (projectId: string, chatId: string) => void;
+    onRenameChat: (projectId: string, chatId: string, title: string) => void;
+    onRemoveChat: (projectId: string, chatId: string) => void;
+    onShowMoreChats: (projectId: string) => void;
+    onOpenVoiceSettings: () => void;
+    onChatKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+    onStartRailDrag: (event: MouseEvent) => void;
+    onStartPanelDrag: (event: MouseEvent) => void;
+    onStartFileViewerDrag: (event: MouseEvent) => void;
+    onModeChange: (mode: ChatMode) => void;
+    onExportChat: () => void;
+    onToggleVoice: () => void;
+    onSuggestion: (suggestion: string) => void;
+    onCommitChangeReview: (artifact: ChatArtifact) => void;
+    onRevertChangeReview: (artifact: ChatArtifact) => void;
+    onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
+    onSubmit: () => void;
+    onCancelTask: () => void;
+    onToggleMute: () => void;
+    onHoldToTalk: () => void;
+    onReleaseToMute: () => void;
+    onHideConsole: () => void;
+    onBackToChat: () => void;
+    onClearThread: () => void;
+    onConsoleTabChange: (tab: ConsoleTabId) => void;
+    onRefreshDoctor: () => void;
+    onSelectedVoiceChange: (voiceURI: string) => void;
+    onVoiceInputModeChange: (mode: VoiceInputMode) => void;
+    onPlayResponseAudio: (audioUrl: string) => void;
+  };
 };
 
 export default function WorkspaceLayout({
-  isMobile,
-  mobileView,
-  railOpen,
-  panelOpen,
-  filePanelOpen,
-  railWidth,
-  panelWidth,
-  fileViewerWidth,
-  theme,
-  activityView,
-  projects,
-  chats,
-  activeProjectId,
-  activeProject,
-  activeChatId,
-  activeChatTitle,
-  activeChatByProject,
-  expandedProjects,
-  visibleChatsCount,
-  messages,
-  mode,
-  busy,
-  suggestions,
-  messageEndRef,
-  liveStatusText,
-  streamingStatusText,
-  voiceTitle,
-  voiceMessage,
-  voiceContextLabel,
-  voiceTranscriptPreview,
-  voiceMuted,
-  voiceSupported,
-  voiceActive,
-  codexActive,
-  voiceInputMode,
-  input,
-  error,
-  textareaRef,
-  status,
-  activeConsoleTab,
-  debugEntries,
-  actions,
-  handoffs,
-  doctorChecks,
-  voices,
-  selectedVoiceURI,
-  pendingAudioUrl,
-  onNewProject,
-  onActivityViewChange,
-  onToggleTheme,
-  onOpenConsoleSettings,
-  onToggleProject,
-  onCreateChat,
-  onRemoveProject,
-  onSelectChat,
-  onRenameChat,
-  onRemoveChat,
-  onShowMoreChats,
-  onOpenVoiceSettings,
-  onChatKeyDown,
-  onStartRailDrag,
-  onStartPanelDrag,
-  onStartFileViewerDrag,
-  onModeChange,
-  onExportChat,
-  onToggleVoice,
-  onSuggestion,
-  onCommitChangeReview,
-  onRevertChangeReview,
-  onInputChange,
-  onSubmit,
-  onCancelTask,
-  onToggleMute,
-  onHoldToTalk,
-  onReleaseToMute,
-  onHideConsole,
-  onBackToChat,
-  onClearThread,
-  onConsoleTabChange,
-  onRefreshDoctor,
-  onSelectedVoiceChange,
-  onVoiceInputModeChange,
-  onPlayResponseAudio,
+  layout,
+  workspace,
+  chat,
+  voice,
+  console,
+  handlers,
 }: WorkspaceLayoutProps) {
+  const {
+    isMobile,
+    mobileView,
+    railOpen,
+    panelOpen,
+    filePanelOpen,
+    railWidth,
+    panelWidth,
+    fileViewerWidth,
+    theme,
+    activityView,
+  } = layout;
+  const {
+    projects,
+    chats,
+    activeProjectId,
+    activeProject,
+    activeChatId,
+    activeChatTitle,
+    activeChatByProject,
+    expandedProjects,
+    visibleChatsCount,
+  } = workspace;
+  const {
+    messages,
+    mode,
+    busy,
+    suggestions,
+    messageEndRef,
+    liveStatusText,
+    streamingStatusText,
+    input,
+    error,
+    textareaRef,
+  } = chat;
+  const {
+    title: voiceTitle,
+    message: voiceMessage,
+    contextLabel: voiceContextLabel,
+    transcriptPreview: voiceTranscriptPreview,
+    muted: voiceMuted,
+    supported: voiceSupported,
+    active: voiceActive,
+    codexActive,
+    inputMode: voiceInputMode,
+  } = voice;
+  const {
+    status,
+    activeTab: activeConsoleTab,
+    debugEntries,
+    actions,
+    handoffs,
+    doctorChecks,
+    voices,
+    selectedVoiceURI,
+    pendingAudioUrl,
+  } = console;
+  const {
+    onNewProject,
+    onActivityViewChange,
+    onToggleTheme,
+    onOpenConsoleSettings,
+    onToggleProject,
+    onCreateChat,
+    onRemoveProject,
+    onSelectChat,
+    onRenameChat,
+    onRemoveChat,
+    onShowMoreChats,
+    onOpenVoiceSettings,
+    onChatKeyDown,
+    onStartRailDrag,
+    onStartPanelDrag,
+    onStartFileViewerDrag,
+    onModeChange,
+    onExportChat,
+    onToggleVoice,
+    onSuggestion,
+    onCommitChangeReview,
+    onRevertChangeReview,
+    onInputChange,
+    onSubmit,
+    onCancelTask,
+    onToggleMute,
+    onHoldToTalk,
+    onReleaseToMute,
+    onHideConsole,
+    onBackToChat,
+    onClearThread,
+    onConsoleTabChange,
+    onRefreshDoctor,
+    onSelectedVoiceChange,
+    onVoiceInputModeChange,
+    onPlayResponseAudio,
+  } = handlers;
   const [openFilePath, setOpenFilePath] = useState("");
 
   useEffect(() => {

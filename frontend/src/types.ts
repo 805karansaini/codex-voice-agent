@@ -91,13 +91,6 @@ export type Chat = {
   createdAt: number;
 };
 
-export type AgentResponse = {
-  reply?: string;
-  tool_calls?: unknown[];
-  workdir?: string;
-  audio_data_url?: string | null;
-};
-
 export type HistoryRow = {
   id: string;
   role: Role;

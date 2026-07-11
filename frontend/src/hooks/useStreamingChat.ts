@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 
 import * as api from "../services/api";
-import type { ActionEntry, ChatArtifact, CodexTimelineEvent, Project } from "../types";
+import { watchCodexJob } from "../services/codexJobs";
+import type { ActionEntry, CodexTimelineEvent, Project } from "../types";
 import { appendArtifacts } from "../utils/artifacts";
 import { readSseStream } from "../utils/sse";
 import type { useProjectStore } from "./useProjectStore";
@@ -80,72 +81,56 @@ export function useStreamingChat({
           workdir: queued.workdir || project.path,
         });
 
-        const pollJob = async () => {
-          try {
-            const job = await api.fetchCodexJob(queued.id);
-            if (job.status === "queued" || job.status === "running") {
-              const updates = job.progress_updates || [];
-              const progressText =
-                job.latest_status || updates[updates.length - 1] || "Vodex is still working.";
-              store.updateMessage(chatId, assistantId, (message) => ({
-                ...message,
-                text: progressText,
-                codexEvents: job.codex_events || message.codexEvents || [],
-                codexStatus: job.codex_status || message.codexStatus,
-                codexTurnId: job.codex_turn_id || message.codexTurnId,
-                codexThreadId: job.codex_thread_id || message.codexThreadId,
-              }));
-              updateAction(actionId, {
-                status: "running",
-                streamingResponse: progressText,
-                workdir: job.workdir || project.path,
-              });
-              window.setTimeout(() => void pollJob(), 1500);
-              return;
-            }
-            if (job.status === "done") {
-              const finalText = job.result || "Vodex background task completed.";
-              store.updateMessage(chatId, assistantId, (message) => ({
-                ...message,
-                text: finalText,
-                streaming: false,
-                workdir: job.workdir,
-                codexEvents: job.codex_events || message.codexEvents || [],
-                codexStatus: job.codex_status || message.codexStatus,
-                codexTurnId: job.codex_turn_id || message.codexTurnId,
-                codexThreadId: job.codex_thread_id || message.codexThreadId,
-                artifacts: appendArtifacts(message.artifacts, ...(job.artifacts || [])),
-              }));
-              updateAction(actionId, {
-                status: "done",
-                streamingResponse: finalText,
-                workdir: job.workdir || project.path,
-              });
-              addHandoff("background_codex", finalText.slice(0, 160));
-              speak(finalText);
-              return;
-            }
-            const message = job.error || "Vodex background task failed.";
+        void watchCodexJob(queued.id, {
+          onProgress: (job, progressText) => {
+            store.updateMessage(chatId, assistantId, (current) => ({
+              ...current,
+              text: progressText,
+              codexEvents: job.codex_events || current.codexEvents || [],
+              codexStatus: job.codex_status || current.codexStatus,
+              codexTurnId: job.codex_turn_id || current.codexTurnId,
+              codexThreadId: job.codex_thread_id || current.codexThreadId,
+            }));
+            updateAction(actionId, {
+              status: "running",
+              streamingResponse: progressText,
+              workdir: job.workdir || project.path,
+            });
+          },
+          onDone: (job, finalText) => {
+            store.updateMessage(chatId, assistantId, (message) => ({
+              ...message,
+              text: finalText,
+              streaming: false,
+              workdir: job.workdir,
+              codexEvents: job.codex_events || message.codexEvents || [],
+              codexStatus: job.codex_status || message.codexStatus,
+              codexTurnId: job.codex_turn_id || message.codexTurnId,
+              codexThreadId: job.codex_thread_id || message.codexThreadId,
+              artifacts: appendArtifacts(message.artifacts, ...(job.artifacts || [])),
+            }));
+            updateAction(actionId, {
+              status: "done",
+              streamingResponse: finalText,
+              workdir: job.workdir || project.path,
+            });
+            addHandoff("background_codex", finalText.slice(0, 160));
+            speak(finalText);
+          },
+          onFailed: (_job, message) => {
             store.updateMessage(chatId, assistantId, (current) => ({
               ...current,
               streaming: false,
               text: message,
             }));
-            updateAction(actionId, {
-              status: "failed",
-              streamingResponse: message,
-            });
+            updateAction(actionId, { status: "failed", streamingResponse: message });
             setError(message);
-          } catch (err) {
-            const message = err instanceof Error ? err.message : "Failed to poll Vodex job";
-            updateAction(actionId, {
-              status: "failed",
-              streamingResponse: message,
-            });
+          },
+          onError: (message) => {
+            updateAction(actionId, { status: "failed", streamingResponse: message });
             setError(message);
-          }
-        };
-        window.setTimeout(() => void pollJob(), 1000);
+          },
+        });
       } catch (err) {
         store.updateMessage(chatId, assistantId, (message) => ({
           ...message,
@@ -193,18 +178,22 @@ export function useStreamingChat({
         );
 
         if (!res.ok || !res.body) {
-          const payload = await res.json().catch(() => ({}));
+          const payload: unknown = await res.json().catch(() => null);
+          const detail =
+            payload && typeof payload === "object" && "detail" in payload
+              ? String(payload.detail)
+              : undefined;
           store.updateMessage(chatId, assistantId, (current) => ({
             ...current,
             streaming: false,
             text: current.text || "Agent request failed.",
           }));
-          throw new Error(payload.detail || "Agent request failed");
+          throw new Error(detail || "Agent request failed");
         }
 
         await readSseStream(res, (evt) => {
           if (evt.type === "codex_event" && evt.event) {
-            const event = evt.event as CodexTimelineEvent;
+            const event = evt.event;
             store.updateMessage(chatId, assistantId, (current) => ({
               ...current,
               usedCodex: true,
@@ -245,15 +234,11 @@ export function useStreamingChat({
             store.updateMessage(chatId, assistantId, (current) => ({
               ...current,
               usedCodex: true,
-              codexEvents: (evt.codex_events || current.codexEvents || []) as CodexTimelineEvent[],
+              codexEvents: evt.codex_events || current.codexEvents || [],
               codexStatus: String(evt.codex_status || current.codexStatus || ""),
               codexTurnId: String(evt.codex_turn_id || current.codexTurnId || ""),
               codexThreadId: String(evt.codex_thread_id || current.codexThreadId || ""),
-              artifacts: appendArtifacts(
-                current.artifacts,
-                evt.artifact as ChatArtifact | undefined,
-                evt.change_artifact as ChatArtifact | undefined,
-              ),
+              artifacts: appendArtifacts(current.artifacts, evt.artifact, evt.change_artifact),
             }));
             if (activeActionId) {
               updateAction(activeActionId, {
@@ -271,7 +256,7 @@ export function useStreamingChat({
               streaming: false,
               usedCodex,
               workdir: evt.workdir || project.path,
-              codexEvents: (evt.codex_events || current.codexEvents || []) as CodexTimelineEvent[],
+              codexEvents: evt.codex_events || current.codexEvents || [],
               codexStatus: String(evt.codex_status || current.codexStatus || ""),
               codexTurnId: String(evt.codex_turn_id || current.codexTurnId || ""),
               codexThreadId: String(evt.codex_thread_id || current.codexThreadId || ""),

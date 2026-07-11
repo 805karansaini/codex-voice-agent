@@ -213,8 +213,7 @@ export function useAppController() {
       activeAbortControllerRef.current.abort();
       activeAbortControllerRef.current = null;
     }
-    liveVoice.cancelTask();
-  }, [liveVoice]);
+  }, []);
   const { voiceTitle, voiceMessage, liveStatusText, streamingStatusText, suggestions } =
     useChatDisplayState({
       liveVoice,
@@ -251,109 +250,117 @@ export function useAppController() {
   };
 
   const workspaceLayoutProps: WorkspaceLayoutProps = {
-    isMobile,
-    mobileView,
-    railOpen,
-    panelOpen,
-    filePanelOpen,
-    railWidth,
-    panelWidth,
-    fileViewerWidth,
-    theme: store.theme,
-    activityView,
-    projects: store.projects,
-    chats: store.chats,
-    activeProjectId: store.activeId,
-    activeProject: store.activeProject,
-    activeChatId: store.activeChatId,
-    activeChatTitle: store.activeChat?.title,
-    activeChatByProject: store.activeChatByProject,
-    expandedProjects,
-    visibleChatsCount,
-    messages: store.messages,
-    mode,
-    busy,
-    suggestions,
-    messageEndRef,
-    liveStatusText,
-    streamingStatusText,
-    voiceTitle,
-    voiceMessage,
-    codexActive: Boolean(activeCodexJob),
-    voiceContextLabel,
-    voiceTranscriptPreview: liveVoice.transcriptPreview,
-    voiceMuted: liveVoice.muted,
-    voiceSupported: liveVoice.supported,
-    voiceActive,
-    voiceInputMode,
-    input,
-    error,
-    textareaRef,
-    status,
-    activeConsoleTab,
-    debugEntries,
-    actions,
-    handoffs,
-    doctorChecks,
-    voices,
-    selectedVoiceURI,
-    pendingAudioUrl,
-    onNewProject: () => setShowAdd(true),
-    onActivityViewChange: (view) => {
-      setActivityView(view);
-      if (isMobile) setMobileView(view === "files" ? "files" : "explorer");
+    layout: {
+      isMobile,
+      mobileView,
+      railOpen,
+      panelOpen,
+      filePanelOpen,
+      railWidth,
+      panelWidth,
+      fileViewerWidth,
+      theme: store.theme,
+      activityView,
     },
-    onToggleTheme: () => store.setTheme(store.theme === "dark" ? "light" : "dark"),
-    onOpenConsoleSettings: () => {
-      setPanelOpen(true);
-      openVoiceTab();
+    workspace: {
+      projects: store.projects,
+      chats: store.chats,
+      activeProjectId: store.activeId,
+      activeProject: store.activeProject,
+      activeChatId: store.activeChatId,
+      activeChatTitle: store.activeChat?.title,
+      activeChatByProject: store.activeChatByProject,
+      expandedProjects,
+      visibleChatsCount,
     },
-    onToggleProject: toggleProjectExpanded,
-    onCreateChat: (projectId) => {
-      store.createChat(projectId);
-      markProjectExpanded(projectId);
-      if (isMobile) {
-        setMobileView("chat");
-      }
+    chat: {
+      messages: store.messages,
+      mode,
+      busy,
+      suggestions,
+      messageEndRef,
+      liveStatusText,
+      streamingStatusText,
+      input,
+      error,
+      textareaRef,
     },
-    onRemoveProject: handleRemoveProject,
-    onSelectChat: (projectId, chatId) => {
-      store.selectChat(projectId, chatId);
-      if (isMobile) {
-        setMobileView("chat");
-      }
+    voice: {
+      title: voiceTitle,
+      message: voiceMessage,
+      contextLabel: voiceContextLabel,
+      transcriptPreview: liveVoice.transcriptPreview,
+      muted: liveVoice.muted,
+      supported: liveVoice.supported,
+      active: voiceActive,
+      codexActive: Boolean(activeCodexJob),
+      inputMode: voiceInputMode,
     },
-    onRenameChat: handleRenameChat,
-    onRemoveChat: handleRemoveChat,
-    onShowMoreChats: showMoreChats,
-    onOpenVoiceSettings: () => {
-      setMobileView("console");
-      openVoiceTab();
+    console: {
+      status,
+      activeTab: activeConsoleTab,
+      debugEntries,
+      actions,
+      handoffs,
+      doctorChecks,
+      voices,
+      selectedVoiceURI,
+      pendingAudioUrl,
     },
-    onChatKeyDown: handleChatSwitcherKeyDown,
-    onStartRailDrag: startRailDrag,
-    onStartPanelDrag: startPanelDrag,
-    onStartFileViewerDrag: startFileViewerDrag,
-    onModeChange: setMode,
-    onExportChat: () => void handleExportChat(),
-    onToggleVoice: toggleVoice,
-    onSuggestion: (suggestion) => void send(suggestion),
-    onCommitChangeReview: (artifact) => void confirmCommitChangeReview(artifact),
-    onRevertChangeReview: (artifact) => void confirmRevertChangeReview(artifact),
-    onInputChange: onComposerInput,
-    onSubmit: () => void send(),
-    onCancelTask: handleCancelTask,
-    onToggleMute: liveVoice.toggleMute,
-    onHoldToTalk: holdToTalk,
-    onReleaseToMute: releaseToMute,
-    onHideConsole: () => setPanelOpen(false),
-    onBackToChat: () => setMobileView("chat"),
-    onClearThread: clearThread,
-    onConsoleTabChange: setActiveConsoleTab,
-    onRefreshDoctor: refreshDoctor,
-    onSelectedVoiceChange: setSelectedVoiceURI,
-    onVoiceInputModeChange: changeVoiceInputMode,
-    onPlayResponseAudio: (audioUrl) => void playResponseAudio(audioUrl),
+    handlers: {
+      onNewProject: () => setShowAdd(true),
+      onActivityViewChange: (view) => {
+        setActivityView(view);
+        if (isMobile) setMobileView(view === "files" ? "files" : "explorer");
+      },
+      onToggleTheme: () => store.setTheme(store.theme === "dark" ? "light" : "dark"),
+      onOpenConsoleSettings: () => {
+        setPanelOpen(true);
+        openVoiceTab();
+      },
+      onToggleProject: toggleProjectExpanded,
+      onCreateChat: (projectId) => {
+        store.createChat(projectId);
+        markProjectExpanded(projectId);
+        if (isMobile) setMobileView("chat");
+      },
+      onRemoveProject: handleRemoveProject,
+      onSelectChat: (projectId, chatId) => {
+        store.selectChat(projectId, chatId);
+        if (isMobile) setMobileView("chat");
+      },
+      onRenameChat: handleRenameChat,
+      onRemoveChat: handleRemoveChat,
+      onShowMoreChats: showMoreChats,
+      onOpenVoiceSettings: () => {
+        setMobileView("console");
+        openVoiceTab();
+      },
+      onChatKeyDown: handleChatSwitcherKeyDown,
+      onStartRailDrag: startRailDrag,
+      onStartPanelDrag: startPanelDrag,
+      onStartFileViewerDrag: startFileViewerDrag,
+      onModeChange: setMode,
+      onExportChat: () => void handleExportChat(),
+      onToggleVoice: toggleVoice,
+      onSuggestion: (suggestion) => void send(suggestion),
+      onCommitChangeReview: (artifact) => void confirmCommitChangeReview(artifact),
+      onRevertChangeReview: (artifact) => void confirmRevertChangeReview(artifact),
+      onInputChange: onComposerInput,
+      onSubmit: () => void send(),
+      onCancelTask: handleCancelTask,
+      onToggleMute: liveVoice.toggleMute,
+      onHoldToTalk: holdToTalk,
+      onReleaseToMute: releaseToMute,
+      onHideConsole: () => setPanelOpen(false),
+      onBackToChat: () => setMobileView("chat"),
+      onClearThread: clearThread,
+      onConsoleTabChange: setActiveConsoleTab,
+      onRefreshDoctor: refreshDoctor,
+      onSelectedVoiceChange: setSelectedVoiceURI,
+      onVoiceInputModeChange: changeVoiceInputMode,
+      onPlayResponseAudio: (audioUrl) => void playResponseAudio(audioUrl),
+    },
   };
 
   const modalProps: AppModalsProps = {

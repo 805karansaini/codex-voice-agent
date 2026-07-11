@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { liveVoiceDeliveryFailureMessage } from "../src/utils/liveVoice.ts";
+import { liveVoiceStartDeliveryFailureMessage } from "../src/utils/liveVoice.ts";
 import {
   audioContainsSpeech,
   hasRecentSpeechActivity,
@@ -9,16 +9,16 @@ import {
   RECENT_SPEECH_WINDOW_MS,
 } from "../src/utils/liveVoiceSpeech.ts";
 
-test("liveVoiceDeliveryFailureMessage preserves backend detail", () => {
+test("liveVoiceStartDeliveryFailureMessage preserves backend detail", () => {
   assert.equal(
-    liveVoiceDeliveryFailureMessage("Vodex completed, but Gemini Live closed first."),
-    "Vodex completed, but Gemini Live closed first.",
+    liveVoiceStartDeliveryFailureMessage("Vodex is still running while Gemini reconnects."),
+    "Vodex is still running while Gemini reconnects.",
   );
 });
 
-test("liveVoiceDeliveryFailureMessage explains missed Gemini delivery by default", () => {
-  assert.match(liveVoiceDeliveryFailureMessage(""), /Gemini reconnected before reading/);
-  assert.match(liveVoiceDeliveryFailureMessage(undefined), /next voice session will include it/);
+test("liveVoiceStartDeliveryFailureMessage does not claim the task completed", () => {
+  assert.match(liveVoiceStartDeliveryFailureMessage(""), /background task start/);
+  assert.match(liveVoiceStartDeliveryFailureMessage(undefined), /still running/);
 });
 
 test("audioContainsSpeech ignores silent microphone frames", () => {

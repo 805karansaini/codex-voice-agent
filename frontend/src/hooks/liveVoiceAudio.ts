@@ -40,6 +40,90 @@ export function base64ToFloat32Array(base64: string): Float32Array {
   return float32Array;
 }
 
+const MICROPHONE_WORKLET = `
+  class MicProcessor extends AudioWorkletProcessor {
+    process(inputs) {
+      const input = inputs[0];
+      if (input && input.length > 0) {
+        this.port.postMessage(new Float32Array(input[0]));
+      }
+      return true;
+    }
+  }
+  registerProcessor('mic-processor', MicProcessor);
+`;
+
+export class MicrophoneCapture {
+  private stream: MediaStream | null = null;
+  private context: AudioContext | null = null;
+  private processor: ScriptProcessorNode | AudioWorkletNode | null = null;
+  private source: MediaStreamAudioSourceNode | null = null;
+
+  isActive(): boolean {
+    return this.stream !== null;
+  }
+
+  async start(
+    onSamples: (samples: Float32Array, sampleRate: number) => void,
+    onFallback: () => void,
+  ): Promise<void> {
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    this.context = new AudioContext();
+    this.source = this.context.createMediaStreamSource(this.stream);
+
+    if (typeof this.context.audioWorklet !== "undefined") {
+      const url = URL.createObjectURL(
+        new Blob([MICROPHONE_WORKLET], { type: "application/javascript" }),
+      );
+      try {
+        await this.context.audioWorklet.addModule(url);
+        const worklet = new AudioWorkletNode(this.context, "mic-processor");
+        worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
+          onSamples(event.data, this.context?.sampleRate || LIVE_AUDIO_RATE);
+        };
+        this.processor = worklet;
+        this.source.connect(worklet);
+        worklet.connect(this.context.destination);
+        return;
+      } catch {
+        onFallback();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } else {
+      onFallback();
+    }
+
+    const processor = this.context.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (event) => {
+      onSamples(event.inputBuffer.getChannelData(0), this.context?.sampleRate || LIVE_AUDIO_RATE);
+    };
+    this.processor = processor;
+    this.source.connect(processor);
+    processor.connect(this.context.destination);
+  }
+
+  async stop(): Promise<void> {
+    this.processor?.disconnect();
+    this.source?.disconnect();
+    this.processor = null;
+    this.source = null;
+    this.stream?.getTracks().forEach((track) => track.stop());
+    this.stream = null;
+    if (this.context && this.context.state !== "closed") {
+      await this.context.close().catch(() => undefined);
+    }
+    this.context = null;
+  }
+}
+
 export class AudioStreamPlayer {
   private ctx: AudioContext | null = null;
   private nextPlayTime: number = 0;

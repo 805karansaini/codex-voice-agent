@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GeminiLiveUsage, LiveVoiceState } from "../types";
+import type { CodexTimelineEvent, GeminiLiveUsage, LiveVoiceState } from "../types";
+import type { ServerEvent } from "../types/protocol";
+import { parseServerEventJson } from "../types/protocol";
 import { getWebSocketUrl } from "../services/api";
 import {
   AudioStreamPlayer,
+  MicrophoneCapture,
   MAX_BUFFERED_AUDIO_CHUNKS,
   LIVE_AUDIO_RATE,
   base64ToFloat32Array,
   encodePcmChunk,
 } from "./liveVoiceAudio";
-import { liveVoiceDeliveryFailureMessage } from "../utils/liveVoice";
+import { liveVoiceStartDeliveryFailureMessage } from "../utils/liveVoice";
 import { audioContainsSpeech, isClearToReadCompletedResult } from "../utils/liveVoiceSpeech";
+import { useLiveVoiceStatus } from "./useLiveVoiceStatus";
 
 const RECONNECT_DELAY_MS = 900;
 // Gemini Live currently starts retiring a connection at roughly ten minutes.
@@ -27,13 +31,13 @@ interface UseLiveVoiceProps {
   getChatId: () => string | undefined;
   onAudio: (audioUrl: string) => void;
   onDebug: (message: string) => void;
-  onHandoff: (name: string, summary: string, workdir?: string, details?: any) => void;
+  onHandoff: (name: string, summary: string, workdir?: string, details?: ServerEvent) => void;
   onHandoffStart?: (name: string, task: string, workdir: string) => void;
   onHandoffProgress?: (name: string, text: string) => void;
   onHandoffFailed?: (name: string, message: string) => void;
-  onHandoffDeliveryFailed?: (message: string) => void;
+  onHandoffStartDeliveryFailed?: (message: string) => void;
   onHandoffTimeout?: () => void;
-  onCodexEvent?: (event: any) => void;
+  onCodexEvent?: (event: CodexTimelineEvent) => void;
   onUserTranscript?: (text: string) => void;
   onAssistantDelta?: (text: string) => void;
   onInterrupted?: () => void;
@@ -57,7 +61,7 @@ export function useLiveVoice({
   onHandoffStart,
   onHandoffProgress,
   onHandoffFailed,
-  onHandoffDeliveryFailed,
+  onHandoffStartDeliveryFailed,
   onHandoffTimeout,
   onCodexEvent,
   onUserTranscript,
@@ -66,9 +70,7 @@ export function useLiveVoice({
   onSessionRestarted,
   onTurnComplete,
 }: UseLiveVoiceProps) {
-  const [state, setState] = useState<LiveVoiceState>("idle");
-  const [elapsed, setElapsed] = useState(0);
-  const [message, setMessage] = useState("Gemini Live voice is ready.");
+  const { state, message, elapsed, transition, describe } = useLiveVoiceStatus();
   const [userPreview, setUserPreview] = useState("");
   const [assistantPreview, setAssistantPreview] = useState("");
   const [muted, setMuted] = useState(false);
@@ -76,23 +78,11 @@ export function useLiveVoice({
 
   useEffect(() => {
     stateRef.current = state;
-    if (state === "working") {
-      setElapsed(0);
-      const interval = setInterval(() => {
-        setElapsed((e) => e + 1);
-      }, 1000);
-      return () => clearInterval(interval);
-    } else {
-      setElapsed(0);
-    }
   }, [state]);
 
   const mutedRef = useRef(false);
   const websocketRef = useRef<WebSocket | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const contextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | AudioWorkletNode | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const microphoneRef = useRef(new MicrophoneCapture());
   const bufferedAudioRef = useRef<string[]>([]);
   const reconnectTimerRef = useRef<number | null>(null);
   const sessionRefreshTimerRef = useRef<number | null>(null);
@@ -147,7 +137,7 @@ export function useLiveVoice({
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
-    onHandoffDeliveryFailed,
+    onHandoffStartDeliveryFailed,
     onHandoffTimeout,
     onCodexEvent,
     onUserTranscript,
@@ -168,7 +158,7 @@ export function useLiveVoice({
       onHandoffStart,
       onHandoffProgress,
       onHandoffFailed,
-      onHandoffDeliveryFailed,
+      onHandoffStartDeliveryFailed,
       onHandoffTimeout,
       onCodexEvent,
       onUserTranscript,
@@ -187,7 +177,7 @@ export function useLiveVoice({
     onHandoffStart,
     onHandoffProgress,
     onHandoffFailed,
-    onHandoffDeliveryFailed,
+    onHandoffStartDeliveryFailed,
     onHandoffTimeout,
     onCodexEvent,
     onUserTranscript,
@@ -243,19 +233,6 @@ export function useLiveVoice({
       return next;
     });
   }, [endCurrentAudioTurn, log]);
-
-  const stopMicrophone = useCallback(async () => {
-    processorRef.current?.disconnect();
-    sourceRef.current?.disconnect();
-    processorRef.current = null;
-    sourceRef.current = null;
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (contextRef.current && contextRef.current.state !== "closed") {
-      await contextRef.current.close().catch(() => undefined);
-    }
-    contextRef.current = null;
-  }, []);
 
   const flushBufferedAudio = useCallback((websocket: WebSocket) => {
     if (bufferedAudioRef.current.length === 0) return;
@@ -326,10 +303,9 @@ export function useLiveVoice({
     }
     pendingSpeechRef.current = null;
     websocket.send(JSON.stringify({ type: "speak_text", text }));
-    setState("thinking");
-    setMessage("Reading the completed Vodex result.");
+    transition("thinking", "Reading the completed Vodex result.");
     log("[Voice] Queued completed Codex result for speech.");
-  }, [clearPendingSpeechTimer, log]);
+  }, [clearPendingSpeechTimer, log, transition]);
 
   const requestSpeech = useCallback(
     (text: string) => {
@@ -362,14 +338,13 @@ export function useLiveVoice({
 
     sessionRefreshRequestedRef.current = false;
     clearSessionRefreshTimer();
-    setState("reconnecting");
-    setMessage("Reconnecting Gemini — your conversation is being preserved.");
+    transition("reconnecting", "Reconnecting Gemini — your conversation is being preserved.");
     log("[Session] Refreshing Gemini connection before it expires.");
     if (websocket.readyState === WebSocket.OPEN) {
       websocket.send(JSON.stringify({ type: "close" }));
     }
     websocket.close();
-  }, [clearSessionRefreshTimer, log]);
+  }, [clearSessionRefreshTimer, log, transition]);
 
   playbackIdleCallbackRef.current = () => {
     if (sessionRefreshRequestedRef.current) {
@@ -395,22 +370,15 @@ export function useLiveVoice({
     clearToolResultFallback();
     bufferedAudioRef.current = [];
     audioPlayerRef.current?.stop();
-    await stopMicrophone();
+    await microphoneRef.current.stop();
     if (websocketRef.current?.readyState === WebSocket.OPEN) {
       websocketRef.current.send(JSON.stringify({ type: "close" }));
     }
     websocketRef.current?.close();
     websocketRef.current = null;
-    setState("idle");
-    setMessage("Gemini Live voice is ready.");
+    transition("idle", "Gemini Live voice is ready.");
     log("[Stop] Session stopped successfully.");
-  }, [
-    clearPendingSpeechTimer,
-    clearSessionRefreshTimer,
-    clearToolResultFallback,
-    stopMicrophone,
-    log,
-  ]);
+  }, [clearPendingSpeechTimer, clearSessionRefreshTimer, clearToolResultFallback, log, transition]);
 
   const connectSocket = useCallback(() => {
     const websocket = new WebSocket(getWebSocketUrl("/api/live"));
@@ -422,8 +390,7 @@ export function useLiveVoice({
       log("Live channel connected.");
       sendSessionConfig(websocket);
       flushBufferedAudio(websocket);
-      setState("live");
-      setMessage("Live with Gemini — speak naturally, pause to let the agent answer.");
+      transition("live", "Live with Gemini — speak naturally, pause to let the agent answer.");
       clearSessionRefreshTimer();
       sessionRefreshTimerRef.current = window.setTimeout(() => {
         sessionRefreshTimerRef.current = null;
@@ -431,7 +398,11 @@ export function useLiveVoice({
         refreshGeminiSession();
       }, PROACTIVE_SESSION_REFRESH_MS);
       websocket.onmessage = (event) => {
-        const payload = JSON.parse(event.data);
+        const payload = parseServerEventJson(String(event.data));
+        if (!payload) {
+          log("Ignored an invalid live server event.");
+          return;
+        }
         if (payload.type === "ready" || payload.type === "debug") {
           log(payload.message || payload.type);
         } else if (payload.type === "user_transcript") {
@@ -439,16 +410,14 @@ export function useLiveVoice({
           voiceTurnActiveRef.current = true;
           log(`[User Transcript] ${payload.text || ""}`);
           setUserPreview((current) => `${current}${payload.text || ""}`);
-          setState("thinking");
-          setMessage("Heard you — composing a reply.");
+          transition("thinking", "Heard you — composing a reply.");
           cbRef.current.onUserTranscript?.(payload.text || "");
         } else if (payload.type === "assistant_delta") {
           clearToolResultFallback();
           voiceTurnActiveRef.current = true;
           // log(`[Assistant Delta] ${payload.text || ""}`);
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
-          setState("thinking");
-          setMessage("Gemini is replying.");
+          transition("thinking", "Gemini is replying.");
           cbRef.current.onAssistantDelta?.(payload.text || "");
         } else if (payload.type === "turn_complete") {
           clearToolResultFallback();
@@ -491,8 +460,7 @@ export function useLiveVoice({
             };
             setTimeout(checkAndStop, 500);
           } else {
-            setState("live");
-            setMessage("Live with Gemini — speak again when ready.");
+            transition("live", "Live with Gemini — speak again when ready.");
           }
         } else if (payload.type === "interrupted") {
           setAssistantPreview("");
@@ -507,8 +475,7 @@ export function useLiveVoice({
           );
           refreshGeminiSession();
         } else if (payload.type === "session_resume_failed") {
-          setState("reconnecting");
-          setMessage("Reconnecting Gemini from your saved chat.");
+          transition("reconnecting", "Reconnecting Gemini from your saved chat.");
           log(payload.message || "Saved Gemini session could not resume; using chat context.");
         } else if (payload.type === "assistant_audio_delta") {
           voiceTurnActiveRef.current = true;
@@ -528,8 +495,7 @@ export function useLiveVoice({
         } else if (payload.type === "tool_call_started") {
           clearToolResultFallback();
           usedCodexRef.current = true;
-          setState("working");
-          setMessage(`Vodex is running: ${payload.task || ""}`);
+          transition("working", `Vodex is running: ${payload.task || ""}`);
           cbRef.current.onHandoffStart?.(
             payload.name || "run_codex_task",
             payload.task || "",
@@ -541,18 +507,17 @@ export function useLiveVoice({
           setAssistantPreview((current) => `${current}${payload.text || ""}`);
           cbRef.current.onHandoffProgress?.(payload.name || "run_codex_task", payload.text || "");
         } else if (payload.type === "codex_event") {
-          cbRef.current.onCodexEvent?.(payload.event);
+          if (payload.event) cbRef.current.onCodexEvent?.(payload.event);
           if (payload.event?.summary) {
-            setMessage(payload.event.summary);
+            describe(payload.event.summary);
             log(`[Codex Event] ${payload.event.summary}`);
           }
         } else if (payload.type === "status") {
-          setMessage(payload.message || "Vodex is working...");
+          describe(payload.message || "Vodex is working...");
           log(`[Status] ${payload.message}`);
         } else if (payload.type === "tool_call_failed") {
           clearToolResultFallback();
-          setState("thinking");
-          setMessage("Vodex task failed.");
+          transition("thinking", "Vodex task failed.");
           setAssistantPreview("");
           cbRef.current.onHandoffFailed?.(
             payload.name || "run_codex_task",
@@ -562,11 +527,9 @@ export function useLiveVoice({
         } else if (payload.type === "tool_result") {
           usedCodexRef.current = true;
           if (payload.background_job_id) {
-            setState("working");
-            setMessage("Vodex is running in the background.");
+            transition("working", "Vodex is running in the background.");
           } else {
-            setState("thinking");
-            setMessage("Vodex task completed. Gemini is formulating a response.");
+            transition("thinking", "Vodex task completed. Gemini is formulating a response.");
           }
           setAssistantPreview("");
           cbRef.current.onHandoff(
@@ -578,8 +541,8 @@ export function useLiveVoice({
           clearToolResultFallback();
           if (!payload.background_job_id) {
             toolResultFallbackTimerRef.current = window.setTimeout(() => {
-              setState("live");
-              setMessage(
+              transition(
+                "live",
                 "Vodex result is available in chat. Gemini did not finish a final response.",
               );
               cbRef.current.onHandoffTimeout?.();
@@ -590,15 +553,20 @@ export function useLiveVoice({
             }, TOOL_RESULT_FALLBACK_MS);
           }
           log(
-            `[Tool Call Completed] ${payload.name || "tool"}. Result length: ${payload.result?.length || 0} chars.`,
+            `[Tool Call Completed] ${payload.name || "tool"}. Result length: ${String(payload.result || "").length} chars.`,
           );
-        } else if (payload.type === "tool_result_gemini_delivery_failed") {
+        } else if (payload.type === "tool_start_gemini_delivery_failed") {
           clearToolResultFallback();
-          const deliveryFailureMessage = liveVoiceDeliveryFailureMessage(payload.message);
-          setState("connecting");
-          setMessage("Vodex result is available in chat. Gemini is reconnecting with the result.");
-          cbRef.current.onHandoffDeliveryFailed?.(deliveryFailureMessage);
-          log(`[Tool Result Delivery Failed] ${deliveryFailureMessage}`);
+          const deliveryFailureMessage = liveVoiceStartDeliveryFailureMessage(payload.message);
+          transition(
+            "working",
+            "Vodex is still running. Gemini is reconnecting to follow its progress.",
+          );
+          cbRef.current.onHandoffStartDeliveryFailed?.(deliveryFailureMessage);
+          log(`[Tool Start Delivery Failed] ${deliveryFailureMessage}`);
+        } else if (payload.type === "gemini_tool_response_delivery_failed") {
+          transition("reconnecting", "Gemini is reconnecting after missing a tool response.");
+          log(`[Tool Response Delivery Failed] ${payload.message}`);
         } else if (payload.type === "background_job_completed") {
           const result = String(payload.result || "Vodex background task completed.").trim();
           const handoffId = String(payload.handoff?.id || "");
@@ -617,8 +585,7 @@ export function useLiveVoice({
           requestSpeech(result);
           log("[Codex] Received server-delivered background completion.");
         } else if (payload.type === "error") {
-          setState("error");
-          setMessage(payload.message || "Live voice failed.");
+          transition("error", payload.message || "Live voice failed.");
           log(`Live voice error: ${payload.message || "unknown error"}`);
         }
       };
@@ -630,14 +597,12 @@ export function useLiveVoice({
       websocketRef.current = null;
       clearSessionRefreshTimer();
       if (manuallyStoppedRef.current) {
-        void stopMicrophone();
-        setState("idle");
-        setMessage("Gemini Live voice is ready.");
+        void microphoneRef.current.stop();
+        transition("idle", "Gemini Live voice is ready.");
         return;
       }
-      if (streamRef.current) {
-        setState("reconnecting");
-        setMessage("Reconnecting Gemini — your conversation is being preserved.");
+      if (microphoneRef.current.isActive()) {
+        transition("reconnecting", "Reconnecting Gemini — your conversation is being preserved.");
         if (!reconnectNoticeSentRef.current) {
           reconnectNoticeSentRef.current = true;
           cbRef.current.onSessionRestarted?.();
@@ -650,8 +615,7 @@ export function useLiveVoice({
         }, RECONNECT_DELAY_MS);
         return;
       }
-      setState("idle");
-      setMessage("Gemini Live voice is ready.");
+      transition("idle", "Gemini Live voice is ready.");
     };
 
     return websocket;
@@ -664,7 +628,8 @@ export function useLiveVoice({
     refreshGeminiSession,
     requestSpeech,
     sendSessionConfig,
-    stopMicrophone,
+    describe,
+    transition,
   ]);
 
   useEffect(() => {
@@ -685,12 +650,10 @@ export function useLiveVoice({
     )
       return;
     if (!navigator.mediaDevices?.getUserMedia || typeof window.AudioContext === "undefined") {
-      setState("error");
-      setMessage("This browser cannot open live microphone audio.");
+      transition("error", "This browser cannot open live microphone audio.");
       return;
     }
-    setState("connecting");
-    setMessage("Connecting live microphone to Gemini.");
+    transition("connecting", "Connecting live microphone to Gemini.");
     setUserPreview("");
     setAssistantPreview("");
     manuallyStoppedRef.current = false;
@@ -714,81 +677,15 @@ export function useLiveVoice({
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-
-      streamRef.current = stream;
-      contextRef.current = audioContext;
-      sourceRef.current = source;
-
-      let micWorkletNode: AudioWorkletNode | null = null;
-      const hasWorklet = typeof audioContext.audioWorklet !== "undefined";
-
-      if (hasWorklet) {
-        const micCode = `
-          class MicProcessor extends AudioWorkletProcessor {
-            process(inputs, outputs, parameters) {
-              const input = inputs[0];
-              if (input && input.length > 0) {
-                const channelData = input[0];
-                this.port.postMessage(new Float32Array(channelData));
-              }
-              return true;
-            }
-          }
-          registerProcessor('mic-processor', MicProcessor);
-        `;
-        const blob = new Blob([micCode], { type: "application/javascript" });
-        const url = URL.createObjectURL(blob);
-        try {
-          await audioContext.audioWorklet.addModule(url);
-          URL.revokeObjectURL(url);
-          micWorkletNode = new AudioWorkletNode(audioContext, "mic-processor");
-          processorRef.current = micWorkletNode;
-
-          micWorkletNode.port.onmessage = (event) => {
-            sendAudioInput(event.data, audioContext.sampleRate);
-          };
-
-          source.connect(micWorkletNode);
-          micWorkletNode.connect(audioContext.destination);
-        } catch (workletErr) {
-          console.warn(
-            "Failed to load mic audio worklet, falling back to script processor",
-            workletErr,
-          );
-          micWorkletNode = null;
-        }
-      }
-
-      if (!micWorkletNode) {
+      await microphoneRef.current.start(sendAudioInput, () => {
         log("Microphone AudioWorklet unavailable; using ScriptProcessor fallback.");
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
-        processorRef.current = processor;
-
-        processor.onaudioprocess = (event) => {
-          sendAudioInput(event.inputBuffer.getChannelData(0), audioContext.sampleRate);
-        };
-
-        source.connect(processor);
-        processor.connect(audioContext.destination);
-      }
-
+      });
       connectSocket();
     } catch (err) {
-      await stopMicrophone();
+      await microphoneRef.current.stop();
       websocketRef.current?.close();
       websocketRef.current = null;
-      setState("error");
-      setMessage(err instanceof Error ? err.message : "Could not start live voice.");
+      transition("error", err instanceof Error ? err.message : "Could not start live voice.");
     }
   }, [
     clearPendingSpeechTimer,
@@ -798,21 +695,14 @@ export function useLiveVoice({
     log,
     sendAudioInput,
     state,
-    stopMicrophone,
+    transition,
   ]);
-
-  const cancelTask = useCallback(() => {
-    if (websocketRef.current?.readyState === WebSocket.OPEN) {
-      websocketRef.current.send(JSON.stringify({ type: "cancel_task" }));
-    }
-  }, []);
 
   const completeBackgroundCodexJob = useCallback(() => {
     if (stateRef.current !== "working") return;
-    setState("live");
-    setMessage("Live with Gemini — speak again when ready.");
+    transition("live", "Live with Gemini — speak again when ready.");
     log("[Codex] Background task settled; cleared working status.");
-  }, [log]);
+  }, [log, transition]);
 
   useEffect(
     () => () => {
@@ -843,7 +733,6 @@ export function useLiveVoice({
     toggleMute,
     start,
     stop,
-    cancelTask,
     completeBackgroundCodexJob,
     requestSpeech,
   };

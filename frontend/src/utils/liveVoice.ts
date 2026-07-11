@@ -1,7 +1,7 @@
-export function liveVoiceDeliveryFailureMessage(raw?: unknown): string {
+export function liveVoiceStartDeliveryFailureMessage(raw?: unknown): string {
   const message = typeof raw === "string" ? raw.trim() : "";
   return (
     message ||
-    "Vodex completed, but Gemini reconnected before reading the result. The next voice session will include it."
+    "Gemini reconnected before confirming the background task start. Vodex is still running and its progress remains available in this chat."
   );
 }

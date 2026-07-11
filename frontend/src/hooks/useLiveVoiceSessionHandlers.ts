@@ -1,12 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 
-import * as api from "../services/api";
+import { watchCodexJob } from "../services/codexJobs";
 import type { ActionPatch } from "./useConsoleSession";
 import type { useProjectStore } from "./useProjectStore";
 import type { ChatArtifact, CodexTimelineEvent, GeminiLiveUsage, Project } from "../types";
+import type { ServerEvent } from "../types/protocol";
 import { chatTitleFrom } from "../utils";
 import { appendArtifacts } from "../utils/artifacts";
-import { liveVoiceDeliveryFailureMessage } from "../utils/liveVoice";
+import { liveVoiceStartDeliveryFailureMessage } from "../utils/liveVoice";
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
 
@@ -304,24 +305,22 @@ export function useLiveVoiceSessionHandlers({
           setActiveCodexJob(null);
         }
       },
-      onHandoffDeliveryFailed: (message: string) => {
+      onHandoffStartDeliveryFailed: (message: string) => {
         const ctx = voiceCtxRef.current;
         if (!ctx || !activeAssistantVoiceMsgIdRef.current) return;
-        const displayMessage = liveVoiceDeliveryFailureMessage(message);
+        const displayMessage = liveVoiceStartDeliveryFailureMessage(message);
         store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
           ...m,
-          streaming: false,
-          text:
-            m.text ||
-            "Vodex finished the local work. Gemini reconnected before reading the result, so the next voice session will include it.",
+          streaming: true,
+          text: m.text || "Vodex is running this task in the background.",
         }));
-        addAction({
-          title: "Gemini missed Vodex result",
-          status: "done",
-          detail: displayMessage,
-          streamingResponse: displayMessage,
-          workdir: ctx.project.path,
-        });
+        if (activeVoiceActionIdRef.current) {
+          updateAction(activeVoiceActionIdRef.current, {
+            status: "running",
+            streamingResponse: displayMessage,
+            workdir: ctx.project.path,
+          });
+        }
       },
       onHandoffTimeout: () => {
         const ctx = voiceCtxRef.current;
@@ -334,10 +333,9 @@ export function useLiveVoiceSessionHandlers({
             "Vodex finished the local work. The full output is available below, but Gemini did not finish a final response.",
         }));
       },
-      onCodexEvent: (event: unknown) => {
+      onCodexEvent: (codexEvent: CodexTimelineEvent) => {
         const ctx = voiceCtxRef.current;
-        if (!ctx || !event) return;
-        const codexEvent = event as CodexTimelineEvent;
+        if (!ctx) return;
         if (
           activeVoiceActionIdRef.current &&
           codexEvent.method === "turn/completed" &&
@@ -360,12 +358,7 @@ export function useLiveVoiceSessionHandlers({
           }));
         }
       },
-      onHandoff: (
-        name: string,
-        summary: string,
-        workdir?: string,
-        details?: Record<string, unknown>,
-      ) => {
+      onHandoff: (name: string, summary: string, workdir?: string, details?: ServerEvent) => {
         addHandoff(name, summary);
         const ctx = voiceCtxRef.current;
         const backgroundJobId =
@@ -421,63 +414,57 @@ export function useLiveVoiceSessionHandlers({
             startedAt,
             workdir,
           });
-          const pollJob = async () => {
-            try {
-              const job = await api.fetchCodexJob(backgroundJobId);
-              if (activeVoiceJobIdRef.current !== backgroundJobId) return;
-              const updates = job.progress_updates || [];
-              const progressText =
-                job.latest_status || updates[updates.length - 1] || "Vodex is still working.";
-              if (job.status === "queued" || job.status === "running") {
-                updateCodexMessage({
-                  text: progressText,
-                  streaming: true,
-                  status: job.codex_status || "running",
-                  events: job.codex_events,
-                  workdir: job.workdir,
-                });
-                updateAction(actionId, {
-                  status: "running",
-                  streamingResponse: progressText,
-                  workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
-                });
-                setActiveCodexJob({
-                  jobId: backgroundJobId,
-                  chatId,
-                  status: job.status,
-                  task: job.task || task,
-                  message: progressText,
-                  startedAt,
-                  workdir: job.workdir || workdir,
-                });
-                window.setTimeout(() => void pollJob(), 1500);
-                return;
-              }
-              if (job.status === "done") {
-                const finalText = job.result || "Vodex background task completed.";
-                updateCodexMessage({
-                  text: finalText,
-                  streaming: false,
-                  status: job.codex_status || "completed",
-                  events: job.codex_events,
-                  artifacts: job.artifacts,
-                  workdir: job.workdir,
-                });
-                updateAction(actionId, {
-                  status: "done",
-                  detail: job.task,
-                  streamingResponse: finalText,
-                  workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
-                });
-                addHandoff(name, finalText.slice(0, 160));
-                onBackgroundJobSettled?.();
-                activeVoiceActionIdRef.current = null;
-                activeVoiceJobIdRef.current = null;
-                activeCodexMsgIdRef.current = null;
-                setActiveCodexJob(null);
-                return;
-              }
-              const failureText = job.error || "Vodex background task failed.";
+          const finishJob = () => {
+            activeVoiceActionIdRef.current = null;
+            activeVoiceJobIdRef.current = null;
+            activeCodexMsgIdRef.current = null;
+            setActiveCodexJob(null);
+            onBackgroundJobSettled?.();
+          };
+          void watchCodexJob(backgroundJobId, {
+            isCurrent: () => activeVoiceJobIdRef.current === backgroundJobId,
+            onProgress: (job, progressText) => {
+              updateCodexMessage({
+                text: progressText,
+                streaming: true,
+                status: job.codex_status || "running",
+                events: job.codex_events,
+                workdir: job.workdir,
+              });
+              updateAction(actionId, {
+                status: "running",
+                streamingResponse: progressText,
+                workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
+              });
+              setActiveCodexJob({
+                jobId: backgroundJobId,
+                chatId,
+                status: job.status,
+                task: job.task || task,
+                message: progressText,
+                startedAt,
+                workdir: job.workdir || workdir,
+              });
+            },
+            onDone: (job, finalText) => {
+              updateCodexMessage({
+                text: finalText,
+                streaming: false,
+                status: job.codex_status || "completed",
+                events: job.codex_events,
+                artifacts: job.artifacts,
+                workdir: job.workdir,
+              });
+              updateAction(actionId, {
+                status: "done",
+                detail: job.task,
+                streamingResponse: finalText,
+                workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
+              });
+              addHandoff(name, finalText.slice(0, 160));
+              finishJob();
+            },
+            onFailed: (job, failureText) => {
               updateCodexMessage({
                 text: failureText,
                 streaming: false,
@@ -490,46 +477,31 @@ export function useLiveVoiceSessionHandlers({
                 streamingResponse: failureText,
                 workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
               });
-              activeVoiceActionIdRef.current = null;
-              activeVoiceJobIdRef.current = null;
-              activeCodexMsgIdRef.current = null;
-              setActiveCodexJob(null);
-              onBackgroundJobSettled?.();
-            } catch (err) {
-              const message = err instanceof Error ? err.message : "Failed to poll Vodex job";
-              updateAction(actionId, {
-                status: "failed",
-                streamingResponse: message,
-              });
-              updateCodexMessage({
-                text: message,
-                streaming: false,
-                status: "failed",
-              });
-              activeVoiceActionIdRef.current = null;
-              activeVoiceJobIdRef.current = null;
-              activeCodexMsgIdRef.current = null;
-              setActiveCodexJob(null);
-              onBackgroundJobSettled?.();
-            }
-          };
-          window.setTimeout(() => void pollJob(), 1000);
+              finishJob();
+            },
+            onError: (message) => {
+              updateAction(actionId, { status: "failed", streamingResponse: message });
+              updateCodexMessage({ text: message, streaming: false, status: "failed" });
+              finishJob();
+            },
+          });
           return;
         }
         if (ctx) {
-          const artifact = details?.artifact as ChatArtifact | undefined;
-          const changeArtifact = details?.change_artifact as ChatArtifact | undefined;
+          const artifacts = details?.artifacts || [];
+          const artifact = details?.artifact;
+          const changeArtifact = details?.change_artifact;
           if (activeAssistantVoiceMsgIdRef.current) {
             store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
               ...m,
               text: summary || m.text,
               streaming: false,
               usedCodex: true,
-              codexEvents: (details?.codex_events || m.codexEvents || []) as CodexTimelineEvent[],
+              codexEvents: details?.codex_events || m.codexEvents || [],
               codexStatus: stringValue(details?.codex_status, m.codexStatus),
               codexTurnId: stringValue(details?.codex_turn_id, m.codexTurnId),
               codexThreadId: stringValue(details?.codex_thread_id, m.codexThreadId),
-              artifacts: appendArtifacts(m.artifacts, artifact, changeArtifact),
+              artifacts: appendArtifacts(m.artifacts, ...artifacts, artifact, changeArtifact),
             }));
           } else {
             const id = crypto.randomUUID();
@@ -541,8 +513,8 @@ export function useLiveVoiceSessionHandlers({
               usedCodex: true,
               streaming: true,
               workdir,
-              artifacts: appendArtifacts([], artifact, changeArtifact),
-              codexEvents: (details?.codex_events || []) as CodexTimelineEvent[],
+              artifacts: appendArtifacts([], ...artifacts, artifact, changeArtifact),
+              codexEvents: details?.codex_events || [],
               codexStatus: stringValue(details?.codex_status),
               codexTurnId: stringValue(details?.codex_turn_id),
               codexThreadId: stringValue(details?.codex_thread_id),

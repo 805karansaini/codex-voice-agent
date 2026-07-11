@@ -1,4 +1,4 @@
-import {
+import type {
   Project,
   Chat,
   ConsoleState,
@@ -10,8 +10,10 @@ import {
   DoctorCheck,
 } from "../types";
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
-const API_TOKEN = import.meta.env.VITE_API_TOKEN || "";
+const configuredApiBase: unknown = import.meta.env?.VITE_API_BASE_URL;
+const configuredApiToken: unknown = import.meta.env?.VITE_API_TOKEN;
+export const API_BASE = typeof configuredApiBase === "string" ? configuredApiBase : "";
+const API_TOKEN = typeof configuredApiToken === "string" ? configuredApiToken : "";
 
 function authHeaders(headers: HeadersInit = {}): HeadersInit {
   return API_TOKEN ? { ...headers, Authorization: `Bearer ${API_TOKEN}` } : headers;
@@ -265,13 +267,6 @@ export interface StreamOptions {
   workdir: string;
   projectId: string;
   chatId: string;
-}
-
-export async function postCodexStream(
-  options: StreamOptions,
-  signal?: AbortSignal,
-): Promise<Response> {
-  return streamFetch("/api/codex/stream", options, signal);
 }
 
 export async function enqueueCodexJob(options: StreamOptions): Promise<CodexJob> {

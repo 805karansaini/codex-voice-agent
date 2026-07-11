@@ -5,9 +5,6 @@ import { loadJSON, saveJSON } from "../utils";
 import { mergeBackendHistoryWithLocalMessages } from "../utils/history";
 
 const LS_ACTIVE = "cva.activeProject.v1";
-const LS_THREADS = "cva.threads.v1"; // Legacy
-const LS_CHATS = "cva.chats.v1";
-const LS_MESSAGES = "cva.messages.v1"; // Legacy, ignored after backend history became source of truth.
 const LS_ACTIVE_CHAT = "cva.activeChat.v1";
 const LS_THEME = "cva.theme.v1";
 
@@ -55,12 +52,6 @@ export function useProjectStore() {
   // Local storage persistence
   useEffect(() => saveJSON(LS_ACTIVE, activeId), [activeId]);
   useEffect(() => saveJSON(LS_ACTIVE_CHAT, activeChatByProject), [activeChatByProject]);
-  useEffect(() => {
-    localStorage.removeItem(LS_MESSAGES);
-    localStorage.removeItem(LS_THREADS);
-    localStorage.removeItem(LS_CHATS);
-  }, []);
-
   useEffect(() => {
     saveJSON(LS_THEME, theme);
     document.documentElement.setAttribute("data-theme", theme);
