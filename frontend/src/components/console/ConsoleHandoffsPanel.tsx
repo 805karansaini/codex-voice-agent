@@ -16,7 +16,7 @@ export default function ConsoleHandoffsPanel({ handoffs }: ConsoleHandoffsPanelP
     >
       {handoffs.length === 0 ? (
         <div className="text-center py-12 text-fg-dim italic">
-          No handoffs between Agent and Vodex.
+          No handoffs between Vodex and Codex.
         </div>
       ) : (
         handoffs.map((handoff, index) => (

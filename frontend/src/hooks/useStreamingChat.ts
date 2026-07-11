@@ -44,9 +44,16 @@ export function useStreamingChat({
   setError,
 }: UseStreamingChatOptions) {
   const streamCodex = useCallback(
-    async (task: string, project: Project, chatId: string, userMessageId: string) => {
+    async (
+      task: string,
+      project: Project,
+      chatId: string,
+      userMessageId: string,
+      model?: string,
+      reasoningEffort?: string,
+    ) => {
       const actionId = addAction({
-        title: "Background Vodex task",
+        title: "Background Codex task",
         status: "running",
         detail: task,
         workdir: project.path,
@@ -55,7 +62,7 @@ export function useStreamingChat({
       store.appendMessage(chatId, {
         id: assistantId,
         role: "assistant",
-        text: "Started a background Vodex task. I will update this message when it finishes.",
+        text: "Started a background Codex task. I will update this message when it finishes.",
         usedCodex: true,
         streaming: true,
         workdir: project.path,
@@ -67,6 +74,8 @@ export function useStreamingChat({
           workdir: project.path,
           projectId: project.id,
           chatId,
+          model,
+          reasoningEffort,
         });
         store.updateMessage(chatId, assistantId, (message) => ({
           ...message,
@@ -135,11 +144,11 @@ export function useStreamingChat({
         store.updateMessage(chatId, assistantId, (message) => ({
           ...message,
           streaming: false,
-          text: message.text || "Vodex request failed.",
+          text: message.text || "Codex request failed.",
         }));
         updateAction(actionId, {
           status: "failed",
-          streamingResponse: err instanceof Error ? err.message : "Vodex request failed",
+          streamingResponse: err instanceof Error ? err.message : "Codex request failed",
         });
         throw err;
       } finally {
@@ -150,7 +159,13 @@ export function useStreamingChat({
   );
 
   const streamAgent = useCallback(
-    async (message: string, project: Project, chatId: string) => {
+    async (
+      message: string,
+      project: Project,
+      chatId: string,
+      model?: string,
+      reasoningEffort?: string,
+    ) => {
       const assistantId = crypto.randomUUID();
       store.appendMessage(chatId, {
         id: assistantId,
@@ -173,6 +188,8 @@ export function useStreamingChat({
             workdir: project.path,
             projectId: project.id,
             chatId,
+            model,
+            reasoningEffort,
           },
           controller.signal,
         );
@@ -186,9 +203,9 @@ export function useStreamingChat({
           store.updateMessage(chatId, assistantId, (current) => ({
             ...current,
             streaming: false,
-            text: current.text || "Agent request failed.",
+            text: current.text || "Vodex request failed.",
           }));
-          throw new Error(detail || "Agent request failed");
+          throw new Error(detail || "Vodex request failed");
         }
 
         await readSseStream(res, (evt) => {
@@ -211,7 +228,7 @@ export function useStreamingChat({
           } else if (evt.type === "tool_call") {
             usedCodex = true;
             activeActionId = addAction({
-              title: "Agent handoff to Vodex",
+              title: "Vodex handoff to Codex",
               status: "running",
               detail: String(evt.task || "Local task"),
               streamingResponse: "",
@@ -265,15 +282,15 @@ export function useStreamingChat({
             store.updateMessage(chatId, assistantId, (current) => ({
               ...current,
               streaming: false,
-              text: current.text || "Agent failed.",
+              text: current.text || "Vodex failed.",
             }));
             if (activeActionId) {
               updateAction(activeActionId, {
                 status: "failed",
-                streamingResponse: String(evt.message || "Agent failed"),
+                streamingResponse: String(evt.message || "Vodex failed"),
               });
             }
-            setError(String(evt.message || "Agent failed"));
+            setError(String(evt.message || "Vodex failed"));
           }
         });
 

@@ -4,11 +4,13 @@ import { loadJSON, saveJSON } from "../utils";
 
 export type MobileView = "explorer" | "files" | "chat" | "console";
 
+const COMPACT_LAYOUT_MAX_WIDTH = 1100;
+
 export function useAppLayout() {
   const [railOpen, setRailOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 768 : false,
+    typeof window !== "undefined" ? window.innerWidth <= COMPACT_LAYOUT_MAX_WIDTH : false,
   );
   const [mobileView, setMobileView] = useState<MobileView>("chat");
   const [railWidth, setRailWidth] = useState(() => loadJSON<number>("cva.railWidth.v2", 268));
@@ -84,7 +86,7 @@ export function useAppLayout() {
 
   useEffect(() => {
     const handleResize = () => {
-      setIsMobile(window.innerWidth < 768);
+      setIsMobile(window.innerWidth <= COMPACT_LAYOUT_MAX_WIDTH);
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);

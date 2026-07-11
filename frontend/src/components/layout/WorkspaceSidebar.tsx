@@ -1,6 +1,4 @@
 import {
-  Activity,
-  Cable,
   ChevronRight,
   FileCode2,
   FolderPlus,
@@ -91,18 +89,19 @@ export default function WorkspaceSidebar({
         !isMobile ? "border-r border-line" : "w-full",
       )}
     >
-      <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5 shrink-0">
+      <div className="flex shrink-0 items-center justify-between border-b border-line-soft px-3.5 py-3">
         <span className="label">Workspace</span>
         <button
           title="Add Project"
           onClick={onAddProject}
-          className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
+          aria-label="Add project"
+          className="grid h-7 w-7 place-items-center rounded-md text-fg-muted transition-colors hover:bg-surface-2 hover:text-accent"
         >
           <FolderPlus className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-1" aria-label="Workspace chats">
+      <nav className="flex-1 overflow-y-auto px-1 py-2" aria-label="Workspace chats">
         {projects.length === 0 ? (
           <div className="p-4 text-center">
             <p className="text-[12.5px] text-fg-dim">No projects yet.</p>
@@ -129,10 +128,10 @@ export default function WorkspaceSidebar({
             const visibleChats = projectChats.slice(0, chatLimit);
 
             return (
-              <div key={project.id} className="px-1">
+              <div key={project.id} className="mb-1 px-0.5">
                 <div
                   className={cn(
-                    "group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors",
+                    "group flex w-full items-center gap-1.5 rounded-lg px-2 py-2 text-left transition-colors",
                     isActive
                       ? "bg-surface-2 text-fg"
                       : "text-fg-muted hover:bg-surface-2/60 hover:text-fg",
@@ -140,7 +139,8 @@ export default function WorkspaceSidebar({
                 >
                   <button
                     onClick={() => onToggleProject(project.id, isExpanded)}
-                    className="flex items-center gap-1.5 flex-1 min-w-0"
+                    aria-expanded={isExpanded}
+                    className="flex min-w-0 flex-1 items-center gap-1.5"
                   >
                     <ChevronRight
                       className={cn(
@@ -189,7 +189,7 @@ export default function WorkspaceSidebar({
                         <div
                           key={chat.id}
                           className={cn(
-                            "group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition-colors",
+                            "group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors",
                             isChatActive
                               ? "bg-accent/10 text-fg"
                               : "text-fg-muted hover:bg-surface-2 hover:text-fg",
@@ -249,7 +249,7 @@ export default function WorkspaceSidebar({
       {isMobile && (
         <div className="border-t border-line bg-surface-2 shrink-0">
           <nav
-            className="grid grid-cols-4 gap-1 border-b border-line-soft px-3 py-2"
+            className="grid grid-cols-2 gap-1 border-b border-line-soft px-3 py-2"
             aria-label="Workspace views"
           >
             <button
@@ -275,20 +275,6 @@ export default function WorkspaceSidebar({
             >
               <FileCode2 className="h-4 w-4" />
               Files
-            </button>
-            <button
-              disabled
-              className="flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] text-fg-dim opacity-40"
-            >
-              <Activity className="h-4 w-4" />
-              Runs
-            </button>
-            <button
-              disabled
-              className="flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] text-fg-dim opacity-40"
-            >
-              <Cable className="h-4 w-4" />
-              MCP
             </button>
           </nav>
           <div className="flex items-center justify-between gap-3 p-3">

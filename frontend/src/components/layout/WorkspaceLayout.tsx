@@ -9,6 +9,7 @@ import type {
   ChatArtifact,
   DebugEntry,
   DoctorCheck,
+  CodexModel,
   Handoff,
   Message,
   Project,
@@ -57,6 +58,9 @@ export type WorkspaceLayoutProps = {
     streamingStatusText: string;
     input: string;
     error: string;
+    codexModels: CodexModel[];
+    codexModel: string;
+    codexReasoningEffort: string;
     textareaRef: RefObject<HTMLTextAreaElement | null>;
   };
   voice: {
@@ -107,6 +111,8 @@ export type WorkspaceLayoutProps = {
     onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
     onSubmit: () => void;
     onCancelTask: () => void;
+    onCodexModelChange: (model: string) => void;
+    onCodexReasoningEffortChange: (effort: string) => void;
     onToggleMute: () => void;
     onHoldToTalk: () => void;
     onReleaseToMute: () => void;
@@ -330,10 +336,15 @@ export default function WorkspaceLayout({
           input={input}
           hasActiveProject={Boolean(activeProject)}
           error={error}
+          codexModels={chat.codexModels}
+          codexModel={chat.codexModel}
+          codexReasoningEffort={chat.codexReasoningEffort}
           textareaRef={textareaRef}
           onInputChange={onInputChange}
           onSubmit={onSubmit}
           onCancelTask={onCancelTask}
+          onCodexModelChange={handlers.onCodexModelChange}
+          onCodexReasoningEffortChange={handlers.onCodexReasoningEffortChange}
           onToggleMute={onToggleMute}
           onHoldToTalk={onHoldToTalk}
           onReleaseToMute={onReleaseToMute}

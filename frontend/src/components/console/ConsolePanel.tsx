@@ -78,7 +78,7 @@ export default function ConsolePanel({
 
       <ConsoleTabs activeTab={activeTab} onChange={onTabChange} />
 
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 overflow-y-auto p-3.5">
         {activeTab === "stream" && <ConsoleStreamPanel entries={debugEntries} />}
 
         {activeTab === "actions" && <ConsoleActionsPanel actions={actions} />}

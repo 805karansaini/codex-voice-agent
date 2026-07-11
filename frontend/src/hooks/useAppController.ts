@@ -29,12 +29,18 @@ import { useStreamingChat } from "./useStreamingChat";
 import { useVoiceInputMode } from "./useVoiceInputMode";
 import { useWorkspaceSearch } from "./useWorkspaceSearch";
 import { useWorkspaceSidebarState } from "./useWorkspaceSidebarState";
+import * as api from "../services/api";
+import type { CodexModel } from "../types";
+import { defaultCodexModel, defaultReasoningEffort } from "../utils/codexModels";
 
 export function useAppController() {
   const store = useProjectStore();
   const { syncError, clearSyncError } = store;
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"agent" | "codex">("agent");
+  const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
+  const [codexModel, setCodexModel] = useState("");
+  const [codexReasoningEffort, setCodexReasoningEffort] = useState("");
   const [activityView, setActivityView] = useState<"chats" | "files">("chats");
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -118,6 +124,29 @@ export function useAppController() {
     setError(syncError);
     clearSyncError();
   }, [syncError, clearSyncError]);
+  useEffect(() => {
+    void api
+      .fetchCodexModels()
+      .then((models) => {
+        setCodexModels(models);
+        const selected = defaultCodexModel(models);
+        if (selected) {
+          setCodexModel(selected.model);
+          setCodexReasoningEffort(defaultReasoningEffort(selected));
+        }
+      })
+      .catch(() => {
+        setCodexModels([]);
+      });
+  }, []);
+  const handleCodexModelChange = useCallback(
+    (model: string) => {
+      setCodexModel(model);
+      const selected = codexModels.find((item) => item.model === model);
+      setCodexReasoningEffort(defaultReasoningEffort(selected));
+    },
+    [codexModels],
+  );
   const {
     voiceCtxRef,
     getWorkdir,
@@ -185,6 +214,8 @@ export function useAppController() {
     streamCodex,
     activeAbortControllerRef,
     setError,
+    codexModel,
+    codexReasoningEffort,
   });
 
   useMessageAutoScroll({
@@ -283,6 +314,9 @@ export function useAppController() {
       streamingStatusText,
       input,
       error,
+      codexModels,
+      codexModel,
+      codexReasoningEffort,
       textareaRef,
     },
     voice: {
@@ -349,6 +383,8 @@ export function useAppController() {
       onInputChange: onComposerInput,
       onSubmit: () => void send(),
       onCancelTask: handleCancelTask,
+      onCodexModelChange: handleCodexModelChange,
+      onCodexReasoningEffortChange: setCodexReasoningEffort,
       onToggleMute: liveVoice.toggleMute,
       onHoldToTalk: holdToTalk,
       onReleaseToMute: releaseToMute,

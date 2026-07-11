@@ -29,7 +29,7 @@ export function useChatDisplayState({
     ? Math.max(0, Math.floor((Date.now() - activeCodexJob.startedAt) / 1000))
     : 0;
   const voiceTitle = activeCodexJob
-    ? `Vodex is working (${formatElapsed(codexElapsed)})`
+    ? `Codex is working (${formatElapsed(codexElapsed)})`
     : liveVoice.state === "connecting"
       ? "Connecting…"
       : liveVoice.state === "reconnecting"
@@ -37,9 +37,9 @@ export function useChatDisplayState({
         : liveVoice.state === "live"
           ? "Live conversation"
           : liveVoice.state === "thinking"
-            ? "Gemini is responding"
+            ? "Vodex is responding"
             : liveVoice.state === "working"
-              ? `Vodex is working (${formatElapsed(liveVoice.elapsed)})`
+              ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
               : liveVoice.state === "error"
                 ? "Voice needs attention"
                 : "Live voice";
@@ -62,16 +62,16 @@ export function useChatDisplayState({
   const suggestions =
     mode === "codex"
       ? [
-          "List the files in this directory",
-          "Show the git status",
-          "Run the test suite",
-          "Summarize this codebase",
+          "Review the current changes and flag any risks",
+          "Find and fix the most likely cause of the failing tests",
+          "Implement this repository's next incomplete task",
+          "Run the relevant checks and summarize what passed",
         ]
       : [
-          "Find all TODOs in the codebase",
-          "What changed in the last commit?",
-          "Explain the main entry point of the project",
-          "Explain the project structure",
+          "Give me a quick tour of this project",
+          "What should I focus on next in this repository?",
+          "Explain the latest changes in plain English",
+          "Help me plan a safe approach before changing anything",
         ];
 
   const voiceMessage = activeCodexJob ? activeCodexJob.task : liveVoice.message;

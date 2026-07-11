@@ -148,6 +148,8 @@ export type CodexJob = {
   workdir: string;
   project_id?: string;
   chat_id?: string;
+  model?: string;
+  reasoning_effort?: string;
   status: "queued" | "running" | "done" | "failed";
   result: string;
   error: string;
@@ -160,6 +162,19 @@ export type CodexJob = {
   artifacts?: ChatArtifact[];
   created_at: string;
   updated_at: string;
+};
+
+export type CodexModel = {
+  id: string;
+  model: string;
+  displayName: string;
+  description?: string;
+  isDefault?: boolean;
+  defaultReasoningEffort?: string;
+  supportedReasoningEfforts: Array<{
+    reasoningEffort: string;
+    description?: string;
+  }>;
 };
 
 export type ConsoleState = {

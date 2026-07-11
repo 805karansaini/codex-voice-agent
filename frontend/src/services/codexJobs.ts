@@ -11,7 +11,7 @@ export type CodexJobHandlers = {
 
 export function codexJobProgress(job: CodexJob): string {
   const updates = job.progress_updates || [];
-  return job.latest_status || updates[updates.length - 1] || "Vodex is still working.";
+  return job.latest_status || updates[updates.length - 1] || "Codex is still working.";
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -41,13 +41,13 @@ export async function watchCodexJob(
         continue;
       }
       if (job.status === "done") {
-        handlers.onDone(job, job.result || "Vodex background task completed.");
+        handlers.onDone(job, job.result || "Codex background task completed.");
         return;
       }
-      handlers.onFailed(job, job.error || "Vodex background task failed.");
+      handlers.onFailed(job, job.error || "Codex background task failed.");
       return;
     } catch (error) {
-      handlers.onError(error instanceof Error ? error.message : "Failed to poll Vodex job");
+      handlers.onError(error instanceof Error ? error.message : "Failed to poll Codex job");
       return;
     }
   }

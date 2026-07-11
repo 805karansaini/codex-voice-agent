@@ -7,10 +7,10 @@
   --font-sans: "General Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -48,18 +48,17 @@
 }
 
 :root {
-  /* Default theme is dark: Dev Tool — dark cool slate with electric accent */
-  --surface-0: oklch(0.165 0.012 260); /* app bg */
-  --surface-1: oklch(0.195 0.012 260); /* panels */
-  --surface-2: oklch(0.225 0.012 260); /* cards / inputs */
-  --surface-3: oklch(0.275 0.013 260); /* hover / chips */
-  --fg: oklch(0.96 0.005 250);
-  --fg-muted: oklch(0.74 0.012 250);
-  --fg-dim: oklch(0.55 0.012 250);
-  --line: oklch(0.3 0.012 260);
-  --line-soft: oklch(0.245 0.012 260);
-  --accent: oklch(0.74 0.165 195); /* electric cyan */
-  --accent-soft: oklch(0.55 0.12 195);
+  --surface-0: oklch(0.155 0.014 255);
+  --surface-1: oklch(0.188 0.014 255);
+  --surface-2: oklch(0.225 0.015 255);
+  --surface-3: oklch(0.275 0.018 255);
+  --fg: oklch(0.965 0.006 245);
+  --fg-muted: oklch(0.77 0.012 245);
+  --fg-dim: oklch(0.59 0.012 245);
+  --line: oklch(0.305 0.016 255);
+  --line-soft: oklch(0.245 0.014 255);
+  --accent: oklch(0.75 0.145 195);
+  --accent-soft: oklch(0.58 0.12 195);
   --success: oklch(0.78 0.16 150);
   --warn: oklch(0.82 0.15 80);
   --danger: oklch(0.7 0.2 25);
@@ -103,6 +102,17 @@
     -webkit-font-smoothing: antialiased;
     overscroll-behavior-x: none;
   }
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  :where(button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-accent) 80%, white 10%);
+    outline-offset: 2px;
+  }
   ::selection {
     background: color-mix(in oklab, var(--color-accent) 40%, transparent);
     color: var(--color-fg);
@@ -135,7 +145,21 @@
   .panel {
     background: var(--color-surface-1);
     border: 1px solid var(--color-line);
-    border-radius: 8px;
+    border-radius: 10px;
+  }
+  .workspace-canvas {
+    background:
+      radial-gradient(
+        circle at 50% -15%,
+        color-mix(in oklab, var(--color-accent) 7%, transparent),
+        transparent 38%
+      ),
+      var(--color-surface-0);
+  }
+  .surface-elevated {
+    box-shadow:
+      0 18px 50px color-mix(in oklab, black 30%, transparent),
+      0 1px 0 color-mix(in oklab, white 4%, transparent) inset;
   }
   .grid-bg {
     background-image:

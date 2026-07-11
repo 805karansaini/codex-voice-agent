@@ -303,7 +303,7 @@ export function useLiveVoice({
     }
     pendingSpeechRef.current = null;
     websocket.send(JSON.stringify({ type: "speak_text", text }));
-    transition("thinking", "Reading the completed Vodex result.");
+    transition("thinking", "Reading the completed Codex result.");
     log("[Voice] Queued completed Codex result for speech.");
   }, [clearPendingSpeechTimer, log, transition]);
 
@@ -495,7 +495,7 @@ export function useLiveVoice({
         } else if (payload.type === "tool_call_started") {
           clearToolResultFallback();
           usedCodexRef.current = true;
-          transition("working", `Vodex is running: ${payload.task || ""}`);
+          transition("working", `Codex is running: ${payload.task || ""}`);
           cbRef.current.onHandoffStart?.(
             payload.name || "run_codex_task",
             payload.task || "",
@@ -513,28 +513,28 @@ export function useLiveVoice({
             log(`[Codex Event] ${payload.event.summary}`);
           }
         } else if (payload.type === "status") {
-          describe(payload.message || "Vodex is working...");
+          describe(payload.message || "Codex is working...");
           log(`[Status] ${payload.message}`);
         } else if (payload.type === "tool_call_failed") {
           clearToolResultFallback();
-          transition("thinking", "Vodex task failed.");
+          transition("thinking", "Codex task failed.");
           setAssistantPreview("");
           cbRef.current.onHandoffFailed?.(
             payload.name || "run_codex_task",
-            payload.message || "Vodex task failed.",
+            payload.message || "Codex task failed.",
           );
           log(`[Tool Call Failed] ${payload.name || "tool"}: ${payload.message}`);
         } else if (payload.type === "tool_result") {
           usedCodexRef.current = true;
           if (payload.background_job_id) {
-            transition("working", "Vodex is running in the background.");
+            transition("working", "Codex is running in the background.");
           } else {
-            transition("thinking", "Vodex task completed. Gemini is formulating a response.");
+            transition("thinking", "Codex task completed. Vodex is formulating a response.");
           }
           setAssistantPreview("");
           cbRef.current.onHandoff(
             payload.name || "run_codex_task",
-            String(payload.result || "").trim() || "Vodex task completed.",
+            String(payload.result || "").trim() || "Codex task completed.",
             payload.workdir || "",
             payload,
           );
@@ -543,7 +543,7 @@ export function useLiveVoice({
             toolResultFallbackTimerRef.current = window.setTimeout(() => {
               transition(
                 "live",
-                "Vodex result is available in chat. Gemini did not finish a final response.",
+                "Codex result is available in chat. Vodex did not finish a final response.",
               );
               cbRef.current.onHandoffTimeout?.();
               log(
@@ -560,7 +560,7 @@ export function useLiveVoice({
           const deliveryFailureMessage = liveVoiceStartDeliveryFailureMessage(payload.message);
           transition(
             "working",
-            "Vodex is still running. Gemini is reconnecting to follow its progress.",
+            "Codex is still running. Vodex is reconnecting to follow its progress.",
           );
           cbRef.current.onHandoffStartDeliveryFailed?.(deliveryFailureMessage);
           log(`[Tool Start Delivery Failed] ${deliveryFailureMessage}`);
@@ -568,7 +568,7 @@ export function useLiveVoice({
           transition("reconnecting", "Gemini is reconnecting after missing a tool response.");
           log(`[Tool Response Delivery Failed] ${payload.message}`);
         } else if (payload.type === "background_job_completed") {
-          const result = String(payload.result || "Vodex background task completed.").trim();
+          const result = String(payload.result || "Codex background task completed.").trim();
           const handoffId = String(payload.handoff?.id || "");
           setAssistantPreview("");
           cbRef.current.onHandoff("run_codex_task", result, payload.handoff?.workdir || "", {

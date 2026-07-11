@@ -34,15 +34,15 @@ export default function ChatTopBar({
   return (
     <div
       className={cn(
-        "flex items-center border-b border-line bg-surface-1/40 shrink-0",
-        isMobile ? "justify-center gap-4 px-3 py-2" : "justify-between px-5 py-2.5",
+        "flex shrink-0 items-center border-b border-line bg-surface-1/55 backdrop-blur-xl",
+        isMobile ? "justify-center gap-4 px-3 py-2.5" : "justify-between px-6 py-3",
       )}
     >
       {!isMobile && (
         <div className="flex min-w-0 items-center gap-3">
-          <h2 className="truncate text-[14px] font-semibold tracking-tight">{title}</h2>
+          <h1 className="truncate text-[15px] font-semibold tracking-[-0.015em]">{title}</h1>
           {messageCount > 0 && (
-            <span className="rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-fg-muted shrink-0">
+            <span className="shrink-0 rounded-full border border-line bg-surface-2 px-2 py-0.5 font-mono text-[10px] text-fg-muted">
               {messageCount} turns
             </span>
           )}
@@ -55,12 +55,13 @@ export default function ChatTopBar({
             <button
               key={item}
               onClick={() => onModeChange(item)}
+              aria-pressed={mode === item}
               className={cn(
-                "rounded px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider transition-colors",
-                mode === item ? "bg-surface-3 text-fg" : "text-fg-dim hover:text-fg",
+                "rounded-md px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-wider transition-all",
+                mode === item ? "bg-surface-3 text-fg shadow-sm" : "text-fg-dim hover:text-fg",
               )}
             >
-              {item === "codex" ? "vodex" : item}
+              {item === "codex" ? "codex" : "vodex"}
             </button>
           ))}
         </div>
@@ -68,7 +69,7 @@ export default function ChatTopBar({
         <button
           onClick={onExport}
           disabled={exportDisabled}
-          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider text-fg-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-2 px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-wider text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
           title="Export chat as markdown"
         >
           <Download className="h-3.5 w-3.5" />
@@ -79,8 +80,10 @@ export default function ChatTopBar({
           <button
             onClick={onToggleVoice}
             disabled={voiceDisabled}
+            aria-label={voiceActive ? "End live voice session" : "Start live voice session"}
+            aria-pressed={voiceActive}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed",
+              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-wider transition-all disabled:cursor-not-allowed disabled:opacity-40",
               voiceActive
                 ? "border-accent bg-accent/15 text-accent glow-accent"
                 : "border-line bg-surface-2 text-fg-muted hover:text-fg",

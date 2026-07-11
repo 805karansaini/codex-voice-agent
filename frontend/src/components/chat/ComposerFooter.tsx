@@ -3,6 +3,7 @@ import { ArrowUp, Mic, MicOff } from "lucide-react";
 
 import { cn } from "../../utils";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
+import type { CodexModel } from "../../types";
 
 type ComposerFooterProps = {
   isMobile: boolean;
@@ -21,10 +22,15 @@ type ComposerFooterProps = {
   busy: boolean;
   hasActiveProject: boolean;
   error: string;
+  codexModels: CodexModel[];
+  codexModel: string;
+  codexReasoningEffort: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
   onSubmit: () => void;
   onCancelTask: () => void;
+  onCodexModelChange: (model: string) => void;
+  onCodexReasoningEffortChange: (effort: string) => void;
   onToggleVoice: () => void;
   onToggleMute: () => void;
   onHoldToTalk: () => void;
@@ -48,25 +54,31 @@ export default function ComposerFooter({
   busy,
   hasActiveProject,
   error,
+  codexModels,
+  codexModel,
+  codexReasoningEffort,
   textareaRef,
   onInputChange,
   onSubmit,
   onCancelTask,
+  onCodexModelChange,
+  onCodexReasoningEffortChange,
   onToggleVoice,
   onToggleMute,
   onHoldToTalk,
   onReleaseToMute,
 }: ComposerFooterProps) {
   const canSend = Boolean(input.trim() && hasActiveProject && !busy);
+  const selectedCodexModel = codexModels.find((item) => item.model === codexModel);
 
   return (
     <footer
       className={cn(
-        "border-t border-line bg-surface-1/40 shrink-0",
-        isMobile ? "px-3 py-2.5" : "px-5 py-3",
+        "shrink-0 bg-gradient-to-t from-surface-0 via-surface-0/95 to-transparent",
+        isMobile ? "px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-2.5" : "px-6 pb-4 pt-3",
       )}
     >
-      <div className="mx-auto max-w-[760px]">
+      <div className="mx-auto max-w-[820px]">
         <div className="sr-only" aria-live="polite" aria-atomic="true">
           {liveStatusText}
         </div>
@@ -168,7 +180,7 @@ export default function ComposerFooter({
           </div>
         )}
 
-        <div className="rounded-lg border border-line bg-surface-1 ring-accent-focus transition-all overflow-hidden">
+        <div className="surface-elevated ring-accent-focus overflow-hidden rounded-xl border border-line bg-surface-1 transition-all">
           <textarea
             ref={textareaRef}
             value={input}
@@ -180,21 +192,51 @@ export default function ComposerFooter({
               }
             }}
             disabled={!hasActiveProject || busy}
-            rows={2}
+            rows={isMobile ? 2 : 3}
             placeholder={
               !hasActiveProject
                 ? isMobile
                   ? "Select a project to start..."
                   : "Create or select a project folder to start..."
                 : isMobile
-                  ? "Ask or describe changes..."
-                  : "Type operator commands, ask questions, or describe changes..."
+                  ? "Ask anything or describe a change..."
+                  : "Ask anything, describe a change, or plan your next task..."
             }
-            className="block w-full resize-none bg-transparent px-3.5 py-3 text-[13.5px] leading-relaxed text-fg placeholder:text-fg-dim focus:outline-none disabled:opacity-50"
+            className="block w-full resize-none bg-transparent px-4 py-3.5 text-[14px] leading-relaxed text-fg placeholder:text-fg-dim focus:outline-none disabled:opacity-50"
           />
 
           <div className="flex items-center justify-between border-t border-line-soft px-2 py-1.5 bg-surface-1/80">
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-2">
+              {codexModels.length > 0 && (
+                <>
+                  <select
+                    aria-label="Codex model"
+                    value={codexModel}
+                    onChange={(event) => onCodexModelChange(event.target.value)}
+                    disabled={busy || codexModels.length === 0}
+                    className="max-w-36 rounded border border-line bg-surface-2 px-2 py-1 text-[11px] text-fg"
+                  >
+                    {codexModels.map((item) => (
+                      <option key={item.id} value={item.model}>
+                        {item.displayName}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Codex reasoning effort"
+                    value={codexReasoningEffort}
+                    onChange={(event) => onCodexReasoningEffortChange(event.target.value)}
+                    disabled={busy || !selectedCodexModel}
+                    className="rounded border border-line bg-surface-2 px-2 py-1 text-[11px] text-fg"
+                  >
+                    {(selectedCodexModel?.supportedReasoningEfforts || []).map((item) => (
+                      <option key={item.reasoningEffort} value={item.reasoningEffort}>
+                        {item.reasoningEffort}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
               {voiceSupported && (
                 <button
                   title={voiceTitle}

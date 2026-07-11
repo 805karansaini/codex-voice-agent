@@ -59,7 +59,7 @@ export default function AppTitleBar({
 }: AppTitleBarProps) {
   if (isMobile) {
     return (
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-line bg-surface-1 px-3">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-line bg-surface-1/95 px-3 shadow-sm backdrop-blur-xl">
         <button
           onClick={() =>
             onMobileViewChange(
@@ -67,16 +67,21 @@ export default function AppTitleBar({
             )
           }
           className={cn(
-            "flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface-2 text-fg-muted",
+            "flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted transition-colors",
             (mobileView === "explorer" || mobileView === "files") &&
               "bg-surface-3 text-accent border-accent/30",
           )}
+          aria-label={
+            mobileView === "explorer" || mobileView === "files"
+              ? "Return to chat"
+              : "Open workspace"
+          }
         >
           <Menu className="h-4.5 w-4.5" />
         </button>
 
         <div className="flex flex-col items-center min-w-0">
-          <span className="text-[13px] font-semibold tracking-tight truncate max-w-[200px]">
+          <span className="max-w-[220px] truncate text-[13.5px] font-semibold tracking-tight">
             {mobileView === "explorer"
               ? "Workspace"
               : mobileView === "files"
@@ -86,7 +91,7 @@ export default function AppTitleBar({
                   : activeProjectName}
           </span>
           {mobileView === "chat" && activeChatTitle && (
-            <span className="text-[10px] text-fg-dim truncate max-w-[200px] leading-tight">
+            <span className="max-w-[220px] truncate text-[10.5px] leading-tight text-fg-muted">
               {activeChatTitle}
             </span>
           )}
@@ -95,9 +100,10 @@ export default function AppTitleBar({
         <button
           onClick={() => onMobileViewChange(mobileView === "console" ? "chat" : "console")}
           className={cn(
-            "flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface-2 text-fg-muted relative",
+            "relative flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted transition-colors",
             mobileView === "console" && "bg-surface-3 text-accent border-accent/30",
           )}
+          aria-label={mobileView === "console" ? "Return to chat" : "Open console"}
         >
           <SquareTerminal className="h-4.5 w-4.5" />
           {voiceActive && (
@@ -109,17 +115,17 @@ export default function AppTitleBar({
   }
 
   return (
-    <header className="flex h-11 shrink-0 items-center gap-4 border-b border-line bg-surface-1 px-3">
+    <header className="flex h-13 shrink-0 items-center gap-4 border-b border-line bg-surface-1/95 px-3.5 shadow-sm backdrop-blur-xl">
       <div className="flex items-center gap-2 min-w-0">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent/15 text-accent">
-          <Sparkles className="h-3.5 w-3.5" />
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/25 bg-accent/15 text-accent shadow-sm">
+          <Sparkles className="h-4 w-4" />
         </div>
-        <span className="text-[13px] font-semibold tracking-tight">Vodex</span>
+        <span className="text-[14px] font-semibold tracking-[-0.02em]">Vodex</span>
         <span className="mx-1 text-fg-dim">/</span>
-        <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted hover:bg-surface-2 hover:text-fg">
+        <span className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted">
           <Folder className="h-3.5 w-3.5 text-accent/80" />
           {activeProjectName}
-        </button>
+        </span>
         {activeChatTitle && (
           <>
             <span className="text-fg-dim">/</span>
@@ -131,23 +137,24 @@ export default function AppTitleBar({
         {projectInfo?.is_git && projectInfo.branch && (
           <>
             <span className="text-fg-dim">/</span>
-            <button className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-[11px] text-fg-muted hover:bg-surface-2 hover:text-accent">
+            <span className="flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 font-mono text-[10.5px] text-fg-muted">
               <GitBranch className="h-3 w-3" />
               {projectInfo.branch}
-            </button>
+            </span>
           </>
         )}
       </div>
 
       <div className="ml-auto flex items-center gap-2">
         <div className="relative">
-          <div className="flex items-center gap-2 rounded-md border border-line bg-surface-2 px-2.5 py-1 text-[11.5px] text-fg-muted">
+          <div className="flex h-8 items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 text-[11.5px] text-fg-muted transition-colors focus-within:border-accent/60 focus-within:bg-surface-1">
             <Search className="h-3.5 w-3.5" />
             <input
               value={searchQuery}
               onChange={(event) => onSearchQueryChange(event.target.value)}
               placeholder="Search chats"
-              className="w-48 bg-transparent text-[11.5px] text-fg outline-none placeholder:text-fg-dim"
+              aria-label="Search chats"
+              className="w-52 bg-transparent text-[12px] text-fg outline-none placeholder:text-fg-dim"
             />
           </div>
           {searchQuery.trim().length >= 2 && (

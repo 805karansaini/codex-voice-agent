@@ -8,6 +8,7 @@ import type {
   ProjectFileEntry,
   SearchResult,
   DoctorCheck,
+  CodexModel,
 } from "../types";
 
 const configuredApiBase: unknown = import.meta.env?.VITE_API_BASE_URL;
@@ -87,6 +88,8 @@ function streamPayload(options: StreamOptions) {
     workdir: options.workdir,
     project_id: options.projectId,
     chat_id: options.chatId,
+    model: options.model,
+    reasoning_effort: options.reasoningEffort,
   };
 }
 
@@ -267,18 +270,29 @@ export interface StreamOptions {
   workdir: string;
   projectId: string;
   chatId: string;
+  model?: string;
+  reasoningEffort?: string;
+}
+
+export async function fetchCodexModels(): Promise<CodexModel[]> {
+  const response = await apiJson<{ models: CodexModel[] }>(
+    "/api/codex/models",
+    {},
+    "Failed to load Codex models",
+  );
+  return response.models;
 }
 
 export async function enqueueCodexJob(options: StreamOptions): Promise<CodexJob> {
   return apiJson(
     "/api/codex/jobs",
     jsonPost(streamPayload(options)),
-    "Failed to enqueue Vodex job",
+    "Failed to enqueue Codex job",
   );
 }
 
 export async function fetchCodexJob(jobId: string): Promise<CodexJob> {
-  return apiJson(`/api/codex/jobs/${encodeURIComponent(jobId)}`, {}, "Failed to fetch Vodex job");
+  return apiJson(`/api/codex/jobs/${encodeURIComponent(jobId)}`, {}, "Failed to fetch Codex job");
 }
 
 export async function postChatStream(

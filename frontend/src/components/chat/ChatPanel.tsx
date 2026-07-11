@@ -1,6 +1,6 @@
 import type { ChangeEvent, RefObject } from "react";
 
-import type { ChatArtifact, Message, Project } from "../../types";
+import type { ChatArtifact, CodexModel, Message, Project } from "../../types";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 import ChatStream from "./ChatStream";
 import ChatTopBar from "./ChatTopBar";
@@ -34,6 +34,9 @@ type ChatPanelProps = {
   input: string;
   hasActiveProject: boolean;
   error: string;
+  codexModels: CodexModel[];
+  codexModel: string;
+  codexReasoningEffort: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onModeChange: (mode: ChatMode) => void;
   onExport: () => void;
@@ -45,6 +48,8 @@ type ChatPanelProps = {
   onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onSubmit: () => void;
   onCancelTask: () => void;
+  onCodexModelChange: (model: string) => void;
+  onCodexReasoningEffortChange: (effort: string) => void;
   onToggleMute: () => void;
   onHoldToTalk: () => void;
   onReleaseToMute: () => void;
@@ -76,6 +81,9 @@ export default function ChatPanel({
   input,
   hasActiveProject,
   error,
+  codexModels,
+  codexModel,
+  codexReasoningEffort,
   textareaRef,
   onModeChange,
   onExport,
@@ -87,12 +95,14 @@ export default function ChatPanel({
   onInputChange,
   onSubmit,
   onCancelTask,
+  onCodexModelChange,
+  onCodexReasoningEffortChange,
   onToggleMute,
   onHoldToTalk,
   onReleaseToMute,
 }: ChatPanelProps) {
   return (
-    <main className="flex flex-1 min-w-0 min-h-0 flex-col bg-surface-0 relative">
+    <main className="workspace-canvas relative flex min-h-0 min-w-0 flex-1 flex-col">
       <ChatTopBar
         isMobile={isMobile}
         title={title}
@@ -137,10 +147,15 @@ export default function ChatPanel({
         busy={busy}
         hasActiveProject={hasActiveProject}
         error={error}
+        codexModels={codexModels}
+        codexModel={codexModel}
+        codexReasoningEffort={codexReasoningEffort}
         textareaRef={textareaRef}
         onInputChange={onInputChange}
         onSubmit={onSubmit}
         onCancelTask={onCancelTask}
+        onCodexModelChange={onCodexModelChange}
+        onCodexReasoningEffortChange={onCodexReasoningEffortChange}
         onToggleVoice={onToggleVoice}
         onToggleMute={onToggleMute}
         onHoldToTalk={onHoldToTalk}

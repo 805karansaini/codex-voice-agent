@@ -12,13 +12,23 @@ type UseChatSubmitOptions = {
   mode: ChatMode;
   resetComposer: () => void;
   store: ProjectStore;
-  streamAgent: (message: string, project: Project, chatId: string) => Promise<void>;
+  streamAgent: (
+    message: string,
+    project: Project,
+    chatId: string,
+    model?: string,
+    reasoningEffort?: string,
+  ) => Promise<void>;
   streamCodex: (
     task: string,
     project: Project,
     chatId: string,
     userMessageId: string,
+    model?: string,
+    reasoningEffort?: string,
   ) => Promise<void>;
+  codexModel?: string;
+  codexReasoningEffort?: string;
   activeAbortControllerRef: { current: AbortController | null };
   setError: (message: string) => void;
 };
@@ -32,6 +42,8 @@ export function useChatSubmit({
   streamCodex,
   activeAbortControllerRef,
   setError,
+  codexModel,
+  codexReasoningEffort,
 }: UseChatSubmitOptions) {
   const [busy, setBusy] = useState(false);
 
@@ -66,9 +78,9 @@ export function useChatSubmit({
 
       try {
         if (mode === "codex") {
-          await streamCodex(text, project, chatId, userMessageId);
+          await streamCodex(text, project, chatId, userMessageId, codexModel, codexReasoningEffort);
         } else {
-          await streamAgent(text, project, chatId);
+          await streamAgent(text, project, chatId, codexModel, codexReasoningEffort);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
@@ -87,6 +99,8 @@ export function useChatSubmit({
       store,
       streamAgent,
       streamCodex,
+      codexModel,
+      codexReasoningEffort,
     ],
   );
 
