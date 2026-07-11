@@ -32,9 +32,7 @@ function defaultHosts() {
   const addresses = interfaceAddresses();
   return unique([
     "127.0.0.1",
-    ...addresses.filter(
-      (address) => isPrivateLanAddress(address) || isTailscaleAddress(address),
-    ),
+    ...addresses.filter((address) => isPrivateLanAddress(address) || isTailscaleAddress(address)),
   ]);
 }
 

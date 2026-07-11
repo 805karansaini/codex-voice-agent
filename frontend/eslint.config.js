@@ -54,7 +54,18 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/**/*.{ts,tsx}", "vite.config.ts"],
+    files: ["vite.config.ts"],
+    extends: [tseslint.configs.recommendedTypeChecked],
+    languageOptions: {
+      globals: nodeGlobals,
+      parserOptions: {
+        project: ["./tsconfig.node.json"],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ["src/**/*.{ts,tsx}"],
     extends: [tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       ecmaVersion: 2020,
@@ -74,12 +85,6 @@ export default tseslint.config(
       "react-hooks/immutability": "off",
       "react-hooks/refs": "off",
       "react-hooks/set-state-in-effect": "off",
-      "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-unsafe-argument": "off",
-      "@typescript-eslint/no-unsafe-assignment": "off",
-      "@typescript-eslint/no-unsafe-call": "off",
-      "@typescript-eslint/no-unsafe-member-access": "off",
-      "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unused-vars": [
         "warn",
         {

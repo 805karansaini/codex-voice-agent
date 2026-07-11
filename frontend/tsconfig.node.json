@@ -1,9 +1,13 @@
 {
   "compilerOptions": {
     "composite": true,
+    "target": "ES2020",
     "module": "ESNext",
-    "moduleResolution": "Node",
-    "allowSyntheticDefaultImports": true
+    "moduleResolution": "Bundler",
+    "allowSyntheticDefaultImports": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.node.tsbuildinfo",
+    "types": ["node"]
   },
   "include": ["vite.config.ts"]
 }

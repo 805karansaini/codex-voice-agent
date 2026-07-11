@@ -34,8 +34,14 @@ include = ["backend/app", "tests"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "strict"
+
 [dependency-groups]
 dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=0.23.7",
     "pyright>=1.1.410",
     "ruff>=0.15.17",
 ]

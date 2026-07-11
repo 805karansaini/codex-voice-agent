@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { highlightCode, languageForCodeFence, languageForPath } from "../src/utils/syntaxHighlight.ts";
+import {
+  highlightCode,
+  languageForCodeFence,
+  languageForPath,
+} from "../src/utils/syntaxHighlight.ts";
 
 test("recognizes common file types and Dockerfiles", () => {
   assert.equal(languageForPath("src/server.py"), "python");
