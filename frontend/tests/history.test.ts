@@ -3,9 +3,24 @@ import test from "node:test";
 
 import {
   historyRowsToMessages,
+  insertMessageBefore,
   mergeBackendHistoryWithLocalMessages,
 } from "../src/utils/history.ts";
 import type { ChatArtifact, CodexTimelineEvent, HistoryRow, Message } from "../src/types.ts";
+
+test("insertMessageBefore keeps a late live transcript ahead of its assistant response", () => {
+  const assistant = { id: "assistant-live", role: "assistant" as const, text: "Working" };
+  const user = { id: "user-live", role: "user" as const, text: "New request" };
+
+  assert.deepEqual(insertMessageBefore([assistant], user, assistant.id), [user, assistant]);
+});
+
+test("insertMessageBefore appends when the target response is unavailable", () => {
+  const existing = { id: "existing", role: "assistant" as const, text: "Earlier" };
+  const user = { id: "user-live", role: "user" as const, text: "New request" };
+
+  assert.deepEqual(insertMessageBefore([existing], user, "missing"), [existing, user]);
+});
 
 test("historyRowsToMessages keeps only chat message roles", () => {
   const rows = [

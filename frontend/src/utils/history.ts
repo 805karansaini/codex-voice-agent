@@ -1,5 +1,16 @@
 import type { HistoryRow, Message } from "../types";
 
+export function insertMessageBefore(
+  messages: Message[],
+  message: Message,
+  beforeId?: string | null,
+): Message[] {
+  if (!beforeId) return [...messages, message];
+  const index = messages.findIndex((item) => item.id === beforeId);
+  if (index < 0) return [...messages, message];
+  return [...messages.slice(0, index), message, ...messages.slice(index)];
+}
+
 export function historyRowsToMessages(rows: HistoryRow[]): Message[] {
   return rows
     .filter(

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Project, Chat, Message } from "../types";
 import * as api from "../services/api";
 import { loadJSON, saveJSON } from "../utils";
-import { mergeBackendHistoryWithLocalMessages } from "../utils/history";
+import { insertMessageBefore, mergeBackendHistoryWithLocalMessages } from "../utils/history";
 
 const LS_ACTIVE = "cva.activeProject.v1";
 const LS_ACTIVE_CHAT = "cva.activeChat.v1";
@@ -319,6 +319,13 @@ export function useProjectStore() {
     }));
   }, []);
 
+  const insertMessage = useCallback((chatId: string, msg: Message, beforeId?: string | null) => {
+    setMessagesByChat((current) => ({
+      ...current,
+      [chatId]: insertMessageBefore(current[chatId] || [], msg, beforeId),
+    }));
+  }, []);
+
   const updateMessage = useCallback(
     (chatId: string, id: string, patch: (m: Message) => Message) => {
       setMessagesByChat((current) => {
@@ -358,6 +365,7 @@ export function useProjectStore() {
     removeChat,
     clearChatThread,
     appendMessage,
+    insertMessage,
     updateMessage,
   };
 }

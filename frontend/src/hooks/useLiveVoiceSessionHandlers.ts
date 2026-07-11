@@ -136,12 +136,16 @@ export function useLiveVoiceSessionHandlers({
         if (!activeUserVoiceMsgIdRef.current) {
           const id = crypto.randomUUID();
           activeUserVoiceMsgIdRef.current = id;
-          store.appendMessage(ctx.chatId, {
-            id,
-            role: "user",
-            text,
-            workdir: ctx.project.path,
-          });
+          store.insertMessage(
+            ctx.chatId,
+            {
+              id,
+              role: "user",
+              text,
+              workdir: ctx.project.path,
+            },
+            activeAssistantVoiceMsgIdRef.current,
+          );
           if ((store.messagesByChat[ctx.chatId] || []).length === 0) {
             store.renameChat(ctx.project.id, ctx.chatId, chatTitleFrom(text || "Voice message"));
           }
