@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from ..prompting import improve_codex_task_prompt
 from ..services.background_jobs import CodexBackgroundJob
+from ..codex_runner import list_codex_models
 
 
 class CodexJobRequest(BaseModel):
@@ -15,6 +16,8 @@ class CodexJobRequest(BaseModel):
     workdir: str | None = None
     project_id: str | None = None
     chat_id: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 def create_router(
@@ -38,8 +41,14 @@ def create_router(
             workdir=workdir,
             project_id=req.project_id,
             chat_id=req.chat_id,
+            model=req.model,
+            reasoning_effort=req.reasoning_effort,
         )
         return job.to_dict()
+
+    @router.get("/api/codex/models")
+    async def get_codex_models() -> dict[str, object]:
+        return {"models": await list_codex_models()}
 
     @router.get("/api/codex/jobs")
     async def list_codex_jobs(chat_id: str | None = None) -> list[dict[str, object]]:

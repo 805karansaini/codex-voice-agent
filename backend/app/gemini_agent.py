@@ -222,6 +222,8 @@ async def ask_gemini_stream(
     conversation_id: str | None = None,
     conversation_context: str | None = None,
     project_root: str | None = None,
+    codex_model: str | None = None,
+    codex_reasoning_effort: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     if not settings.google_api_key:
         yield {"type": "error", "message": "GOOGLE_API_KEY is not set"}
@@ -354,6 +356,8 @@ async def ask_gemini_stream(
                     settings,
                     cancel_token,
                     conversation_id,
+                    codex_model,
+                    codex_reasoning_effort,
                 ):
                     if event.get("type") == "codex_event":
                         codex_events.append(event)

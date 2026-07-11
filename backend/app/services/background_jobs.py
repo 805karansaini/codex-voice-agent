@@ -18,7 +18,7 @@ CreateToolArtifact = Callable[
     [str | None, str | None, str, object, str, str | None], dict[str, object] | None
 ]
 CreateChangeArtifact = Callable[[str | None, str | None, list[object]], dict[str, object] | None]
-CodexStreamRunner = Callable[[str, str, Settings, Any | None, str | None], AsyncIterator[dict[str, Any]]]
+CodexStreamRunner = Callable[..., AsyncIterator[dict[str, Any]]]
 
 
 @dataclass
@@ -29,6 +29,8 @@ class CodexBackgroundJob:
     workdir: str
     project_id: str | None
     chat_id: str | None
+    model: str | None = None
+    reasoning_effort: str | None = None
     status: str = "queued"
     result: str = ""
     error: str = ""
@@ -49,6 +51,8 @@ class CodexBackgroundJob:
             "workdir": self.workdir,
             "project_id": self.project_id,
             "chat_id": self.chat_id,
+            "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
             "status": self.status,
             "result": self.result,
             "error": self.error,
@@ -158,6 +162,8 @@ class BackgroundJobService:
                 self.settings,
                 None,
                 job.chat_id,
+                job.model,
+                job.reasoning_effort,
             ):
                 if event.get("type") == "codex_event":
                     job.codex_events.append(dict(event))

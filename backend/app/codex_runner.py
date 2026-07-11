@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 import subprocess
 import sqlite3
 from dataclasses import dataclass
@@ -11,6 +12,10 @@ from .settings import Settings, get_settings
 
 _CODEX_STATUS_FIRST_DELAY_SECONDS = 20
 _CODEX_STATUS_REPEAT_SECONDS = 60
+
+
+def _installed_codex_bin() -> str | None:
+    return shutil.which("codex")
 
 
 class _InterruptibleTurn(Protocol):
@@ -202,6 +207,8 @@ class _ThreadSession:
     workdir: str
     approval_mode: object
     sandbox: object
+    model: str | None
+    reasoning_effort: str | None
     lock: asyncio.Lock
     active_turn: _CodexTurn | None = None
     last_used: datetime | None = None
@@ -329,7 +336,11 @@ async def _evict_idle_sessions_locked() -> list[_ThreadSession]:
 
 
 async def _get_thread_session(
-    workdir: str, settings: Settings, conversation_id: str | None = None
+    workdir: str,
+    settings: Settings,
+    conversation_id: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> _ThreadSession:
     from openai_codex import AsyncCodex, CodexConfig
 
@@ -349,6 +360,8 @@ async def _get_thread_session(
             and session.workdir == str(root)
             and session.approval_mode == approval_mode
             and session.sandbox == sandbox
+            and session.model == model
+            and session.reasoning_effort == reasoning_effort
         ):
             session.last_used = _now()
             return session
@@ -362,7 +375,10 @@ async def _get_thread_session(
     if old_session:
         await _close_session(old_session)
 
-    codex = cast(_CodexClient, AsyncCodex(CodexConfig(cwd=str(root))))
+    codex = cast(
+        _CodexClient,
+        AsyncCodex(CodexConfig(codex_bin=_installed_codex_bin(), cwd=str(root))),
+    )
     await codex.__aenter__()
     saved = _read_thread_mapping(settings, conversation_id)
     thread = None
@@ -381,6 +397,8 @@ async def _get_thread_session(
                     approval_mode=approval_mode,
                     sandbox=sandbox,
                     cwd=str(root),
+                    model=model,
+                    config={"model_reasoning_effort": reasoning_effort} if reasoning_effort else None,
                 ),
             )
         except Exception:
@@ -388,7 +406,13 @@ async def _get_thread_session(
     if thread is None:
         thread = cast(
             _CodexThread,
-            await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root)),
+            await codex.thread_start(
+                approval_mode=approval_mode,
+                sandbox=sandbox,
+                cwd=str(root),
+                model=model,
+                config={"model_reasoning_effort": reasoning_effort} if reasoning_effort else None,
+            ),
         )
     _save_thread_mapping(
         settings,
@@ -402,6 +426,8 @@ async def _get_thread_session(
         workdir=str(root),
         approval_mode=approval_mode,
         sandbox=sandbox,
+        model=model,
+        reasoning_effort=reasoning_effort,
         lock=asyncio.Lock(),
         last_used=_now(),
     )
@@ -462,6 +488,21 @@ def _dump_model(obj: Any) -> dict[str, Any]:
     if hasattr(obj, "model_dump"):
         return obj.model_dump(mode="json", by_alias=True, exclude_none=True)
     return {}
+
+
+async def list_codex_models() -> list[dict[str, Any]]:
+    from openai_codex import CodexConfig
+    from openai_codex.client import CodexClient
+
+    def load() -> object:
+        with CodexClient(CodexConfig(codex_bin=_installed_codex_bin())) as codex:
+            codex.initialize()
+            # The generated response schema can lag behind new reasoning-effort values.
+            return codex._request_raw("model/list", {"includeHidden": False})
+
+    response = await asyncio.to_thread(load)
+    data = response.get("data", []) if isinstance(response, dict) else []
+    return [item for item in data if isinstance(item, dict) and not item.get("hidden")]
 
 
 def _enum_value(value: Any) -> str | None:
@@ -606,7 +647,9 @@ async def _run_ephemeral_turn(
 
     root = resolve_workdir(workdir)
     approval_mode, sandbox = _codex_modes(settings)
-    async with AsyncCodex(CodexConfig(cwd=str(root))) as codex:
+    async with AsyncCodex(
+        CodexConfig(codex_bin=_installed_codex_bin(), cwd=str(root))
+    ) as codex:
         thread = cast(
             _CodexThread,
             await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root)),
@@ -654,9 +697,13 @@ async def _stream_turn(
                         item = _root_item(raw_item)
                         if getattr(item, "type", None) == "agentMessage":
                             final = str(getattr(item, "text", "") or "").strip()
+                if not final:
+                    raise RuntimeError(
+                        f"Codex completed with status {status or 'unknown'} but returned no response"
+                    )
                 yield {
                     "type": "done",
-                    "text": final or "Done.",
+                    "text": final,
                     "workdir": workdir,
                     "thread_id": getattr(thread, "id", None),
                     "turn_id": getattr(turn, "id", None),
@@ -710,6 +757,8 @@ async def run_codex_stream(
     settings: Settings,
     cancel_token: CancellationToken | None = None,
     conversation_id: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     if settings.codex_auto_checkpoint:
         checkpoint = create_pre_codex_checkpoint(workdir)
@@ -722,7 +771,9 @@ async def run_codex_stream(
         }
 
     if conversation_id:
-        session = await _get_thread_session(workdir, settings, conversation_id)
+        session = await _get_thread_session(
+            workdir, settings, conversation_id, model, reasoning_effort
+        )
         async with session.lock:
             async for item in _stream_turn(
                 session.thread, prompt, session.workdir, cancel_token, session
@@ -740,6 +791,8 @@ async def run_codex_stream_with_timer(
     settings: Settings,
     cancel_token: CancellationToken | None = None,
     conversation_id: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     queue: asyncio.Queue = asyncio.Queue()
     done = False
@@ -749,7 +802,7 @@ async def run_codex_stream_with_timer(
         nonlocal done, latest_status
         try:
             async for event in run_codex_stream(
-                prompt, workdir, settings, cancel_token, conversation_id
+                prompt, workdir, settings, cancel_token, conversation_id, model, reasoning_effort
             ):
                 if event.get("type") == "codex_event":
                     latest_status = str(event.get("summary") or latest_status)

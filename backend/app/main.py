@@ -482,6 +482,8 @@ async def _enqueue_codex_background_job(
     workdir: str,
     project_id: str | None,
     chat_id: str | None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
     source: str = "direct",
 ) -> _CodexBackgroundJob:
     job = _CodexBackgroundJob(
@@ -491,6 +493,8 @@ async def _enqueue_codex_background_job(
         workdir=workdir,
         project_id=project_id,
         chat_id=chat_id,
+        model=model,
+        reasoning_effort=reasoning_effort,
     )
     await _store_job(job)
     history.append(
@@ -1220,6 +1224,8 @@ class ChatRequest(BaseModel):
     workdir: str | None = None
     project_id: str | None = None
     chat_id: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 class ChatMetaRequest(BaseModel):
@@ -1466,6 +1472,8 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                 conversation_id=req.chat_id,
                 conversation_context=conversation_context,
                 project_root=project_root,
+                codex_model=req.model,
+                codex_reasoning_effort=req.reasoning_effort,
             ):
                 if event.get("type") == "done":
                     final_text = str(event.get("text") or "")
