@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CodexTimelineEvent, GeminiLiveUsage, LiveVoiceState } from "../types";
 import type { ServerEvent } from "../types/protocol";
-import { parseServerEventJson } from "../types/protocol";
+import { parseServerEventJson } from "../types/protocol.ts";
 import { getWebSocketUrl } from "../services/api";
 import {
   AudioStreamPlayer,

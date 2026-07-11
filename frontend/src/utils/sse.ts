@@ -1,5 +1,5 @@
 import type { ServerEvent } from "../types/protocol";
-import { parseServerEventJson } from "../types/protocol";
+import { parseServerEventJson } from "../types/protocol.ts";
 
 export async function readSseStream(res: Response, onEvent: (evt: ServerEvent) => void) {
   if (!res.body) return;

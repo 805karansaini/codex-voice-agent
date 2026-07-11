@@ -1,5 +1,5 @@
 import type { CodexJob } from "../types";
-import { fetchCodexJob } from "./api";
+import { fetchCodexJob } from "./api.ts";
 
 export type CodexJobHandlers = {
   isCurrent?: () => boolean;
