@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Copy, Check } from "lucide-react";
 import { highlightCode, languageForCodeFence } from "../../utils/syntaxHighlight";
+import { safeExternalUrl } from "../../utils/links";
 
 interface MarkdownRendererProps {
   content: string;
@@ -231,7 +232,8 @@ const parseLinks = (text: string, keyPrefix: string): React.ReactNode[] => {
     const match = part.match(/\[(.*?)\]\((.*?)\)/);
     if (match) {
       const linkText = match[1];
-      const linkUrl = match[2];
+      const linkUrl = safeExternalUrl(match[2]);
+      if (!linkUrl) return linkText;
       return (
         <a
           key={`${keyPrefix}-link-${lIdx}`}

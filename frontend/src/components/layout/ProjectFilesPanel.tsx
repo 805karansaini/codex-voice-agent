@@ -7,7 +7,7 @@ import {
   FolderOpen,
   RefreshCw,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, ProjectFileEntry } from "../../types";
 import * as api from "../../services/api";
@@ -82,14 +82,17 @@ export default function ProjectFilesPanel({
   const [error, setError] = useState("");
   const [truncated, setTruncated] = useState(false);
   const restoredProjectRef = useRef("");
+  const loadRequestRef = useRef(0);
   const tree = useMemo(() => makeTree(entries), [entries]);
 
-  const loadFiles = async () => {
+  const loadFiles = useCallback(async () => {
     if (!project) return;
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
     setError("");
     try {
       const result = await api.fetchProjectFiles(project.id);
+      if (requestId !== loadRequestRef.current) return;
       setEntries(result.entries);
       setTruncated(result.truncated);
       setLoadedDirectories(new Set([""]));
@@ -100,15 +103,17 @@ export default function ProjectFilesPanel({
         const children = await Promise.all(
           saved.map(async (folder) => (await api.fetchProjectFiles(project.id, folder)).entries),
         );
+        if (requestId !== loadRequestRef.current) return;
         setEntries((current) => mergeFileEntries(current, children.flat()));
         setLoadedDirectories(new Set(["", ...saved]));
       }
     } catch (reason) {
+      if (requestId !== loadRequestRef.current) return;
       setError(reason instanceof Error ? reason.message : "Could not load project files");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
-  };
+  }, [project]);
 
   useEffect(() => {
     setEntries([]);
@@ -117,7 +122,10 @@ export default function ProjectFilesPanel({
     setLoadedDirectories(new Set());
     restoredProjectRef.current = "";
     if (project) void loadFiles();
-  }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      loadRequestRef.current += 1;
+    };
+  }, [loadFiles, project]);
 
   useEffect(() => {
     if (!project || restoredProjectRef.current !== project.id) return;
@@ -127,16 +135,19 @@ export default function ProjectFilesPanel({
 
   const loadDirectory = async (path: string) => {
     if (!project || loadedDirectories.has(path)) return;
+    const requestId = loadRequestRef.current;
     setLoading(true);
     try {
       const result = await api.fetchProjectFiles(project.id, path);
+      if (requestId !== loadRequestRef.current) return;
       setEntries((current) => mergeFileEntries(current, result.entries));
       setLoadedDirectories((current) => new Set(current).add(path));
       setTruncated((current) => current || result.truncated);
     } catch (reason) {
+      if (requestId !== loadRequestRef.current) return;
       setError(reason instanceof Error ? reason.message : "Could not load folder");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   };
 

@@ -1,4 +1,7 @@
-export async function readSseStream(res: Response, onEvent: (evt: any) => void) {
+import type { ServerEvent } from "../types/protocol";
+import { parseServerEventJson } from "../types/protocol";
+
+export async function readSseStream(res: Response, onEvent: (evt: ServerEvent) => void) {
   if (!res.body) return;
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -17,11 +20,8 @@ export async function readSseStream(res: Response, onEvent: (evt: any) => void) 
         .map((line) => line.slice(5).trimStart())
         .join("\n");
       if (!data) continue;
-      try {
-        onEvent(JSON.parse(data.trim()));
-      } catch {
-        // Ignore malformed stream frames and keep reading the stream.
-      }
+      const event = parseServerEventJson(data.trim());
+      if (event) onEvent(event);
     }
   }
 }

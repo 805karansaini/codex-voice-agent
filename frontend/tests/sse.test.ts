@@ -23,12 +23,15 @@ test("readSseStream parses events split across chunks", async () => {
     responseFromChunks([
       'data: {"type":"delta","text":"hel',
       'lo"}\n\n',
-      'data: {"type":"done"}\n\n',
+      'data: {"type":"done","text":"Done."}\n\n',
     ]),
     (event) => events.push(event),
   );
 
-  assert.deepEqual(events, [{ type: "delta", text: "hello" }, { type: "done" }]);
+  assert.deepEqual(events, [
+    { type: "delta", text: "hello" },
+    { type: "done", text: "Done." },
+  ]);
 });
 
 test("readSseStream joins multiline data frames before parsing JSON", async () => {
@@ -45,12 +48,16 @@ test("readSseStream joins multiline data frames before parsing JSON", async () =
   assert.deepEqual(events, [{ type: "delta", text: "hello" }]);
 });
 
-test("readSseStream skips malformed frames and continues reading", async () => {
+test("readSseStream skips malformed and unknown frames and continues reading", async () => {
   const events: unknown[] = [];
   await readSseStream(
-    responseFromChunks(["data: not-json\n\n", 'data: {"type":"ok","value":1}\n\n']),
+    responseFromChunks([
+      "data: not-json\n\n",
+      'data: {"type":"unknown","value":1}\n\n',
+      'data: {"type":"status","message":"Working"}\n\n',
+    ]),
     (event) => events.push(event),
   );
 
-  assert.deepEqual(events, [{ type: "ok", value: 1 }]);
+  assert.deepEqual(events, [{ type: "status", message: "Working" }]);
 });
