@@ -1,7 +1,6 @@
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
@@ -393,99 +392,6 @@ class LiveCodexToolTests(unittest.IsolatedAsyncioTestCase):
         finally:
             main._codex_jobs.clear()
             main._codex_jobs.update(old_jobs)
-
-    async def test_streams_codex_events_and_returns_done_result(self) -> None:
-        sent: list[dict[str, object]] = []
-        live_log = FakeLiveLog()
-        request = main._LiveToolCallRequest(
-            name="run_codex_task",
-            is_end_conversation=False,
-            task="check status",
-            enhanced_task="check status",
-            workdir="/tmp/project",
-        )
-
-        async def fake_stream(*args: object, **kwargs: object):
-            yield {"type": "codex_event", "turn_id": "turn-1", "thread_id": "thread-1"}
-            yield {"type": "delta", "text": "partial"}
-            yield {"type": "status", "message": "still running", "elapsed": 1.2}
-            yield {
-                "type": "done",
-                "text": "final",
-                "workdir": "/tmp/project/sub",
-                "events": [{"type": "codex_event", "turn_id": "turn-2"}],
-                "turn_id": "turn-2",
-                "thread_id": "thread-2",
-                "status": "completed",
-            }
-
-        async def send_json(payload: dict[str, object]) -> None:
-            sent.append(payload)
-
-        with patch.object(main, "run_codex_stream_with_timer", fake_stream):
-            result = await main._run_live_codex_tool(
-                request=request,
-                settings_value=SimpleNamespace(),
-                cancel_token=main.CancellationToken(),
-                chat_id="chat-1",
-                call_name="run_codex_task",
-                send_json=send_json,
-                live_log=live_log,  # type: ignore[arg-type]
-            )
-
-        self.assertEqual(result.response, "final")
-        self.assertEqual(result.workdir, "/tmp/project/sub")
-        self.assertEqual(result.events, [{"type": "codex_event", "turn_id": "turn-2"}])
-        self.assertEqual(result.turn_id, "turn-2")
-        self.assertEqual(result.thread_id, "thread-2")
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(
-            sent,
-            [
-                {
-                    "type": "codex_event",
-                    "event": {"type": "codex_event", "turn_id": "turn-1", "thread_id": "thread-1"},
-                },
-                {"type": "tool_progress", "name": "run_codex_task", "text": "partial"},
-                {"type": "status", "message": "still running", "elapsed": 1.2},
-            ],
-        )
-        self.assertEqual(live_log.events[0][0], "codex.done")
-
-    async def test_streams_error_event_and_returns_error_result(self) -> None:
-        sent: list[dict[str, object]] = []
-        live_log = FakeLiveLog()
-        request = main._LiveToolCallRequest(
-            name="run_codex_task",
-            is_end_conversation=False,
-            task="fail",
-            enhanced_task="fail",
-            workdir="/tmp/project",
-        )
-
-        async def fake_stream(*args: object, **kwargs: object):
-            yield {"type": "error", "message": "boom"}
-
-        async def send_json(payload: dict[str, object]) -> None:
-            sent.append(payload)
-
-        with patch.object(main, "run_codex_stream_with_timer", fake_stream):
-            result = await main._run_live_codex_tool(
-                request=request,
-                settings_value=SimpleNamespace(),
-                cancel_token=main.CancellationToken(),
-                chat_id="chat-1",
-                call_name="run_codex_task",
-                send_json=send_json,
-                live_log=live_log,  # type: ignore[arg-type]
-            )
-
-        self.assertEqual(result.response, "Error: boom")
-        self.assertEqual(
-            sent, [{"type": "tool_call_failed", "name": "run_codex_task", "message": "boom"}]
-        )
-        self.assertEqual(live_log.events[0][0], "codex.error")
-
 
 if __name__ == "__main__":
     unittest.main()

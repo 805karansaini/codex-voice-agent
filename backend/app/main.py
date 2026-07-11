@@ -4,7 +4,6 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -24,7 +23,6 @@ from .codex_runner import (
     close_codex_thread_session,
     close_codex_thread_sessions,
     close_codex_thread_sessions_for,
-    interrupt_codex_thread_session,
     resolve_workdir,
     run_codex_stream_with_timer,
 )
@@ -36,11 +34,13 @@ from .history import (
     ConsoleStore,
     HistoryStore,
     ProjectStore,
+    SQLiteDatabase,
 )
 from .live_logging import JsonlEventLogger, LiveSessionLogger, clip_text
 from .prompting import build_recent_conversation_context, improve_codex_task_prompt
 from .routes.change_review import create_router as create_change_review_router
 from .routes.codex_jobs import create_router as create_codex_jobs_router
+from .routes.workspace import create_router as create_workspace_router
 from .services.background_jobs import BackgroundJobService, CodexBackgroundJob
 from .services.change_review import (
     CommitResult,
@@ -51,7 +51,6 @@ from .services.change_review import (
     commit_changed_files,
     create_change_review_artifact,
     create_tool_artifact,
-    event_item_type,
     git_output,
     has_file_changes,
     revert_changed_files,
@@ -224,18 +223,19 @@ class _LiveTurnState:
 
 
 settings = get_settings()
-history = HistoryStore(settings.history_path)
-artifacts = ArtifactStore(settings.history_path)
+database = SQLiteDatabase(settings.history_path.with_suffix(".sqlite3"))
+history = HistoryStore(settings.history_path, database=database)
+artifacts = ArtifactStore(settings.history_path, database=database)
 projects = ProjectStore(
-    settings.history_path.with_name("projects.json"), db_path=settings.history_path
+    settings.history_path.with_name("projects.json"), database=database
 )
-chats = ChatStore(settings.history_path.with_name("chats.json"), db_path=settings.history_path)
+chats = ChatStore(settings.history_path.with_name("chats.json"), database=database)
 console = ConsoleStore(
-    settings.history_path.with_name("console.json"), db_path=settings.history_path
+    settings.history_path.with_name("console.json"), database=database
 )
 app_log = JsonlEventLogger(settings.history_path.with_name("app_events.jsonl"))
 model_context_log = JsonlEventLogger(settings.history_path.with_name("model_context_packets.jsonl"))
-codex_handoffs = CodexHandoffStore(settings.history_path)
+codex_handoffs = CodexHandoffStore(settings.history_path, database=database)
 _live_resumption_handles: dict[str, str] = {}
 _live_completion_subscribers: dict[str, set[asyncio.Queue[_LiveCompletion]]] = {}
 
@@ -285,10 +285,6 @@ def _create_tool_artifact_for_job(
         source=source,
         workdir=workdir,
     )
-
-
-def _event_item_type(event: object) -> str:
-    return event_item_type(event)
 
 
 def _has_file_changes(events: list[object]) -> bool:
@@ -530,7 +526,7 @@ async def lifespan(app: FastAPI):
         await close_codex_thread_sessions()
 
 
-app = FastAPI(title="Codex Voice Agent", lifespan=lifespan)
+app = FastAPI(title="Vodex", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -618,6 +614,19 @@ app.include_router(
         enqueue_job=_enqueue_codex_background_job,
         get_job=_get_job,
         list_jobs=_list_jobs,
+    )
+)
+app.include_router(
+    create_workspace_router(
+        projects=projects,
+        chats=chats,
+        history=history,
+        artifacts=artifacts,
+        handoffs=codex_handoffs,
+        console=console,
+        project_root=_project_root,
+        resolve_workdir=resolve_workdir,
+        close_sessions=close_codex_thread_sessions_for,
     )
 )
 
@@ -709,89 +718,6 @@ def _background_result_speech_prompt(text: str) -> str:
 
 def _compact_spoken_text(text: object) -> str:
     return " ".join(str(text or "").split())
-
-
-async def _run_live_codex_tool(
-    *,
-    request: _LiveToolCallRequest,
-    settings_value: Any,
-    cancel_token: CancellationToken,
-    chat_id: str | None,
-    call_name: str | None,
-    send_json: Any,
-    live_log: LiveSessionLogger,
-) -> _LiveCodexResult:
-    final_response = ""
-    resolved_workdir = request.workdir
-    codex_events: list[object] = []
-    codex_turn_id = None
-    codex_thread_id = None
-    codex_status = None
-
-    async for event in run_codex_stream_with_timer(
-        request.enhanced_task,
-        request.workdir,
-        settings_value,
-        cancel_token,
-        chat_id,
-    ):
-        if event.get("type") == "codex_event":
-            codex_events.append(event)
-            codex_turn_id = event.get("turn_id") or codex_turn_id
-            codex_thread_id = event.get("thread_id") or codex_thread_id
-            await send_json({"type": "codex_event", "event": event})
-        elif event.get("type") == "delta":
-            text_delta = event.get("text", "")
-            final_response += text_delta
-            await send_json({"type": "tool_progress", "name": call_name, "text": text_delta})
-        elif event.get("type") == "status":
-            await send_json(
-                {
-                    "type": "status",
-                    "message": event.get("message"),
-                    "elapsed": event.get("elapsed"),
-                }
-            )
-        elif event.get("type") == "done":
-            final_response = event.get("text", final_response)
-            resolved_workdir = event.get("workdir", request.workdir)
-            codex_events = list(event.get("events") or codex_events)
-            codex_turn_id = event.get("turn_id") or codex_turn_id
-            codex_thread_id = event.get("thread_id") or codex_thread_id
-            codex_status = event.get("status") or codex_status
-            live_log.write(
-                "codex.done",
-                chat_id=chat_id,
-                status=codex_status,
-                turn_id=codex_turn_id,
-                thread_id=codex_thread_id,
-                result_chars=len(str(final_response or "")),
-                result_preview=clip_text(final_response),
-                event_count=len(codex_events),
-            )
-        elif event.get("type") == "error":
-            final_response = f"Error: {event.get('message')}"
-            live_log.write(
-                "codex.error",
-                chat_id=chat_id,
-                message=clip_text(event.get("message")),
-            )
-            await send_json(
-                {
-                    "type": "tool_call_failed",
-                    "name": call_name,
-                    "message": event.get("message"),
-                }
-            )
-
-    return _LiveCodexResult(
-        response=final_response,
-        workdir=resolved_workdir,
-        events=codex_events,
-        turn_id=codex_turn_id,
-        thread_id=codex_thread_id,
-        status=codex_status,
-    )
 
 
 async def _start_live_codex_background_job(
@@ -1296,63 +1222,11 @@ class ChatRequest(BaseModel):
     chat_id: str | None = None
 
 
-class CodexRequest(BaseModel):
-    task: str
-    workdir: str | None = None
-    project_id: str | None = None
-    chat_id: str | None = None
-
-
-class ProjectRequest(BaseModel):
-    id: str
-    name: str
-    path: str
-    color: str
-    createdAt: int
-
-
 class ChatMetaRequest(BaseModel):
     id: str
     projectId: str
     title: str
     createdAt: int
-
-
-_FILE_BROWSER_IGNORED_DIRECTORIES = {
-    ".git",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-    "node_modules",
-}
-_FILE_BROWSER_MAX_BYTES = 512 * 1024
-
-
-def _is_file_browser_hidden(relative_path: Path) -> bool:
-    return any(part in _FILE_BROWSER_IGNORED_DIRECTORIES for part in relative_path.parts) or any(
-        part == ".DS_Store" or part == ".env" or part.startswith(".env.")
-        for part in relative_path.parts
-    )
-
-
-def _file_browser_root(project_id: str) -> Path:
-    root = _project_root(project_id)
-    if root is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return root
-
-
-def _file_browser_path(root: Path, relative_path: str) -> Path:
-    requested = Path(relative_path)
-    if not relative_path or requested.is_absolute() or ".." in requested.parts:
-        raise HTTPException(status_code=400, detail="Invalid file path")
-    candidate = (root / requested).resolve()
-    if not candidate.is_relative_to(root):
-        raise HTTPException(status_code=400, detail="File must be inside the selected project")
-    return candidate
 
 
 class ConsoleStateRequest(BaseModel):
@@ -1375,7 +1249,7 @@ async def health() -> dict[str, object]:
 
 @app.get("/api/doctor")
 async def doctor() -> dict[str, object]:
-    checks = _doctor_checks()
+    checks = await asyncio.to_thread(_doctor_checks)
     return {"ok": all(bool(check["ok"]) for check in checks), "checks": checks}
 
 
@@ -1418,82 +1292,6 @@ async def search_content(q: str, limit: int = 20) -> list[dict[str, object]]:
     results = history.search(query, limit=safe_limit) + artifacts.search(query, limit=safe_limit)
     results.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return results[:safe_limit]
-
-
-@app.get("/api/projects")
-async def list_projects() -> list[dict[str, object]]:
-    return projects.list()
-
-
-@app.get("/api/projects/{project_id}/files")
-async def list_project_files(project_id: str, path: str = "") -> dict[str, object]:
-    """Return one directory level for the selected project's lazy file browser."""
-    root = _file_browser_root(project_id)
-    directory = root if not path else _file_browser_path(root, path)
-    if not directory.exists() or not directory.is_dir():
-        raise HTTPException(status_code=404, detail="Folder not found")
-    entries: list[dict[str, object]] = []
-    for child in sorted(
-        directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())
-    ):
-        relative = child.relative_to(root)
-        if _is_file_browser_hidden(relative):
-            continue
-        entries.append({"path": relative.as_posix(), "is_directory": child.is_dir()})
-        if len(entries) >= 500:
-            break
-    return {"root": str(root), "entries": entries, "truncated": len(entries) >= 500}
-
-
-@app.get("/api/projects/{project_id}/files/content")
-async def read_project_file(project_id: str, path: str) -> dict[str, object]:
-    root = _file_browser_root(project_id)
-    file_path = _file_browser_path(root, path)
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-    size = file_path.stat().st_size
-    if size > _FILE_BROWSER_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="This file is too large to preview")
-    try:
-        content = file_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=415, detail="Binary files cannot be previewed") from exc
-    return {"path": path, "content": content, "size": size}
-
-
-@app.post("/api/projects")
-async def save_project(req: ProjectRequest) -> dict[str, object]:
-    if not req.id.strip() or not req.name.strip():
-        raise HTTPException(status_code=400, detail="Project id and name are required")
-    try:
-        root = resolve_workdir(req.path)
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    project = {
-        "id": req.id.strip(),
-        "name": req.name.strip(),
-        "path": str(root),
-        "color": req.color,
-        "createdAt": req.createdAt,
-    }
-    try:
-        return projects.upsert(project)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.delete("/api/projects/{project_id}")
-async def delete_project(project_id: str) -> dict[str, object]:
-    chat_ids = [str(chat.get("id")) for chat in chats.list(project_id=project_id) if chat.get("id")]
-    await close_codex_thread_sessions_for(chat_ids)
-    projects.delete(project_id)
-    chats.delete_for_project(project_id)
-    history.clear(project_id=project_id)
-    for chat_id in chat_ids:
-        artifacts.clear(chat_id)
-        codex_handoffs.clear(chat_id)
-    console.clear_for_project(chat_ids)
-    return {"ok": True}
 
 
 @app.get("/api/chats")
@@ -1606,7 +1404,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=400, detail="Message is required")
     workdir = _resolve_scoped_workdir(req.workdir, project_id=req.project_id)
     project_root = str(_project_root(req.project_id) or workdir)
-    conversation_context = _chat_context(req.chat_id, workdir)
+    conversation_context = await asyncio.to_thread(_chat_context, req.chat_id, workdir)
     artifact_replay = _latest_artifact_replay(req.chat_id, text)
     history.append(
         "user", text, {"workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id}
@@ -1785,7 +1583,6 @@ async def live_voice(websocket: WebSocket) -> None:
     session_project_id: str | None = None
     session_chat_id: str | None = None
     session_conversation_context = ""
-    current_task_cancel_token: CancellationToken | None = None
     session_ended_by_tool = False
     completion_queue: asyncio.Queue[_LiveCompletion] = asyncio.Queue()
     received_gemini_server_message = False
@@ -1800,15 +1597,15 @@ async def live_voice(websocket: WebSocket) -> None:
             session_workdir, \
             session_project_id, \
             session_chat_id, \
-            session_conversation_context, \
-            current_task_cancel_token
+            session_conversation_context
         pending = initial
         while True:
             payload = pending if pending is not None else await websocket.receive_json()
             pending = None
             event_type = payload.get("type")
             if event_type == "config":
-                config = _live_client_config_from_payload(
+                config = await asyncio.to_thread(
+                    _live_client_config_from_payload,
                     payload,
                     current_project_id=session_project_id,
                     current_chat_id=session_chat_id,
@@ -1886,18 +1683,12 @@ async def live_voice(websocket: WebSocket) -> None:
                         chat_id=session_chat_id,
                         handoff_id=handoff_id,
                     )
-            elif event_type == "cancel_task":
-                if current_task_cancel_token:
-                    current_task_cancel_token.cancel()
-                    await interrupt_codex_thread_session(session_chat_id)
-                    live_log.write("client.cancel_task", chat_id=session_chat_id)
-                    await websocket.send_json({"type": "debug", "message": "Codex task cancelled."})
             elif event_type == "close":
                 live_log.write("client.close", chat_id=session_chat_id)
                 return
 
     async def receive_gemini(session: _LiveSession) -> None:
-        nonlocal session_conversation_context, current_task_cancel_token
+        nonlocal session_conversation_context
         nonlocal session_ended_by_tool
         nonlocal received_gemini_server_message
 
@@ -1944,7 +1735,7 @@ async def live_voice(websocket: WebSocket) -> None:
 
                 if server_message.tool_call and server_message.tool_call.function_calls:
                     responses = []
-                    response_handoff_ids: list[str] = []
+                    started_background_job = False
                     user_text = turn_state.user_text
                     for call in server_message.tool_call.function_calls:
                         request = _live_tool_call_request(
@@ -2006,6 +1797,7 @@ async def live_voice(websocket: WebSocket) -> None:
                             send_json=websocket.send_json,
                             live_log=live_log,
                         )
+                        started_background_job = True
                         turn_state.add_codex_result(
                             events=result.events,
                             turn_id=result.turn_id,
@@ -2041,35 +1833,27 @@ async def live_voice(websocket: WebSocket) -> None:
                     try:
                         await session.send_tool_response(function_responses=responses)
                     except Exception as e:
-                        for handoff_id in response_handoff_ids:
-                            codex_handoffs.mark_delivery(
-                                handoff_id,
-                                "tool_response_failed_to_gemini",
-                                acknowledged=False,
-                            )
                         live_log.write(
                             "gemini.tool_response_send_error",
                             chat_id=session_chat_id,
                             error=str(e),
-                            handoff_ids=response_handoff_ids,
                         )
                         await websocket.send_json(
                             {
-                                "type": "tool_result_gemini_delivery_failed",
-                                "message": (
-                                    "Codex completed, but Gemini Live reconnected before reading "
-                                    "the result. The next session will include the completed result."
+                                "type": (
+                                    "tool_start_gemini_delivery_failed"
+                                    if started_background_job
+                                    else "gemini_tool_response_delivery_failed"
                                 ),
-                                "handoff_ids": response_handoff_ids,
+                                "message": (
+                                    "Gemini Live reconnected before confirming the background task "
+                                    "start. The task remains available in this chat."
+                                    if started_background_job
+                                    else "Gemini Live reconnected before receiving the tool response."
+                                ),
                             }
                         )
                         return
-                    for handoff_id in response_handoff_ids:
-                        codex_handoffs.mark_delivery(
-                            handoff_id,
-                            "tool_response_sent_to_gemini",
-                            acknowledged=False,
-                        )
                     live_log.write(
                         "gemini.tool_response_send_done",
                         chat_id=session_chat_id,
@@ -2114,9 +1898,6 @@ async def live_voice(websocket: WebSocket) -> None:
 
                 if content.interrupted:
                     live_log.write("gemini.interrupted", chat_id=session_chat_id)
-                    if current_task_cancel_token:
-                        current_task_cancel_token.cancel()
-                        await interrupt_codex_thread_session(session_chat_id)
                     turn_state.reset()
                     await websocket.send_json({"type": "interrupted"})
 
@@ -2243,7 +2024,8 @@ async def live_voice(websocket: WebSocket) -> None:
         # on connect, so we can bake the working directory into the system prompt.
         first_payload = cast(dict[str, Any], await websocket.receive_json())
         if first_payload.get("type") == "config":
-            config = _live_client_config_from_payload(
+            config = await asyncio.to_thread(
+                _live_client_config_from_payload,
                 first_payload,
                 current_project_id=session_project_id,
                 current_chat_id=session_chat_id,
@@ -2378,226 +2160,4 @@ async def live_voice(websocket: WebSocket) -> None:
             chat_id=session_chat_id,
             active_user_chars=len(turn_state.user_text),
             active_assistant_chars=len(turn_state.assistant_text),
-            had_active_cancel_token=bool(current_task_cancel_token),
         )
-        if current_task_cancel_token:
-            current_task_cancel_token.cancel()
-            await interrupt_codex_thread_session(session_chat_id)
-
-
-def _git_branch(root: Path) -> str | None:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        branch = out.stdout.strip()
-        return branch or None
-    except Exception:
-        return None
-
-
-def _file_count(root: Path) -> int | None:
-    """Count tracked files when it's a git repo, else a shallow file count."""
-    try:
-        tracked = subprocess.run(
-            ["git", "-C", str(root), "ls-files"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        if tracked.returncode == 0 and tracked.stdout.strip():
-            return len([line for line in tracked.stdout.splitlines() if line.strip()])
-    except Exception:
-        pass
-    try:
-        return sum(1 for entry in root.iterdir() if entry.is_file())
-    except Exception:
-        return None
-
-
-def _pick_directory_sync() -> str | None:
-    """Open a real native folder dialog on the host and return the absolute path.
-
-    Browsers cannot expose absolute paths from their directory picker, but this
-    backend runs locally, so it can use the OS picker (macOS osascript, or
-    zenity/kdialog on Linux). Returns None if the user cancels.
-    """
-    if sys.platform == "darwin":
-        script = (
-            "try\n"
-            '  POSIX path of (choose folder with prompt "Select a project folder")\n'
-            "on error number -128\n"
-            '  return ""\n'
-            "end try"
-        )
-        proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-        return (proc.stdout.strip() or None) if proc.returncode == 0 else None
-    if shutil.which("zenity"):
-        proc = subprocess.run(
-            ["zenity", "--file-selection", "--directory", "--title=Select a project folder"],
-            capture_output=True,
-            text=True,
-        )
-        return proc.stdout.strip() or None
-    if shutil.which("kdialog"):
-        proc = subprocess.run(
-            ["kdialog", "--getexistingdirectory", str(Path.home())], capture_output=True, text=True
-        )
-        return proc.stdout.strip() or None
-    raise RuntimeError("No native folder picker is available on this host. Paste the path instead.")
-
-
-@app.post("/api/fs/pick")
-async def fs_pick() -> dict[str, object]:
-    try:
-        path = await asyncio.to_thread(_pick_directory_sync)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    if not path:
-        return {"path": None, "cancelled": True}
-    cleaned = path.rstrip("/") or "/"
-    return {"path": cleaned, "cancelled": False}
-
-
-@app.get("/api/project/info")
-async def project_info(path: str) -> dict[str, object]:
-    """Validate a directory and report git branch + file count.
-
-    Used both to confirm a folder exists before adding it (no copies, no
-    auto-created folders) and to populate the workspace panel.
-    """
-    try:
-        root = resolve_workdir(path)
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    is_git = (root / ".git").exists()
-    return {
-        "path": str(root),
-        "name": root.name,
-        "exists": True,
-        "is_git": is_git,
-        "branch": _git_branch(root) if is_git else None,
-        "file_count": _file_count(root),
-    }
-
-
-@app.post("/api/codex/stream")
-async def codex_stream(req: CodexRequest) -> StreamingResponse:
-    task = req.task.strip()
-    if not task:
-        raise HTTPException(status_code=400, detail="Task is required")
-    workdir = _resolve_scoped_workdir(req.workdir, project_id=req.project_id)
-    enhanced_task = improve_codex_task_prompt(task)
-    history.append(
-        "user",
-        task,
-        {
-            "direct_codex": True,
-            "workdir": workdir,
-            "project_id": req.project_id,
-            "chat_id": req.chat_id,
-        },
-    )
-    app_log.write(
-        "codex_stream.start",
-        chat_id=req.chat_id,
-        project_id=req.project_id,
-        workdir=workdir,
-        task_chars=len(task),
-    )
-
-    cancel_token = CancellationToken()
-
-    async def event_source():
-        final_text = ""
-        final_workdir = workdir
-        codex_events = []
-        final_artifacts = []
-        codex_turn_id = None
-        codex_thread_id = None
-        codex_status = None
-        try:
-            async for event in run_codex_stream_with_timer(
-                enhanced_task, workdir, settings, cancel_token, req.chat_id
-            ):
-                if event.get("type") == "codex_event":
-                    codex_events.append(event)
-                elif event.get("type") == "done":
-                    final_text = str(event.get("text") or "")
-                    final_workdir = str(event.get("workdir") or workdir)
-                    codex_events = list(event.get("events") or codex_events)
-                    codex_turn_id = event.get("turn_id")
-                    codex_thread_id = event.get("thread_id")
-                    codex_status = event.get("status")
-                    artifact = _create_tool_artifact(
-                        chat_id=req.chat_id,
-                        message_id=None,
-                        title="Codex output",
-                        content=final_text,
-                        source="direct_codex",
-                        workdir=final_workdir,
-                    )
-                    if artifact:
-                        final_artifacts.append(artifact)
-                        event["artifact"] = artifact
-                    change_artifact = _create_change_review_artifact(
-                        chat_id=req.chat_id,
-                        workdir=final_workdir,
-                        codex_events=codex_events,
-                    )
-                    if change_artifact:
-                        final_artifacts.append(change_artifact)
-                        event["change_artifact"] = change_artifact
-                        event["changed_files"] = change_artifact.get("changed_files", [])
-                    app_log.write(
-                        "codex_stream.done_event",
-                        chat_id=req.chat_id,
-                        reply_chars=len(final_text),
-                        codex_status=codex_status,
-                        codex_turn_id=codex_turn_id,
-                        codex_thread_id=codex_thread_id,
-                    )
-                elif event.get("type") == "error":
-                    app_log.write(
-                        "codex_stream.error_event",
-                        chat_id=req.chat_id,
-                        message=clip_text(event.get("message")),
-                    )
-                yield f"data: {json.dumps(event)}\n\n"
-        except Exception as exc:
-            app_log.write("codex_stream.exception", chat_id=req.chat_id, message=clip_text(exc))
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
-        finally:
-            cancel_token.cancel()
-            app_log.write(
-                "codex_stream.finally",
-                chat_id=req.chat_id,
-                final_text_chars=len(final_text),
-                codex_status=codex_status,
-                persisted=bool(final_text),
-            )
-            if final_text:
-                history.append(
-                    "assistant",
-                    final_text,
-                    {
-                        "direct_codex": True,
-                        "artifacts": final_artifacts,
-                        "workdir": final_workdir,
-                        "project_id": req.project_id,
-                        "chat_id": req.chat_id,
-                        "codex_events": codex_events[-200:],
-                        "codex_turn_id": codex_turn_id,
-                        "codex_thread_id": codex_thread_id,
-                        "codex_status": codex_status,
-                    },
-                )
-
-    return StreamingResponse(
-        event_source(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )

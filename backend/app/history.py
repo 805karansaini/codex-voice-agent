@@ -6,7 +6,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 from typing import Any, Iterator, List
 
 
@@ -25,27 +25,45 @@ def _snippet(text: object, query: str, radius: int = 80) -> str:
     return f"{prefix}{value[start:end].strip()}{suffix}"
 
 
-class HistoryStore:
+class SQLiteDatabase:
+    """Owns one SQLite file and serializes access shared by its repositories."""
+
     def __init__(self, path: Path) -> None:
-        self.legacy_path = path
-        self.path = path.with_suffix(".sqlite3")
-        self.lock = Lock()
+        self.path = path
+        self.lock = RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
-        self._migrate_legacy_json()
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        with self.lock:
+            conn = sqlite3.connect(self.path)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+
+class _SQLiteStore:
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self.database = database
+        self.path = database.path
+        self.lock = database.lock
+
+    def _connect(self):
+        return self.database.connect()
+
+
+class HistoryStore(_SQLiteStore):
+    def __init__(self, path: Path, database: SQLiteDatabase | None = None) -> None:
+        self.legacy_path = path
+        super().__init__(database or SQLiteDatabase(path.with_suffix(".sqlite3")))
+        self._init_db()
+        self._migrate_legacy_json()
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -269,25 +287,60 @@ class HistoryStore:
                 conn.execute(f"DELETE FROM history WHERE {' OR '.join(clauses)}", params)
 
 
-class ArtifactStore:
-    def __init__(self, path: Path) -> None:
-        self.path = path.with_name("artifacts.sqlite3")
-        self.lock = Lock()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+class ArtifactStore(_SQLiteStore):
+    _LEGACY_MIGRATION = "artifacts_from_standalone_database_v1"
 
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+    def __init__(self, path: Path, database: SQLiteDatabase | None = None) -> None:
+        legacy_database_path = path.with_name("artifacts.sqlite3")
+        super().__init__(database or SQLiteDatabase(legacy_database_path))
+        self._init_db()
+        if database is not None and legacy_database_path != database.path:
+            self._migrate_legacy_database(legacy_database_path)
+
+    def _migrate_legacy_database(self, legacy_path: Path) -> None:
+        rows: list[tuple[Any, ...]] = []
+        if legacy_path.exists():
+            legacy = sqlite3.connect(legacy_path)
+            try:
+                rows = legacy.execute(
+                    """
+                    SELECT
+                        id, chat_id, message_id, title, summary, content,
+                        content_type, source, workdir, created_at
+                    FROM artifacts
+                    """
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            finally:
+                legacy.close()
+        with self.lock, self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    name TEXT PRIMARY KEY,
+                    completed_at TEXT NOT NULL
+                )
+                """
+            )
+            migrated = conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE name = ?", (self._LEGACY_MIGRATION,)
+            ).fetchone()
+            if migrated:
+                return
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO artifacts (
+                    id, chat_id, message_id, title, summary, content,
+                    content_type, source, workdir, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.execute(
+                "INSERT INTO schema_migrations (name, completed_at) VALUES (?, ?)",
+                (self._LEGACY_MIGRATION, datetime.now(timezone.utc).isoformat()),
+            )
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -438,25 +491,10 @@ class ArtifactStore:
                     conn.execute("DELETE FROM artifacts WHERE chat_id = ?", (chat_id,))
 
 
-class CodexHandoffStore:
-    def __init__(self, path: Path) -> None:
-        self.path = path.with_suffix(".sqlite3")
-        self.lock = Lock()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+class CodexHandoffStore(_SQLiteStore):
+    def __init__(self, path: Path, database: SQLiteDatabase | None = None) -> None:
+        super().__init__(database or SQLiteDatabase(path.with_suffix(".sqlite3")))
         self._init_db()
-
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -640,27 +678,17 @@ class CodexHandoffStore:
                     conn.execute("DELETE FROM codex_handoffs WHERE chat_id = ?", (chat_id,))
 
 
-class ProjectStore:
-    def __init__(self, path: Path, db_path: Path | None = None) -> None:
+class ProjectStore(_SQLiteStore):
+    def __init__(
+        self,
+        path: Path,
+        db_path: Path | None = None,
+        database: SQLiteDatabase | None = None,
+    ) -> None:
         self.legacy_path = path
-        self.path = (db_path or path).with_suffix(".sqlite3")
-        self.lock = Lock()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(database or SQLiteDatabase((db_path or path).with_suffix(".sqlite3")))
         self._init_db()
         self._migrate_legacy_json()
-
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -761,7 +789,7 @@ class ProjectStore:
                 conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
 
-class ChatStore:
+class ChatStore(_SQLiteStore):
     """Stores the list of chats (conversations) that live inside each project.
 
     A project is pinned to one folder (the working directory); a chat is one
@@ -770,26 +798,16 @@ class ChatStore:
     HistoryStore).
     """
 
-    def __init__(self, path: Path, db_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        db_path: Path | None = None,
+        database: SQLiteDatabase | None = None,
+    ) -> None:
         self.legacy_path = path
-        self.path = (db_path or path).with_suffix(".sqlite3")
-        self.lock = Lock()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(database or SQLiteDatabase((db_path or path).with_suffix(".sqlite3")))
         self._init_db()
         self._migrate_legacy_json()
-
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -890,29 +908,19 @@ class ChatStore:
                 conn.execute("DELETE FROM chats WHERE project_id = ?", (project_id,))
 
 
-class ConsoleStore:
+class ConsoleStore(_SQLiteStore):
     """Stores per-chat console state shown in the right panel."""
 
-    def __init__(self, path: Path, db_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        db_path: Path | None = None,
+        database: SQLiteDatabase | None = None,
+    ) -> None:
         self.legacy_path = path
-        self.path = (db_path or path).with_suffix(".sqlite3")
-        self.lock = Lock()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(database or SQLiteDatabase((db_path or path).with_suffix(".sqlite3")))
         self._init_db()
         self._migrate_legacy_json()
-
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
 
     def _init_db(self) -> None:
         with self._connect() as conn:

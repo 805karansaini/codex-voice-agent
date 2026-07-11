@@ -11,6 +11,7 @@ from backend.app.history import (
     ConsoleStore,
     HistoryStore,
     ProjectStore,
+    SQLiteDatabase,
 )
 
 
@@ -115,6 +116,77 @@ class ArtifactStoreTests(unittest.TestCase):
             self.assertEqual(results[0]["type"], "artifact")
             self.assertEqual(results[0]["id"], item["id"])
             self.assertEqual(results[0]["chat_id"], "chat-1")
+
+    def test_shared_database_preserves_legacy_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history_path = root / "history.json"
+            legacy_store = ArtifactStore(history_path)
+            artifact = legacy_store.create(
+                chat_id="chat-1",
+                message_id=None,
+                title="Existing diff",
+                summary="Created before database consolidation",
+                content="diff --git a/app.py b/app.py",
+                content_type="diff",
+                source="git_diff",
+                workdir="/tmp/project-1",
+            )
+
+            database = SQLiteDatabase(root / "history.sqlite3")
+            stores = [
+                HistoryStore(history_path, database),
+                ArtifactStore(history_path, database),
+                ProjectStore(root / "projects.json", database=database),
+                ChatStore(root / "chats.json", database=database),
+                ConsoleStore(root / "console.json", database=database),
+                CodexHandoffStore(history_path, database),
+            ]
+
+            self.assertTrue(all(store.path == database.path for store in stores))
+            self.assertTrue(all(store.lock is database.lock for store in stores))
+            self.assertEqual(stores[1].list(chat_id="chat-1"), [artifact])
+
+            stores[1].clear()
+            restarted = ArtifactStore(history_path, SQLiteDatabase(root / "history.sqlite3"))
+            self.assertEqual(restarted.list(), [])
+
+    def test_legacy_artifact_migration_merges_into_a_partially_populated_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history_path = root / "history.json"
+            database = SQLiteDatabase(root / "history.sqlite3")
+            shared = ArtifactStore(history_path, database)
+            current = shared.create(
+                chat_id="chat-current",
+                message_id=None,
+                title="Current artifact",
+                summary="Already stored in the shared database",
+                content="current",
+                content_type="text",
+                source="test",
+                workdir="/tmp/project-1",
+            )
+            legacy = ArtifactStore(history_path)
+            old = legacy.create(
+                chat_id="chat-old",
+                message_id=None,
+                title="Legacy artifact",
+                summary="Waiting to be migrated",
+                content="legacy",
+                content_type="text",
+                source="test",
+                workdir="/tmp/project-1",
+            )
+            with database.connect() as conn:
+                conn.execute(
+                    "DELETE FROM schema_migrations WHERE name = ?",
+                    (ArtifactStore._LEGACY_MIGRATION,),
+                )
+
+            restarted = ArtifactStore(history_path, SQLiteDatabase(root / "history.sqlite3"))
+
+            self.assertEqual({item["id"] for item in restarted.list()}, {current["id"], old["id"]})
 
 
 class CodexHandoffStoreTests(unittest.TestCase):
