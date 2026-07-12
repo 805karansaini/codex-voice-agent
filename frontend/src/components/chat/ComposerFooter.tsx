@@ -10,6 +10,7 @@ type ComposerFooterProps = {
   liveStatusText: string;
   streamingStatusText: string;
   voiceActive: boolean;
+  voiceReconnecting: boolean;
   codexActive: boolean;
   voiceTitle: string;
   voiceMessage: string;
@@ -42,6 +43,7 @@ export default function ComposerFooter({
   liveStatusText,
   streamingStatusText,
   voiceActive,
+  voiceReconnecting,
   codexActive,
   voiceTitle,
   voiceMessage,
@@ -102,7 +104,7 @@ export default function ComposerFooter({
               <p className="hidden sm:block text-[11.5px] text-fg-muted mt-1 truncate">
                 {voiceMessage}
               </p>
-              {voiceTitle === "Reconnecting Gemini…" && (
+              {voiceReconnecting && (
                 <p className="mt-1 text-[11.5px] font-medium text-accent">
                   Briefly reconnecting — please hold on.
                 </p>

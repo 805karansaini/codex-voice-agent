@@ -1,11 +1,10 @@
 import { useCallback, useState } from "react";
 
 import type { useProjectStore } from "./useProjectStore";
-import type { Project } from "../types";
+import type { ChatMode, Project } from "../types";
 import { chatTitleFrom } from "../utils";
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
-type ChatMode = "agent" | "codex";
 
 type UseChatSubmitOptions = {
   input: string;

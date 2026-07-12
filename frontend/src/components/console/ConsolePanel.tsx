@@ -1,5 +1,6 @@
 import type { ActionEntry, DebugEntry, DoctorCheck, Handoff, Message } from "../../types";
 import type { ConsoleTabId } from "../../hooks/useConsolePanelState";
+import type { BackendStatus } from "../../hooks/useBackendStatus";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 import { cn } from "../../utils";
 import ConsoleActionsPanel from "./ConsoleActionsPanel";
@@ -13,7 +14,7 @@ import ConsoleVoicePanel from "./ConsoleVoicePanel";
 type ConsolePanelProps = {
   isMobile: boolean;
   width: number;
-  status: string;
+  status: BackendStatus;
   canClear: boolean;
   activeTab: ConsoleTabId;
   debugEntries: DebugEntry[];

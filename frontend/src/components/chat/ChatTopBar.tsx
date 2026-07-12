@@ -1,8 +1,7 @@
 import { Circle, Download } from "lucide-react";
 
+import type { ChatMode } from "../../types";
 import { cn } from "../../utils";
-
-type ChatMode = "agent" | "codex";
 
 type ChatTopBarProps = {
   isMobile: boolean;

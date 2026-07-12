@@ -1,10 +1,11 @@
 import { SquareTerminal, X } from "lucide-react";
 
+import type { BackendStatus } from "../../hooks/useBackendStatus";
 import { cn } from "../../utils";
 
 type ConsoleHeaderProps = {
   isMobile: boolean;
-  status: string;
+  status: BackendStatus;
   canClear: boolean;
   onHide: () => void;
   onBackToChat: () => void;
@@ -19,7 +20,7 @@ export default function ConsoleHeader({
   onBackToChat,
   onClear,
 }: ConsoleHeaderProps) {
-  const online = status === "Ready";
+  const online = status.kind === "ready";
 
   return (
     <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5 shrink-0">
@@ -45,7 +46,10 @@ export default function ConsoleHeader({
           Clear
         </button>
 
-        <span className="flex items-center gap-1.5 font-mono text-[10px] text-fg-dim">
+        <span
+          className="flex items-center gap-1.5 font-mono text-[10px] text-fg-dim"
+          title={status.label}
+        >
           <span
             className={cn(
               "h-1.5 w-1.5 rounded-full pulse-dot",

@@ -7,17 +7,13 @@ import type { Project } from "../types";
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
 type LiveVoice = ReturnType<typeof useLiveVoice>;
-type VoiceContextRef = {
-  current: { project: Project; chatId: string } | null;
-};
-
 type UseLiveVoiceControlsOptions = {
   store: ProjectStore;
   liveVoice: LiveVoice;
   voiceInputMode: VoiceInputMode;
   setVoiceInputMode: (mode: VoiceInputMode) => void;
   primeAudioPlayback: () => void;
-  voiceCtxRef: VoiceContextRef;
+  voiceContext: { project: Project; chatId: string } | null;
   ensureVoiceContext: () => void;
   resetActiveVoiceMessages: () => void;
   stopActiveVoiceHandoff: (detail?: string) => void;
@@ -31,7 +27,7 @@ export function useLiveVoiceControls({
   voiceInputMode,
   setVoiceInputMode,
   primeAudioPlayback,
-  voiceCtxRef,
+  voiceContext,
   ensureVoiceContext,
   resetActiveVoiceMessages,
   stopActiveVoiceHandoff,
@@ -39,7 +35,6 @@ export function useLiveVoiceControls({
   clearVoiceContext,
 }: UseLiveVoiceControlsOptions) {
   const voiceActive = liveVoice.active;
-  const voiceContext = voiceCtxRef.current;
   const voiceContextChat = voiceContext
     ? (store.chats[voiceContext.project.id] || []).find((chat) => chat.id === voiceContext.chatId)
     : null;

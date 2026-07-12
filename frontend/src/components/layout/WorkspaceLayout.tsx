@@ -1,12 +1,14 @@
 import type { ChangeEvent, KeyboardEvent, MouseEvent, RefObject } from "react";
 
 import type { ConsoleTabId } from "../../hooks/useConsolePanelState";
+import type { BackendStatus } from "../../hooks/useBackendStatus";
 import type { MobileView } from "../../hooks/useAppLayout";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 import type {
   ActionEntry,
   Chat,
   ChatArtifact,
+  ChatMode,
   DebugEntry,
   DoctorCheck,
   CodexModel,
@@ -21,8 +23,6 @@ import FileReaderPanel from "./FileReaderPanel";
 import ChatPanel from "../chat/ChatPanel";
 import ConsolePanel from "../console/ConsolePanel";
 import { useEffect, useState } from "react";
-
-type ChatMode = "agent" | "codex";
 
 export type WorkspaceLayoutProps = {
   layout: {
@@ -71,11 +71,12 @@ export type WorkspaceLayoutProps = {
     muted: boolean;
     supported: boolean;
     active: boolean;
+    reconnecting: boolean;
     codexActive: boolean;
     inputMode: VoiceInputMode;
   };
   console: {
-    status: string;
+    status: BackendStatus;
     activeTab: ConsoleTabId;
     debugEntries: DebugEntry[];
     actions: ActionEntry[];
@@ -178,6 +179,7 @@ export default function WorkspaceLayout({
     muted: voiceMuted,
     supported: voiceSupported,
     active: voiceActive,
+    reconnecting: voiceReconnecting,
     codexActive,
     inputMode: voiceInputMode,
   } = voice;
@@ -313,6 +315,7 @@ export default function WorkspaceLayout({
           exportDisabled={!activeChatId || messages.length === 0}
           voiceSupported={voiceSupported}
           voiceActive={voiceActive}
+          voiceReconnecting={voiceReconnecting}
           codexActive={codexActive}
           voiceDisabled={!activeProject}
           onToggleVoice={onToggleVoice}

@@ -30,14 +30,14 @@ import { useVoiceInputMode } from "./useVoiceInputMode";
 import { useWorkspaceSearch } from "./useWorkspaceSearch";
 import { useWorkspaceSidebarState } from "./useWorkspaceSidebarState";
 import * as api from "../services/api";
-import type { CodexModel } from "../types";
+import type { ChatMode, CodexModel } from "../types";
 import { defaultCodexModel, defaultReasoningEffort } from "../utils/codexModels";
 
 export function useAppController() {
   const store = useProjectStore();
   const { syncError, clearSyncError } = store;
   const [error, setError] = useState("");
-  const [mode, setMode] = useState<"agent" | "codex">("agent");
+  const [mode, setMode] = useState<ChatMode>("agent");
   const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
   const [codexModel, setCodexModel] = useState("");
   const [codexReasoningEffort, setCodexReasoningEffort] = useState("");
@@ -148,7 +148,7 @@ export function useAppController() {
     [codexModels],
   );
   const {
-    voiceCtxRef,
+    voiceContext,
     getWorkdir,
     getProjectId,
     getChatId,
@@ -174,7 +174,9 @@ export function useAppController() {
     onDebug: addDebug,
     ...liveVoiceHandlers,
   });
-  completeBackgroundCodexJobRef.current = liveVoice.completeBackgroundCodexJob;
+  useEffect(() => {
+    completeBackgroundCodexJobRef.current = liveVoice.completeBackgroundCodexJob;
+  }, [liveVoice.completeBackgroundCodexJob]);
   const {
     voiceActive,
     voiceContextLabel,
@@ -188,7 +190,7 @@ export function useAppController() {
     voiceInputMode,
     setVoiceInputMode,
     primeAudioPlayback,
-    voiceCtxRef,
+    voiceContext,
     ensureVoiceContext,
     resetActiveVoiceMessages,
     stopActiveVoiceHandoff,
@@ -327,6 +329,7 @@ export function useAppController() {
       muted: liveVoice.muted,
       supported: liveVoice.supported,
       active: voiceActive,
+      reconnecting: liveVoice.state === "reconnecting",
       codexActive: Boolean(activeCodexJob),
       inputMode: voiceInputMode,
     },

@@ -1,12 +1,10 @@
 import type { ChangeEvent, RefObject } from "react";
 
-import type { ChatArtifact, CodexModel, Message, Project } from "../../types";
+import type { ChatArtifact, ChatMode, CodexModel, Message, Project } from "../../types";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 import ChatStream from "./ChatStream";
 import ChatTopBar from "./ChatTopBar";
 import ComposerFooter from "./ComposerFooter";
-
-type ChatMode = "agent" | "codex";
 
 type ChatPanelProps = {
   isMobile: boolean;
@@ -16,6 +14,7 @@ type ChatPanelProps = {
   exportDisabled: boolean;
   voiceSupported: boolean;
   voiceActive: boolean;
+  voiceReconnecting: boolean;
   codexActive: boolean;
   voiceDisabled: boolean;
   busy: boolean;
@@ -63,6 +62,7 @@ export default function ChatPanel({
   exportDisabled,
   voiceSupported,
   voiceActive,
+  voiceReconnecting,
   codexActive,
   voiceDisabled,
   busy,
@@ -135,6 +135,7 @@ export default function ChatPanel({
         liveStatusText={liveStatusText}
         streamingStatusText={streamingStatusText}
         voiceActive={voiceActive}
+        voiceReconnecting={voiceReconnecting}
         codexActive={codexActive}
         voiceTitle={voiceTitle}
         voiceMessage={voiceMessage}

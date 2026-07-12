@@ -1,4 +1,5 @@
 export type Role = "user" | "assistant";
+export type ChatMode = "agent" | "codex";
 
 export type Message = {
   id: string;

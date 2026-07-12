@@ -7,6 +7,7 @@ import type { ChatArtifact, CodexTimelineEvent, GeminiLiveUsage, Project } from 
 import type { ServerEvent } from "../types/protocol";
 import { chatTitleFrom } from "../utils";
 import { appendArtifacts } from "../utils/artifacts";
+import { appendCodexEvent } from "../utils/codexEvents";
 import { liveVoiceStartDeliveryFailureMessage } from "../utils/liveVoice";
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
@@ -35,17 +36,6 @@ export type ActiveCodexJobStatus = {
   workdir?: string;
 };
 
-function appendCodexEvent(
-  events: CodexTimelineEvent[] | undefined,
-  event: CodexTimelineEvent,
-): CodexTimelineEvent[] {
-  const current = events || [];
-  const key = `${event.method}:${event.item_id || ""}:${event.turn_id || ""}`;
-  const existing = new Set(current.map((e) => `${e.method}:${e.item_id || ""}:${e.turn_id || ""}`));
-  if (existing.has(key)) return current;
-  return [...current, event].slice(-80);
-}
-
 function stringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
@@ -63,6 +53,10 @@ export function useLiveVoiceSessionHandlers({
   const activeAssistantVoiceMsgIdRef = useRef<string | null>(null);
   const activeCodexMsgIdRef = useRef<string | null>(null);
   const activeVoiceJobIdRef = useRef<string | null>(null);
+  const [voiceContext, setVoiceContextState] = useState<{
+    project: Project;
+    chatId: string;
+  } | null>(null);
   const [activeCodexJob, setActiveCodexJob] = useState<ActiveCodexJobStatus | null>(null);
 
   const getWorkdir = useCallback(
@@ -103,23 +97,28 @@ export function useLiveVoiceSessionHandlers({
   }, []);
 
   const setVoiceContext = useCallback((project: Project, chatId: string) => {
-    voiceCtxRef.current = { project, chatId };
+    const context = { project, chatId };
+    voiceCtxRef.current = context;
+    setVoiceContextState(context);
   }, []);
 
   const clearVoiceContext = useCallback(() => {
     voiceCtxRef.current = null;
+    setVoiceContextState(null);
   }, []);
 
   const ensureVoiceContext = useCallback(() => {
     if (voiceCtxRef.current) return;
-    voiceCtxRef.current =
+    const context =
       store.activeProject && store.activeChatId
         ? { project: store.activeProject, chatId: store.activeChatId }
         : null;
+    voiceCtxRef.current = context;
+    setVoiceContextState(context);
   }, [store.activeChatId, store.activeProject]);
 
   return {
-    voiceCtxRef,
+    voiceContext,
     getWorkdir,
     getProjectId,
     getChatId,
