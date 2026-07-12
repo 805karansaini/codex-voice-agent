@@ -5,14 +5,13 @@ from collections.abc import Awaitable, Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..codex_runner import list_codex_models
 from ..prompting import improve_codex_task_prompt
 from ..services.background_jobs import CodexBackgroundJob
-from ..codex_runner import list_codex_models
 
 
 class CodexJobRequest(BaseModel):
     task: str = ""
-    message: str = ""
     workdir: str | None = None
     project_id: str | None = None
     chat_id: str | None = None
