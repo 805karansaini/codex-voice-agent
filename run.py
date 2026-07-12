@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import ipaddress
 import os
-import signal
+import socket
 import subprocess
-import sys
-import time
 from collections.abc import Iterable
-from typing import Protocol
 
 import uvicorn
-
 
 _LAN_NETWORKS = (
     ipaddress.ip_network("10.0.0.0/8"),
@@ -20,21 +16,6 @@ _LAN_NETWORKS = (
     ipaddress.ip_network("192.168.0.0/16"),
 )
 _TAILSCALE_NETWORK = ipaddress.ip_network("100.64.0.0/10")
-
-
-class _ManagedProcess(Protocol):
-    def poll(self) -> int | None: ...
-
-    def terminate(self) -> None: ...
-
-    def wait(self, timeout: float | None = None) -> int: ...
-
-    def kill(self) -> None: ...
-
-
-class _ShutdownRequested(Exception):
-    def __init__(self, signum: int) -> None:
-        self.signum = signum
 
 
 def _interface_addresses() -> list[str]:
@@ -100,73 +81,57 @@ def _hosts() -> list[str]:
     return _default_hosts()
 
 
-def _run_server(host: str) -> None:
-    uvicorn.run(
+def _bind_socket(host: str, port: int) -> socket.socket:
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    bound_socket = socket.socket(family=family, type=socket.SOCK_STREAM)
+    try:
+        bound_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        bound_socket.bind((host, port))
+        bound_socket.set_inheritable(True)
+    except BaseException:
+        bound_socket.close()
+        raise
+    return bound_socket
+
+
+def _bind_sockets(hosts: Iterable[str], port: int) -> list[socket.socket]:
+    bound_sockets: list[socket.socket] = []
+    try:
+        for host in hosts:
+            bound_sockets.append(_bind_socket(host, port))
+    except BaseException:
+        for bound_socket in bound_sockets:
+            bound_socket.close()
+        raise
+    return bound_sockets
+
+
+def _run_server(hosts: list[str]) -> None:
+    if not hosts:
+        raise ValueError("At least one server host is required")
+
+    port = int(os.getenv("PORT", "8765"))
+    config = uvicorn.Config(
         "backend.app.main:app",
-        host=host,
-        port=int(os.getenv("PORT", "8765")),
+        host=hosts[0],
+        port=port,
         reload=False,
         log_level=os.getenv("LOG_LEVEL", "info"),
     )
-
-
-def _wait_for_first_exit(
-    processes: Iterable[_ManagedProcess], *, poll_interval_seconds: float = 0.1
-) -> int:
-    managed_processes = list(processes)
-    if not managed_processes:
-        raise ValueError("At least one server process is required")
-
-    while True:
-        for process in managed_processes:
-            exit_code = process.poll()
-            if exit_code is not None:
-                return exit_code
-        time.sleep(poll_interval_seconds)
-
-
-def _stop_processes(processes: Iterable[_ManagedProcess]) -> None:
-    managed_processes = list(processes)
-    for process in managed_processes:
-        if process.poll() is None:
-            process.terminate()
-    for process in managed_processes:
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-
-
-def _shutdown_signal_handler(signum: int, _frame: object) -> None:
-    raise _ShutdownRequested(signum)
-
-
-def _run_servers(hosts: list[str]) -> int:
+    server = uvicorn.Server(config)
+    bound_sockets = _bind_sockets(hosts, port)
     print(f"Starting backend on: {', '.join(hosts)}", flush=True)
-    processes: list[_ManagedProcess] = []
     try:
-        for host in hosts:
-            processes.append(
-                subprocess.Popen([sys.executable, __file__], env={**os.environ, "HOST": host})
-            )
-        return _wait_for_first_exit(processes)
-    except KeyboardInterrupt:
-        return 130
-    except _ShutdownRequested as shutdown:
-        return 128 + shutdown.signum
+        try:
+            server.run(sockets=bound_sockets)
+        except KeyboardInterrupt:
+            return
+        if not server.started:
+            raise RuntimeError("Backend failed to start")
     finally:
-        _stop_processes(processes)
+        for bound_socket in bound_sockets:
+            bound_socket.close()
 
 
 if __name__ == "__main__":
-    hosts = _hosts()
-    if len(hosts) == 1:
-        _run_server(hosts[0])
-        raise SystemExit
-
-    previous_sigterm_handler = signal.signal(signal.SIGTERM, _shutdown_signal_handler)
-    try:
-        exit_code = _run_servers(hosts)
-    finally:
-        signal.signal(signal.SIGTERM, previous_sigterm_handler)
-    raise SystemExit(exit_code)
+    _run_server(_hosts())
