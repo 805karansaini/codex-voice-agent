@@ -1,17 +1,18 @@
 import asyncio
 import shutil
-import subprocess
 import sqlite3
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, cast
+from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, TypeVar, cast
+from weakref import WeakValueDictionary
 
 from .settings import Settings, get_settings
 
-
 _CODEX_STATUS_FIRST_DELAY_SECONDS = 20
 _CODEX_STATUS_REPEAT_SECONDS = 60
+_BlockingResult = TypeVar("_BlockingResult")
 
 
 def _installed_codex_bin() -> str | None:
@@ -46,16 +47,6 @@ class _CodexTurn(Protocol):
     async def interrupt(self) -> None: ...
 
     def stream(self) -> AsyncIterator[Any]: ...
-
-
-@dataclass
-class CodexRun:
-    final_response: str
-    workdir: str
-    thread_id: str | None = None
-    turn_id: str | None = None
-    status: str | None = None
-    events: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -212,10 +203,12 @@ class _ThreadSession:
     lock: asyncio.Lock
     active_turn: _CodexTurn | None = None
     last_used: datetime | None = None
+    closed: bool = False
 
 
 _sessions: dict[str, _ThreadSession] = {}
 _sessions_lock = asyncio.Lock()
+_session_lifecycle_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 _SESSION_IDLE_TTL = timedelta(minutes=30)
 _SESSION_LIMIT = 12
 
@@ -306,8 +299,46 @@ def _session_key(conversation_id: str) -> str:
     return f"chat:{conversation_id}"
 
 
+def _session_lifecycle_lock(key: str) -> asyncio.Lock:
+    lock = _session_lifecycle_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_lifecycle_locks[key] = lock
+    return lock
+
+
+async def _run_blocking_to_completion(
+    operation: Callable[..., _BlockingResult],
+    *args: Any,
+    **kwargs: Any,
+) -> _BlockingResult:
+    """Run blocking work without allowing cancellation to leave it running."""
+    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # asyncio.to_thread cannot stop the worker thread. Wait for it before
+        # propagating cancellation so callers never observe half-finished IO.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        if task.done():
+            try:
+                task.result()
+            except BaseException:
+                pass
+        raise
+
+
 async def _close_session(session: _ThreadSession) -> None:
     async with session.lock:
+        if session.closed:
+            return
+        session.closed = True
         try:
             await session.codex.close()
         except Exception:
@@ -318,7 +349,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _evict_idle_sessions_locked() -> list[_ThreadSession]:
+def _evict_idle_sessions_locked() -> list[_ThreadSession]:
     now = _now()
     stale: list[_ThreadSession] = []
     for key, session in list(_sessions.items()):
@@ -335,28 +366,26 @@ async def _evict_idle_sessions_locked() -> list[_ThreadSession]:
     return stale
 
 
-async def _get_thread_session(
+async def _get_thread_session_locked(
     workdir: str,
     settings: Settings,
-    conversation_id: str | None = None,
+    conversation_id: str,
     model: str | None = None,
     reasoning_effort: str | None = None,
 ) -> _ThreadSession:
     from openai_codex import AsyncCodex, CodexConfig
 
-    if not conversation_id:
-        raise ValueError("conversation_id is required for reusable Codex sessions")
-
     root = resolve_workdir(workdir)
     approval_mode, sandbox = _codex_modes(settings)
     key = _session_key(conversation_id)
-    old_session = None
-    stale_sessions: list[_ThreadSession] = []
+    old_session: _ThreadSession | None = None
+    reusable_session: _ThreadSession | None = None
     async with _sessions_lock:
-        stale_sessions = await _evict_idle_sessions_locked()
+        stale_sessions = _evict_idle_sessions_locked()
         session = _sessions.get(key)
         if (
             session
+            and not session.closed
             and session.workdir == str(root)
             and session.approval_mode == approval_mode
             and session.sandbox == sandbox
@@ -364,13 +393,15 @@ async def _get_thread_session(
             and session.reasoning_effort == reasoning_effort
         ):
             session.last_used = _now()
-            return session
-
-        if session:
+            reusable_session = session
+        elif session:
             old_session = _sessions.pop(key, None)
 
     for stale_session in stale_sessions:
         await _close_session(stale_session)
+
+    if reusable_session is not None:
+        return reusable_session
 
     if old_session:
         await _close_session(old_session)
@@ -379,77 +410,107 @@ async def _get_thread_session(
         _CodexClient,
         AsyncCodex(CodexConfig(codex_bin=_installed_codex_bin(), cwd=str(root))),
     )
-    await codex.__aenter__()
-    saved = _read_thread_mapping(settings, conversation_id)
-    thread = None
-    if (
-        saved
-        and saved.get("workdir") == str(root)
-        and saved.get("approval_mode") == settings.codex_approval_mode
-        and saved.get("sandbox_mode") == settings.codex_sandbox_mode
-        and saved.get("thread_id")
-    ):
-        try:
+    try:
+        await codex.__aenter__()
+        saved = await _run_blocking_to_completion(_read_thread_mapping, settings, conversation_id)
+        thread = None
+        if (
+            saved
+            and saved.get("workdir") == str(root)
+            and saved.get("approval_mode") == settings.codex_approval_mode
+            and saved.get("sandbox_mode") == settings.codex_sandbox_mode
+            and saved.get("thread_id")
+        ):
+            try:
+                thread = cast(
+                    _CodexThread,
+                    await codex.thread_resume(
+                        str(saved["thread_id"]),
+                        approval_mode=approval_mode,
+                        sandbox=sandbox,
+                        cwd=str(root),
+                        model=model,
+                        config={"model_reasoning_effort": reasoning_effort}
+                        if reasoning_effort
+                        else None,
+                    ),
+                )
+            except Exception:
+                thread = None
+        if thread is None:
             thread = cast(
                 _CodexThread,
-                await codex.thread_resume(
-                    str(saved["thread_id"]),
+                await codex.thread_start(
                     approval_mode=approval_mode,
                     sandbox=sandbox,
                     cwd=str(root),
                     model=model,
-                    config={"model_reasoning_effort": reasoning_effort} if reasoning_effort else None,
+                    config={"model_reasoning_effort": reasoning_effort}
+                    if reasoning_effort
+                    else None,
                 ),
             )
-        except Exception:
-            thread = None
-    if thread is None:
-        thread = cast(
-            _CodexThread,
-            await codex.thread_start(
-                approval_mode=approval_mode,
-                sandbox=sandbox,
-                cwd=str(root),
-                model=model,
-                config={"model_reasoning_effort": reasoning_effort} if reasoning_effort else None,
-            ),
+        session = _ThreadSession(
+            codex=codex,
+            thread=thread,
+            workdir=str(root),
+            approval_mode=approval_mode,
+            sandbox=sandbox,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            lock=asyncio.Lock(),
+            last_used=_now(),
         )
-    _save_thread_mapping(
-        settings,
-        conversation_id=conversation_id,
-        thread_id=getattr(thread, "id", None),
-        workdir=str(root),
-    )
-    session = _ThreadSession(
-        codex=codex,
-        thread=thread,
-        workdir=str(root),
-        approval_mode=approval_mode,
-        sandbox=sandbox,
-        model=model,
-        reasoning_effort=reasoning_effort,
-        lock=asyncio.Lock(),
-        last_used=_now(),
-    )
-    async with _sessions_lock:
-        current = _sessions.get(key)
+        await _run_blocking_to_completion(
+            _save_thread_mapping,
+            settings,
+            conversation_id=conversation_id,
+            thread_id=getattr(thread, "id", None),
+            workdir=str(root),
+        )
+        async with _sessions_lock:
+            current = _sessions.get(key)
+            if current is None:
+                _sessions[key] = session
+            else:
+                current.last_used = _now()
         if current is not None:
             await _close_session(session)
-            current.last_used = _now()
             return current
-        _sessions[key] = session
         return session
+    except BaseException:
+        try:
+            await codex.close()
+        except BaseException:
+            pass
+        raise
+
+
+async def _get_thread_session(
+    workdir: str,
+    settings: Settings,
+    conversation_id: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> _ThreadSession:
+    if not conversation_id:
+        raise ValueError("conversation_id is required for reusable Codex sessions")
+    async with _session_lifecycle_lock(_session_key(conversation_id)):
+        return await _get_thread_session_locked(
+            workdir, settings, conversation_id, model, reasoning_effort
+        )
 
 
 async def close_codex_thread_session(conversation_id: str | None) -> None:
     if not conversation_id:
         return
-    async with _sessions_lock:
-        session = _sessions.pop(_session_key(conversation_id), None)
-    if conversation_id:
-        _delete_thread_mapping(get_settings(), conversation_id)
-    if session:
-        await _close_session(session)
+    key = _session_key(conversation_id)
+    async with _session_lifecycle_lock(key):
+        async with _sessions_lock:
+            session = _sessions.pop(key, None)
+        await _run_blocking_to_completion(_delete_thread_mapping, get_settings(), conversation_id)
+        if session:
+            await _close_session(session)
 
 
 async def close_codex_thread_sessions_for(conversation_ids: list[str]) -> None:
@@ -647,9 +708,7 @@ async def _run_ephemeral_turn(
 
     root = resolve_workdir(workdir)
     approval_mode, sandbox = _codex_modes(settings)
-    async with AsyncCodex(
-        CodexConfig(codex_bin=_installed_codex_bin(), cwd=str(root))
-    ) as codex:
+    async with AsyncCodex(CodexConfig(codex_bin=_installed_codex_bin(), cwd=str(root))) as codex:
         thread = cast(
             _CodexThread,
             await codex.thread_start(approval_mode=approval_mode, sandbox=sandbox, cwd=str(root)),
@@ -725,32 +784,6 @@ async def _stream_turn(
             session.active_turn = None
 
 
-async def run_codex(
-    prompt: str, workdir: str, settings: Settings, conversation_id: str | None = None
-) -> CodexRun:
-    final = ""
-    resolved_workdir = str(resolve_workdir(workdir))
-    thread_id = None
-    turn_id = None
-    status = None
-    events: list[dict[str, Any]] = []
-    async for event in run_codex_stream(
-        prompt, resolved_workdir, settings, conversation_id=conversation_id
-    ):
-        if event.get("type") == "codex_event":
-            events.append(dict(event))
-        elif event.get("type") == "done":
-            final = str(event.get("text") or "")
-            resolved_workdir = str(event.get("workdir") or resolved_workdir)
-            thread_id = event.get("thread_id")
-            turn_id = event.get("turn_id")
-            status = event.get("status")
-            events = list(event.get("events") or events)
-        elif event.get("type") == "error":
-            raise RuntimeError(str(event.get("message") or "Codex failed"))
-    return CodexRun(final, resolved_workdir, thread_id, turn_id, status, events)
-
-
 async def run_codex_stream(
     prompt: str,
     workdir: str,
@@ -761,7 +794,7 @@ async def run_codex_stream(
     reasoning_effort: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     if settings.codex_auto_checkpoint:
-        checkpoint = create_pre_codex_checkpoint(workdir)
+        checkpoint = await _run_blocking_to_completion(create_pre_codex_checkpoint, workdir)
         yield {
             "type": "checkpoint",
             "created": checkpoint.created,
@@ -771,14 +804,17 @@ async def run_codex_stream(
         }
 
     if conversation_id:
-        session = await _get_thread_session(
-            workdir, settings, conversation_id, model, reasoning_effort
-        )
-        async with session.lock:
-            async for item in _stream_turn(
-                session.thread, prompt, session.workdir, cancel_token, session
-            ):
-                yield item
+        async with _session_lifecycle_lock(_session_key(conversation_id)):
+            session = await _get_thread_session_locked(
+                workdir, settings, conversation_id, model, reasoning_effort
+            )
+            async with session.lock:
+                if session.closed:
+                    raise RuntimeError("Codex session was closed before the turn started")
+                async for item in _stream_turn(
+                    session.thread, prompt, session.workdir, cancel_token, session
+                ):
+                    yield item
         return
 
     async for item in _run_ephemeral_turn(prompt, workdir, settings, cancel_token):
