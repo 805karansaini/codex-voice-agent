@@ -1,27 +1,29 @@
-import unittest
 import subprocess
 import tempfile
+import unittest
 from pathlib import Path
 
 from fastapi import HTTPException
 
+import backend.app.main as main
+from backend.app.history import ArtifactStore, CodexHandoffStore, HistoryStore, ProjectStore
 from backend.app.main import (
     _artifact_content_type,
     _bearer_token,
+    _changed_files_from_status,
     _chat_context,
     _chat_export_markdown,
-    _changed_files_from_status,
     _doctor_checks,
-    _has_history_filter,
+    _effective_client_host,
     _has_file_changes,
+    _has_single_history_filter,
     _is_false_tool_claim,
     _is_local_host,
     _markdown_filename,
+    _normalize_history_scope,
     _project_briefing,
     _resolve_scoped_workdir,
 )
-import backend.app.main as main
-from backend.app.history import ArtifactStore, CodexHandoffStore, HistoryStore, ProjectStore
 
 
 class AuthHelperTests(unittest.TestCase):
@@ -37,8 +39,28 @@ class AuthHelperTests(unittest.TestCase):
         self.assertTrue(_is_local_host("::1"))
         self.assertFalse(_is_local_host("192.168.1.4"))
 
+    def test_local_proxy_preserves_remote_client_identity(self) -> None:
+        self.assertEqual(_effective_client_host("127.0.0.1", "192.168.1.4"), "192.168.1.4")
+        self.assertEqual(_effective_client_host("127.0.0.1", None), "127.0.0.1")
+        self.assertEqual(_effective_client_host("192.168.1.4", "127.0.0.1"), "192.168.1.4")
+        self.assertEqual(
+            _effective_client_host("127.0.0.1", "127.0.0.1, 192.168.1.4"),
+            "192.168.1.4",
+        )
+
+    def test_live_chat_state_cleanup_removes_all_scoped_registries(self) -> None:
+        main._live_resumption_handles["chat-1"] = "resume-token"
+        main._live_completion_subscribers["chat-1"] = set()
+
+        main._clear_live_chat_state(["chat-1"])
+
+        self.assertNotIn("chat-1", main._live_resumption_handles)
+        self.assertNotIn("chat-1", main._live_completion_subscribers)
+
     def test_artifact_content_type_keeps_command_output_as_text(self) -> None:
-        self.assertEqual(_artifact_content_type("- item\n| pipe in shell output\n`literal`"), "text")
+        self.assertEqual(
+            _artifact_content_type("- item\n| pipe in shell output\n`literal`"), "text"
+        )
 
     def test_artifact_content_type_detects_markdown_and_diff(self) -> None:
         self.assertEqual(_artifact_content_type("## Summary\n\n- [x] Done"), "markdown")
@@ -57,9 +79,15 @@ class AuthHelperTests(unittest.TestCase):
         )
 
     def test_history_filter_requires_specific_scope(self) -> None:
-        self.assertFalse(_has_history_filter(None, None, None))
-        self.assertFalse(_has_history_filter("", "  ", None))
-        self.assertTrue(_has_history_filter(None, None, "chat-1"))
+        self.assertFalse(_has_single_history_filter(None, None, None))
+        self.assertFalse(_has_single_history_filter("", "  ", None))
+        self.assertTrue(_has_single_history_filter(None, None, "chat-1"))
+        self.assertTrue(_has_single_history_filter("  ", None, "chat-1"))
+        self.assertFalse(_has_single_history_filter("project-1", None, "chat-1"))
+        self.assertEqual(
+            _normalize_history_scope("  ", None, " chat-1 "),
+            (None, None, "chat-1"),
+        )
 
     def test_false_tool_claim_detector_requires_no_codex_use(self) -> None:
         self.assertTrue(_is_false_tool_claim("I'll check the files now.", used_codex=False))
@@ -99,16 +127,27 @@ class AuthHelperTests(unittest.TestCase):
         self.assertIn("```diff\ndiff --git", markdown)
 
     def test_markdown_filename_is_safe(self) -> None:
-        self.assertEqual(_markdown_filename("Fix login: auth/session?"), "fix-login-auth-session.md")
+        self.assertEqual(
+            _markdown_filename("Fix login: auth/session?"), "fix-login-auth-session.md"
+        )
 
     def test_doctor_checks_include_required_setup_items(self) -> None:
         checks = _doctor_checks()
         names = {str(check["name"]) for check in checks}
 
         self.assertTrue(
-            {"Google API key", "API token", "Git", "Codex login", "Default work folder", "Codex SDK"}.issubset(names)
+            {
+                "Google API key",
+                "API token",
+                "Git",
+                "Codex login",
+                "Default work folder",
+                "Codex SDK",
+            }.issubset(names)
         )
-        self.assertTrue(all("ok" in check and "message" in check and "fix" in check for check in checks))
+        self.assertTrue(
+            all("ok" in check and "message" in check and "fix" in check for check in checks)
+        )
 
     def test_scoped_workdir_allows_project_subdirectories(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,7 +158,13 @@ class AuthHelperTests(unittest.TestCase):
             try:
                 main.projects = ProjectStore(Path(tmp) / "projects.json")
                 main.projects.upsert(
-                    {"id": "project-1", "name": "Repo", "path": str(root), "color": "blue", "createdAt": 1}
+                    {
+                        "id": "project-1",
+                        "name": "Repo",
+                        "path": str(root),
+                        "color": "blue",
+                        "createdAt": 1,
+                    }
                 )
 
                 self.assertEqual(
@@ -139,7 +184,13 @@ class AuthHelperTests(unittest.TestCase):
             try:
                 main.projects = ProjectStore(Path(tmp) / "projects.json")
                 main.projects.upsert(
-                    {"id": "project-1", "name": "Repo", "path": str(root), "color": "blue", "createdAt": 1}
+                    {
+                        "id": "project-1",
+                        "name": "Repo",
+                        "path": str(root),
+                        "color": "blue",
+                        "createdAt": 1,
+                    }
                 )
 
                 with self.assertRaises(HTTPException):
@@ -147,15 +198,34 @@ class AuthHelperTests(unittest.TestCase):
             finally:
                 main.projects = old_projects
 
+    def test_scoped_workdir_rejects_unknown_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_projects = main.projects
+            try:
+                main.projects = ProjectStore(Path(tmp) / "projects.json")
+
+                with self.assertRaises(HTTPException) as raised:
+                    _resolve_scoped_workdir(tmp, project_id="missing-project")
+
+                self.assertEqual(raised.exception.status_code, 404)
+                self.assertEqual(raised.exception.detail, "Project not found")
+                self.assertEqual(_resolve_scoped_workdir(tmp), str(Path(tmp).resolve()))
+            finally:
+                main.projects = old_projects
+
     def test_project_briefing_summarizes_git_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"], cwd=root, check=True
+            )
             subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
             (root / "README.md").write_text("hello\n", encoding="utf-8")
             subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=root, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "Initial commit"], cwd=root, check=True, capture_output=True
+            )
             (root / "README.md").write_text("hello\nchanged\n", encoding="utf-8")
 
             briefing = _project_briefing(str(root))

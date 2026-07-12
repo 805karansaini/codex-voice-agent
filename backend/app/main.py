@@ -5,7 +5,7 @@ import re
 import shutil
 import subprocess
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -13,10 +13,10 @@ from typing import Any, AsyncIterator, NotRequired, Protocol, TypedDict, cast
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from google import genai
 from google.genai import types
-from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .codex_runner import (
     CancellationToken,
@@ -54,6 +54,11 @@ from .services.change_review import (
     git_output,
     has_file_changes,
     revert_changed_files,
+)
+from .services.foreground_activity import (
+    ForegroundActivityLease,
+    ForegroundActivityRegistry,
+    ForegroundActivityUnavailable,
 )
 from .settings import get_settings
 
@@ -226,18 +231,21 @@ settings = get_settings()
 database = SQLiteDatabase(settings.history_path.with_suffix(".sqlite3"))
 history = HistoryStore(settings.history_path, database=database)
 artifacts = ArtifactStore(settings.history_path, database=database)
-projects = ProjectStore(
-    settings.history_path.with_name("projects.json"), database=database
-)
+projects = ProjectStore(settings.history_path.with_name("projects.json"), database=database)
 chats = ChatStore(settings.history_path.with_name("chats.json"), database=database)
-console = ConsoleStore(
-    settings.history_path.with_name("console.json"), database=database
-)
+console = ConsoleStore(settings.history_path.with_name("console.json"), database=database)
 app_log = JsonlEventLogger(settings.history_path.with_name("app_events.jsonl"))
 model_context_log = JsonlEventLogger(settings.history_path.with_name("model_context_packets.jsonl"))
 codex_handoffs = CodexHandoffStore(settings.history_path, database=database)
 _live_resumption_handles: dict[str, str] = {}
 _live_completion_subscribers: dict[str, set[asyncio.Queue[_LiveCompletion]]] = {}
+_foreground_activity = ForegroundActivityRegistry()
+
+
+def _clear_live_chat_state(chat_ids: list[str]) -> None:
+    for chat_id in chat_ids:
+        _live_resumption_handles.pop(chat_id, None)
+        _live_completion_subscribers.pop(chat_id, None)
 
 
 def _artifact_summary(text: object, limit: int = 220) -> str:
@@ -455,11 +463,6 @@ def _sync_background_job_dependencies() -> None:
     )
 
 
-async def _store_job(job: _CodexBackgroundJob) -> None:
-    _sync_background_job_dependencies()
-    await _background_jobs.store(job)
-
-
 async def _get_job(job_id: str) -> _CodexBackgroundJob | None:
     _sync_background_job_dependencies()
     return await _background_jobs.get(job_id)
@@ -468,11 +471,6 @@ async def _get_job(job_id: str) -> _CodexBackgroundJob | None:
 async def _list_jobs(chat_id: str | None = None) -> list[dict[str, object]]:
     _sync_background_job_dependencies()
     return await _background_jobs.list(chat_id)
-
-
-async def _run_codex_background_job(job_id: str) -> None:
-    _sync_background_job_dependencies()
-    await _background_jobs.run(job_id)
 
 
 async def _enqueue_codex_background_job(
@@ -486,47 +484,44 @@ async def _enqueue_codex_background_job(
     reasoning_effort: str | None = None,
     source: str = "direct",
 ) -> _CodexBackgroundJob:
-    job = _CodexBackgroundJob(
-        id=str(uuid.uuid4()),
-        task=task,
-        enhanced_task=enhanced_task,
-        workdir=workdir,
-        project_id=project_id,
-        chat_id=chat_id,
-        model=model,
-        reasoning_effort=reasoning_effort,
-    )
-    await _store_job(job)
-    history.append(
-        "user",
-        task,
-        {
-            "direct_codex": True,
-            "background_job_id": job.id,
-            "user_visible": source == "direct",
-            "workdir": workdir,
-            "project_id": project_id,
-            "chat_id": chat_id,
-        },
-    )
-    asyncio.create_task(_run_codex_background_job(job.id))
-    app_log.write(
-        "codex_job.queued",
-        job_id=job.id,
-        chat_id=chat_id,
-        project_id=project_id,
-        workdir=workdir,
-        task_chars=len(task),
-        source=source,
-    )
-    return job
+    try:
+        async with _foreground_activity.activity(
+            chat_id=chat_id, project_id=project_id, workdir=workdir
+        ):
+            job = _CodexBackgroundJob(
+                id=str(uuid.uuid4()),
+                task=task,
+                enhanced_task=enhanced_task,
+                workdir=workdir,
+                project_id=project_id,
+                chat_id=chat_id,
+                source=source,
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
+            _sync_background_job_dependencies()
+            await _background_jobs.store_and_start(job)
+            app_log.write(
+                "codex_job.queued",
+                job_id=job.id,
+                chat_id=chat_id,
+                project_id=project_id,
+                workdir=workdir,
+                task_chars=len(task),
+                source=source,
+            )
+            return job
+    except ForegroundActivityUnavailable as exc:
+        raise HTTPException(status_code=409, detail="This chat is being cleared") from exc
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _background_jobs.open()
     try:
         yield
     finally:
+        await _background_jobs.close()
         await close_codex_thread_sessions()
 
 
@@ -536,8 +531,6 @@ app.add_middleware(
     allow_origins=[
         "http://127.0.0.1:5173",
         "http://localhost:5173",
-        "http://192.168.1.10:5173",
-        "http://100.113.140.3:5173",
     ],
     allow_origin_regex=r"https?://(127\.0\.0\.1|localhost|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+):\d+",
     allow_credentials=True,
@@ -571,8 +564,31 @@ def _is_local_host(host: str) -> bool:
     return host in _LOCAL_CLIENTS
 
 
-def _has_history_filter(project_id: str | None, workdir: str | None, chat_id: str | None) -> bool:
-    return any(value is not None and value.strip() for value in (project_id, workdir, chat_id))
+def _normalize_history_scope(
+    project_id: str | None, workdir: str | None, chat_id: str | None
+) -> tuple[str | None, str | None, str | None]:
+    def clean(value: str | None) -> str | None:
+        normalized = str(value or "").strip()
+        return normalized or None
+
+    return clean(project_id), clean(workdir), clean(chat_id)
+
+
+def _has_single_history_filter(
+    project_id: str | None, workdir: str | None, chat_id: str | None
+) -> bool:
+    return (
+        sum(value is not None for value in _normalize_history_scope(project_id, workdir, chat_id))
+        == 1
+    )
+
+
+def _effective_client_host(peer_host: str, forwarded_for: str | None) -> str:
+    peer = _client_host(peer_host)
+    if not _is_local_host(peer) or not forwarded_for:
+        return peer
+    forwarded_hops = [hop.strip() for hop in forwarded_for.split(",") if hop.strip()]
+    return _client_host(forwarded_hops[-1]) if forwarded_hops else peer
 
 
 def _project_root(project_id: str | None) -> Path | None:
@@ -596,6 +612,8 @@ def _resolve_scoped_workdir(
     raw_workdir = requested_workdir or fallback_workdir or settings.codex_default_workdir
     resolved = resolve_workdir(raw_workdir)
     root = _project_root(project_id)
+    if project_id and root is None:
+        raise HTTPException(status_code=404, detail="Project not found")
     if root is None:
         return str(resolved)
     if resolved != root and root not in resolved.parents:
@@ -631,6 +649,10 @@ app.include_router(
         project_root=_project_root,
         resolve_workdir=resolve_workdir,
         close_sessions=close_codex_thread_sessions_for,
+        cancel_background_jobs=_background_jobs.cancel_and_remove,
+        foreground_activity=_foreground_activity.activity,
+        cleanup_foreground_work=_foreground_activity.cleanup,
+        clear_live_chat_state=_clear_live_chat_state,
     )
 )
 
@@ -914,9 +936,11 @@ async def require_api_auth(request: Request, call_next):
     )
     if _token_matches(token):
         return await call_next(request)
-    if not settings.api_token and _is_local_host(
-        _client_host(request.client.host if request.client else "")
-    ):
+    client_host = _effective_client_host(
+        request.client.host if request.client else "",
+        request.headers.get("x-forwarded-for"),
+    )
+    if not settings.api_token and _is_local_host(client_host):
         return await call_next(request)
     return JSONResponse(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -934,9 +958,11 @@ async def _authorize_live_websocket(websocket: WebSocket) -> bool:
     )
     if _token_matches(token):
         return True
-    if not settings.api_token and _is_local_host(
-        _client_host(websocket.client.host if websocket.client else "")
-    ):
+    client_host = _effective_client_host(
+        websocket.client.host if websocket.client else "",
+        websocket.headers.get("x-forwarded-for"),
+    )
+    if not settings.api_token and _is_local_host(client_host):
         return True
     await websocket.close(code=1008)
     return False
@@ -1236,9 +1262,9 @@ class ChatMetaRequest(BaseModel):
 
 
 class ConsoleStateRequest(BaseModel):
-    actions: list[dict[str, object]] = []
-    handoffs: list[dict[str, object]] = []
-    debugEntries: list[dict[str, object]] = []
+    actions: list[dict[str, object]] = Field(default_factory=list)
+    handoffs: list[dict[str, object]] = Field(default_factory=list)
+    debugEntries: list[dict[str, object]] = Field(default_factory=list)
 
 
 @app.get("/api/health")
@@ -1260,11 +1286,14 @@ async def doctor() -> dict[str, object]:
 
 
 @app.get("/api/history")
-async def list_history(
+def list_history(
     project_id: str | None = None, workdir: str | None = None, chat_id: str | None = None
 ) -> list[dict[str, object]]:
-    if not _has_history_filter(project_id, workdir, chat_id):
-        raise HTTPException(status_code=400, detail="Provide project_id, workdir, or chat_id")
+    project_id, workdir, chat_id = _normalize_history_scope(project_id, workdir, chat_id)
+    if not _has_single_history_filter(project_id, workdir, chat_id):
+        raise HTTPException(
+            status_code=400, detail="Provide exactly one of project_id, workdir, or chat_id"
+        )
     return history.list(project_id=project_id, workdir=workdir, chat_id=chat_id)
 
 
@@ -1272,25 +1301,52 @@ async def list_history(
 async def clear_history(
     project_id: str | None = None, workdir: str | None = None, chat_id: str | None = None
 ) -> dict[str, object]:
+    project_id, workdir, chat_id = _normalize_history_scope(project_id, workdir, chat_id)
+    if not _has_single_history_filter(project_id, workdir, chat_id):
+        raise HTTPException(
+            status_code=400, detail="Provide exactly one of project_id, workdir, or chat_id"
+        )
+    history_chat_ids = await asyncio.to_thread(
+        history.chat_ids,
+        project_id=project_id,
+        workdir=workdir,
+        chat_id=chat_id,
+    )
+    chat_ids = [chat_id] if chat_id is not None else []
     if project_id is not None:
-        chat_ids = [
-            str(chat.get("id")) for chat in chats.list(project_id=project_id) if chat.get("id")
-        ]
-        await close_codex_thread_sessions_for(chat_ids)
-        for cid in chat_ids:
-            artifacts.clear(cid)
-            codex_handoffs.clear(cid)
-    elif chat_id is not None:
-        await close_codex_thread_session(chat_id)
-    history.clear(project_id=project_id, workdir=workdir, chat_id=chat_id)
-    if chat_id is not None:
-        artifacts.clear(chat_id)
-        codex_handoffs.clear(chat_id)
+        project_chats = await asyncio.to_thread(chats.list, project_id=project_id)
+        chat_ids.extend(str(chat.get("id")) for chat in project_chats if chat.get("id"))
+    chat_ids = list(dict.fromkeys([*chat_ids, *history_chat_ids]))
+    async with _foreground_activity.cleanup(
+        chat_ids=chat_ids,
+        project_id=project_id,
+        workdir=workdir,
+    ) as active_chat_ids:
+        chat_ids = list(dict.fromkeys([*chat_ids, *active_chat_ids]))
+        await _background_jobs.cancel_and_remove(
+            project_id=project_id,
+            workdir=workdir,
+            chat_id=chat_id,
+        )
+        for scoped_chat_id in chat_ids:
+            await _background_jobs.cancel_and_remove(chat_id=scoped_chat_id)
+        if chat_ids:
+            await close_codex_thread_sessions_for(chat_ids)
+            _clear_live_chat_state(chat_ids)
+
+        def clear_scoped_data() -> None:
+            history.clear(project_id=project_id, workdir=workdir, chat_id=chat_id)
+            for scoped_chat_id in chat_ids:
+                artifacts.clear(scoped_chat_id)
+                codex_handoffs.clear(scoped_chat_id)
+            console.clear_for_project(chat_ids)
+
+        await asyncio.to_thread(clear_scoped_data)
     return {"ok": True}
 
 
 @app.get("/api/search")
-async def search_content(q: str, limit: int = 20) -> list[dict[str, object]]:
+def search_content(q: str, limit: int = 20) -> list[dict[str, object]]:
     query = " ".join(q.split())
     if len(query) < 2:
         return []
@@ -1301,7 +1357,7 @@ async def search_content(q: str, limit: int = 20) -> list[dict[str, object]]:
 
 
 @app.get("/api/chats")
-async def list_chats(project_id: str | None = None) -> list[dict[str, object]]:
+def list_chats(project_id: str | None = None) -> list[dict[str, object]]:
     stored = chats.list(project_id=project_id)
     by_id: dict[str, dict[str, Any]] = {
         str(chat.get("id")): dict(chat) for chat in stored if chat.get("id")
@@ -1331,19 +1387,25 @@ async def list_chats(project_id: str | None = None) -> list[dict[str, object]]:
 
 @app.post("/api/chats")
 async def save_chat(req: ChatMetaRequest) -> dict[str, object]:
-    if not req.id.strip() or not req.projectId.strip():
+    chat_id = req.id.strip()
+    project_id = req.projectId.strip()
+    if not chat_id or not project_id:
         raise HTTPException(status_code=400, detail="Chat id and projectId are required")
     chat = {
-        "id": req.id.strip(),
-        "projectId": req.projectId.strip(),
+        "id": chat_id,
+        "projectId": project_id,
         "title": req.title.strip() or "New chat",
         "createdAt": req.createdAt,
     }
-    return chats.upsert(chat)
+    try:
+        async with _foreground_activity.activity(chat_id=chat_id, project_id=project_id) as lease:
+            return await lease.run_sync(chats.upsert, chat)
+    except ForegroundActivityUnavailable as exc:
+        raise HTTPException(status_code=409, detail="This chat is being cleared") from exc
 
 
 @app.get("/api/chats/{chat_id}/export.md")
-async def export_chat_markdown(chat_id: str) -> Response:
+def export_chat_markdown(chat_id: str) -> Response:
     chat = next((item for item in chats.list() if item.get("id") == chat_id), None)
     rows = history.list(chat_id=chat_id)
     artifact_rows = artifacts.list(chat_id=chat_id)
@@ -1361,43 +1423,57 @@ async def export_chat_markdown(chat_id: str) -> Response:
 
 @app.delete("/api/chats/{chat_id}")
 async def delete_chat(chat_id: str) -> dict[str, object]:
-    await close_codex_thread_session(chat_id)
-    chats.delete(chat_id)
-    history.clear(chat_id=chat_id)
-    artifacts.clear(chat_id)
-    codex_handoffs.clear(chat_id)
-    console.clear(chat_id)
+    async with _foreground_activity.cleanup(chat_ids=[chat_id]):
+        await _background_jobs.cancel_and_remove(chat_id=chat_id)
+        await close_codex_thread_session(chat_id)
+        _clear_live_chat_state([chat_id])
+
+        def delete_chat_data() -> None:
+            chats.delete(chat_id)
+            history.clear(chat_id=chat_id)
+            artifacts.clear(chat_id)
+            codex_handoffs.clear(chat_id)
+            console.clear(chat_id)
+
+        await asyncio.to_thread(delete_chat_data)
     return {"ok": True}
 
 
 @app.get("/api/chats/{chat_id}/console")
-async def get_console_state(chat_id: str) -> dict[str, object]:
+def get_console_state(chat_id: str) -> dict[str, object]:
     return console.get(chat_id)
 
 
 @app.put("/api/chats/{chat_id}/console")
 async def save_console_state(chat_id: str, req: ConsoleStateRequest) -> dict[str, object]:
-    app_log.write(
-        "console.save",
-        chat_id=chat_id,
-        action_count=len(req.actions),
-        handoff_count=len(req.handoffs),
-        debug_count=len(req.debugEntries),
-        running_actions=sum(1 for action in req.actions if action.get("status") == "running"),
-        failed_actions=sum(1 for action in req.actions if action.get("status") == "failed"),
-    )
-    return console.put(
-        chat_id,
-        {
-            "actions": req.actions,
-            "handoffs": req.handoffs,
-            "debugEntries": req.debugEntries,
-        },
-    )
+    try:
+        async with _foreground_activity.activity(chat_id=chat_id) as lease:
+            app_log.write(
+                "console.save",
+                chat_id=chat_id,
+                action_count=len(req.actions),
+                handoff_count=len(req.handoffs),
+                debug_count=len(req.debugEntries),
+                running_actions=sum(
+                    1 for action in req.actions if action.get("status") == "running"
+                ),
+                failed_actions=sum(1 for action in req.actions if action.get("status") == "failed"),
+            )
+            return await lease.run_sync(
+                console.put,
+                chat_id,
+                {
+                    "actions": req.actions,
+                    "handoffs": req.handoffs,
+                    "debugEntries": req.debugEntries,
+                },
+            )
+    except ForegroundActivityUnavailable as exc:
+        raise HTTPException(status_code=409, detail="This chat is being cleared") from exc
 
 
 @app.delete("/api/chats/{chat_id}/console")
-async def clear_console_state(chat_id: str) -> dict[str, object]:
+def clear_console_state(chat_id: str) -> dict[str, object]:
     app_log.write("console.clear", chat_id=chat_id)
     console.clear(chat_id)
     return {"ok": True}
@@ -1410,158 +1486,199 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=400, detail="Message is required")
     workdir = _resolve_scoped_workdir(req.workdir, project_id=req.project_id)
     project_root = str(_project_root(req.project_id) or workdir)
-    conversation_context = await asyncio.to_thread(_chat_context, req.chat_id, workdir)
-    artifact_replay = _latest_artifact_replay(req.chat_id, text)
-    history.append(
-        "user", text, {"workdir": workdir, "project_id": req.project_id, "chat_id": req.chat_id}
-    )
-    _write_model_context_packet(
-        surface="chat",
+    activity_reservation = _foreground_activity.activity(
         chat_id=req.chat_id,
         project_id=req.project_id,
         workdir=workdir,
-        model=settings.gemini_text_model,
-        user_text=text,
-        conversation_context=conversation_context,
-        extra={"direct_artifact_replay": bool(artifact_replay)},
     )
-    app_log.write(
-        "chat_stream.start",
-        chat_id=req.chat_id,
-        project_id=req.project_id,
-        workdir=workdir,
-        message_chars=len(text),
-        context_chars=len(conversation_context),
-    )
-
-    cancel_token = CancellationToken()
+    try:
+        reservation_lease = await activity_reservation.__aenter__()
+    except ForegroundActivityUnavailable as exc:
+        raise HTTPException(status_code=409, detail="This chat is being cleared") from exc
 
     async def event_source():
-        if artifact_replay is not None:
-            history.append(
-                "assistant",
-                artifact_replay,
-                {
-                    "direct_artifact_replay": True,
-                    "workdir": workdir,
-                    "project_id": req.project_id,
-                    "chat_id": req.chat_id,
-                },
-            )
-            app_log.write(
-                "chat_stream.artifact_replay",
-                chat_id=req.chat_id,
-                reply_chars=len(artifact_replay),
-            )
-            yield f"data: {json.dumps({'type': 'done', 'text': artifact_replay, 'workdir': workdir})}\n\n"
-            return
-        final_text = ""
-        final_workdir = workdir
-        final_tool_calls = []
-        final_codex_events = []
-        final_artifacts = []
-        final_codex_turn_id = None
-        final_codex_thread_id = None
-        final_codex_status = None
         try:
-            async for event in ask_gemini_stream(
-                text,
-                settings,
-                workdir=workdir,
-                cancel_token=cancel_token,
-                conversation_id=req.chat_id,
-                conversation_context=conversation_context,
-                project_root=project_root,
-                codex_model=req.model,
-                codex_reasoning_effort=req.reasoning_effort,
-            ):
-                if event.get("type") == "done":
-                    final_text = str(event.get("text") or "")
-                    final_workdir = str(event.get("workdir") or workdir)
-                    final_tool_calls = list(event.get("tool_calls") or [])
-                    final_codex_events = list(event.get("codex_events") or [])
-                    final_codex_turn_id = event.get("codex_turn_id")
-                    final_codex_thread_id = event.get("codex_thread_id")
-                    final_codex_status = event.get("codex_status")
-                    app_log.write(
-                        "chat_stream.done_event",
-                        chat_id=req.chat_id,
-                        reply_chars=len(final_text),
-                        tool_call_count=len(final_tool_calls),
-                        codex_status=final_codex_status,
-                    )
-                elif event.get("type") == "tool_call":
-                    app_log.write(
-                        "chat_stream.tool_call",
-                        chat_id=req.chat_id,
-                        name=event.get("name"),
-                        task=clip_text(event.get("task")),
-                        workdir=event.get("workdir"),
-                    )
-                elif event.get("type") == "tool_result":
-                    result_events = list(event.get("codex_events") or [])
-                    artifact = _create_tool_artifact(
-                        chat_id=req.chat_id,
-                        message_id=None,
-                        title=f"{event.get('name') or 'Codex'} output",
-                        content=event.get("result"),
-                        source=str(event.get("name") or "run_codex_task"),
-                        workdir=str(event.get("workdir") or workdir),
-                    )
-                    if artifact:
-                        final_artifacts.append(artifact)
-                        event["artifact"] = artifact
-                    change_artifact = _create_change_review_artifact(
-                        chat_id=req.chat_id,
-                        workdir=str(event.get("workdir") or workdir),
-                        codex_events=result_events,
-                    )
-                    if change_artifact:
-                        final_artifacts.append(change_artifact)
-                        event["change_artifact"] = change_artifact
-                        event["changed_files"] = change_artifact.get("changed_files", [])
-                    app_log.write(
-                        "chat_stream.tool_result",
-                        chat_id=req.chat_id,
-                        name=event.get("name"),
-                        result_chars=len(str(event.get("result") or "")),
-                        codex_status=event.get("codex_status"),
-                    )
-                elif event.get("type") == "error":
-                    app_log.write(
-                        "chat_stream.error_event",
-                        chat_id=req.chat_id,
-                        message=clip_text(event.get("message")),
-                    )
-                yield f"data: {json.dumps(event)}\n\n"
-        except Exception as exc:
-            app_log.write("chat_stream.exception", chat_id=req.chat_id, message=clip_text(exc))
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
-        finally:
-            cancel_token.cancel()
-            app_log.write(
-                "chat_stream.finally",
+            await reservation_lease.bind_owner()
+            async with _foreground_activity.activity(
                 chat_id=req.chat_id,
-                final_text_chars=len(final_text),
-                codex_status=final_codex_status,
-                persisted=bool(final_text),
-            )
-            if final_text:
-                history.append(
-                    "assistant",
-                    final_text,
+                project_id=req.project_id,
+                workdir=workdir,
+            ) as lease:
+                conversation_context = await asyncio.to_thread(_chat_context, req.chat_id, workdir)
+                artifact_replay = await asyncio.to_thread(
+                    _latest_artifact_replay, req.chat_id, text
+                )
+                await lease.run_sync(
+                    history.append,
+                    "user",
+                    text,
                     {
-                        "tool_calls": final_tool_calls,
-                        "artifacts": final_artifacts,
-                        "codex_events": final_codex_events,
-                        "codex_turn_id": final_codex_turn_id,
-                        "codex_thread_id": final_codex_thread_id,
-                        "codex_status": final_codex_status,
-                        "workdir": final_workdir,
+                        "workdir": workdir,
                         "project_id": req.project_id,
                         "chat_id": req.chat_id,
                     },
                 )
+                _write_model_context_packet(
+                    surface="chat",
+                    chat_id=req.chat_id,
+                    project_id=req.project_id,
+                    workdir=workdir,
+                    model=settings.gemini_text_model,
+                    user_text=text,
+                    conversation_context=conversation_context,
+                    extra={"direct_artifact_replay": bool(artifact_replay)},
+                )
+                app_log.write(
+                    "chat_stream.start",
+                    chat_id=req.chat_id,
+                    project_id=req.project_id,
+                    workdir=workdir,
+                    message_chars=len(text),
+                    context_chars=len(conversation_context),
+                )
+
+                if artifact_replay is not None:
+                    await lease.run_sync(
+                        history.append,
+                        "assistant",
+                        artifact_replay,
+                        {
+                            "direct_artifact_replay": True,
+                            "workdir": workdir,
+                            "project_id": req.project_id,
+                            "chat_id": req.chat_id,
+                        },
+                    )
+                    app_log.write(
+                        "chat_stream.artifact_replay",
+                        chat_id=req.chat_id,
+                        reply_chars=len(artifact_replay),
+                    )
+                    yield f"data: {json.dumps({'type': 'done', 'text': artifact_replay, 'workdir': workdir})}\n\n"
+                    return
+
+                cancel_token = CancellationToken()
+                final_text = ""
+                final_workdir = workdir
+                final_tool_calls = []
+                final_codex_events = []
+                final_artifacts = []
+                final_codex_turn_id = None
+                final_codex_thread_id = None
+                final_codex_status = None
+                try:
+                    async for event in ask_gemini_stream(
+                        text,
+                        settings,
+                        workdir=workdir,
+                        cancel_token=cancel_token,
+                        conversation_id=req.chat_id,
+                        conversation_context=conversation_context,
+                        project_root=project_root,
+                        codex_model=req.model,
+                        codex_reasoning_effort=req.reasoning_effort,
+                    ):
+                        if event.get("type") == "done":
+                            final_text = str(event.get("text") or "")
+                            final_workdir = str(event.get("workdir") or workdir)
+                            final_tool_calls = list(event.get("tool_calls") or [])
+                            final_codex_events = list(event.get("codex_events") or [])
+                            final_codex_turn_id = event.get("codex_turn_id")
+                            final_codex_thread_id = event.get("codex_thread_id")
+                            final_codex_status = event.get("codex_status")
+                            app_log.write(
+                                "chat_stream.done_event",
+                                chat_id=req.chat_id,
+                                reply_chars=len(final_text),
+                                tool_call_count=len(final_tool_calls),
+                                codex_status=final_codex_status,
+                            )
+                        elif event.get("type") == "tool_call":
+                            app_log.write(
+                                "chat_stream.tool_call",
+                                chat_id=req.chat_id,
+                                name=event.get("name"),
+                                task=clip_text(event.get("task")),
+                                workdir=event.get("workdir"),
+                            )
+                        elif event.get("type") == "tool_result":
+                            result_events = list(event.get("codex_events") or [])
+                            artifact = await lease.run_sync(
+                                _create_tool_artifact,
+                                chat_id=req.chat_id,
+                                message_id=None,
+                                title=f"{event.get('name') or 'Codex'} output",
+                                content=event.get("result"),
+                                source=str(event.get("name") or "run_codex_task"),
+                                workdir=str(event.get("workdir") or workdir),
+                            )
+                            if artifact:
+                                final_artifacts.append(artifact)
+                                event["artifact"] = artifact
+                            change_artifact = await lease.run_sync(
+                                _create_change_review_artifact,
+                                chat_id=req.chat_id,
+                                workdir=str(event.get("workdir") or workdir),
+                                codex_events=result_events,
+                            )
+                            if change_artifact:
+                                final_artifacts.append(change_artifact)
+                                event["change_artifact"] = change_artifact
+                                event["changed_files"] = change_artifact.get("changed_files", [])
+                            app_log.write(
+                                "chat_stream.tool_result",
+                                chat_id=req.chat_id,
+                                name=event.get("name"),
+                                result_chars=len(str(event.get("result") or "")),
+                                codex_status=event.get("codex_status"),
+                            )
+                        elif event.get("type") == "error":
+                            app_log.write(
+                                "chat_stream.error_event",
+                                chat_id=req.chat_id,
+                                message=clip_text(event.get("message")),
+                            )
+                        yield f"data: {json.dumps(event)}\n\n"
+                except Exception as exc:
+                    app_log.write(
+                        "chat_stream.exception", chat_id=req.chat_id, message=clip_text(exc)
+                    )
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+                finally:
+                    cancel_token.cancel()
+                    persisted = False
+                    if final_text:
+                        try:
+                            await lease.run_sync(
+                                history.append,
+                                "assistant",
+                                final_text,
+                                {
+                                    "tool_calls": final_tool_calls,
+                                    "artifacts": final_artifacts,
+                                    "codex_events": final_codex_events,
+                                    "codex_turn_id": final_codex_turn_id,
+                                    "codex_thread_id": final_codex_thread_id,
+                                    "codex_status": final_codex_status,
+                                    "workdir": final_workdir,
+                                    "project_id": req.project_id,
+                                    "chat_id": req.chat_id,
+                                },
+                            )
+                            persisted = True
+                        except ForegroundActivityUnavailable:
+                            pass
+                    app_log.write(
+                        "chat_stream.finally",
+                        chat_id=req.chat_id,
+                        final_text_chars=len(final_text),
+                        codex_status=final_codex_status,
+                        persisted=persisted,
+                    )
+        except ForegroundActivityUnavailable:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'This chat is being cleared'})}\n\n"
+        finally:
+            await activity_reservation.__aexit__(None, None, None)
 
     return StreamingResponse(
         event_source(),
@@ -1594,6 +1711,78 @@ async def live_voice(websocket: WebSocket) -> None:
     session_ended_by_tool = False
     completion_queue: asyncio.Queue[_LiveCompletion] = asyncio.Queue()
     received_gemini_server_message = False
+    live_owner_task = asyncio.current_task()
+    if live_owner_task is None:
+        raise RuntimeError("Live voice requires an asyncio task")
+    live_activity_context: AbstractAsyncContextManager[ForegroundActivityLease] | None = None
+    live_activity_lease: ForegroundActivityLease | None = None
+    live_activity_contexts: list[AbstractAsyncContextManager[ForegroundActivityLease]] = []
+    live_tasks: set[asyncio.Task[None]] = set()
+    subscribed_completion_chat_id: str | None = None
+    live_scope_lock = asyncio.Lock()
+
+    async def bind_live_activity(
+        *, chat_id: str | None, project_id: str | None, workdir: str
+    ) -> None:
+        nonlocal live_activity_context, live_activity_lease
+        next_context = _foreground_activity.activity(
+            chat_id=chat_id,
+            project_id=project_id,
+            workdir=workdir,
+            owner=live_owner_task,
+        )
+        next_lease = await next_context.__aenter__()
+        live_activity_contexts.append(next_context)
+        previous_context = live_activity_context
+        live_activity_context = next_context
+        live_activity_lease = next_lease
+        if previous_context is not None:
+            try:
+                await previous_context.__aexit__(None, None, None)
+            finally:
+                if previous_context in live_activity_contexts:
+                    live_activity_contexts.remove(previous_context)
+
+    def subscribe_to_chat_completions(chat_id: str | None) -> None:
+        nonlocal subscribed_completion_chat_id
+        previous_chat_id = subscribed_completion_chat_id
+        if previous_chat_id == chat_id:
+            return
+        if previous_chat_id:
+            subscribers = _live_completion_subscribers.get(previous_chat_id)
+            if subscribers is not None:
+                subscribers.discard(completion_queue)
+                if not subscribers:
+                    _live_completion_subscribers.pop(previous_chat_id, None)
+        while not completion_queue.empty():
+            completion_queue.get_nowait()
+        subscribed_completion_chat_id = chat_id
+        if not chat_id:
+            return
+        _live_completion_subscribers.setdefault(chat_id, set()).add(completion_queue)
+        for handoff in codex_handoffs.pending_completion_for_chat(chat_id):
+            completion_queue.put_nowait(
+                {
+                    "handoff": handoff,
+                    "result": _latest_artifact_replay(chat_id, "what was the result")
+                    or str(handoff["result_summary"]),
+                    "artifacts": [],
+                }
+            )
+
+    async def persist_turn(fallback_assistant_text: str = "") -> None:
+        async with live_scope_lock:
+            kwargs = {
+                "history_store": history,
+                "workdir": session_workdir,
+                "project_id": session_project_id,
+                "chat_id": session_chat_id,
+                "fallback_assistant_text": fallback_assistant_text,
+            }
+            if live_activity_lease is not None:
+                await live_activity_lease.run_sync(turn_state.persist, **kwargs)
+            else:
+                await asyncio.to_thread(turn_state.persist, **kwargs)
 
     async def deliver_completions() -> None:
         while True:
@@ -1601,11 +1790,7 @@ async def live_voice(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "background_job_completed", **item})
 
     async def send_client_audio(session: _LiveSession, initial: dict | None = None) -> None:
-        nonlocal \
-            session_workdir, \
-            session_project_id, \
-            session_chat_id, \
-            session_conversation_context
+        nonlocal session_workdir, session_project_id, session_chat_id, session_conversation_context
         pending = initial
         while True:
             payload = pending if pending is not None else await websocket.receive_json()
@@ -1619,10 +1804,20 @@ async def live_voice(websocket: WebSocket) -> None:
                     current_chat_id=session_chat_id,
                     current_workdir=session_workdir,
                 )
-                session_project_id = config["project_id"]
-                session_chat_id = config["chat_id"]
-                session_workdir = config["workdir"]
-                session_conversation_context = config["conversation_context"]
+                current_scope = (session_project_id, session_chat_id, session_workdir)
+                next_scope = (config["project_id"], config["chat_id"], config["workdir"])
+                async with live_scope_lock:
+                    if next_scope != current_scope:
+                        await bind_live_activity(
+                            chat_id=config["chat_id"],
+                            project_id=config["project_id"],
+                            workdir=config["workdir"],
+                        )
+                        subscribe_to_chat_completions(config["chat_id"])
+                    session_project_id = config["project_id"]
+                    session_chat_id = config["chat_id"]
+                    session_workdir = config["workdir"]
+                    session_conversation_context = config["conversation_context"]
                 live_log.write(
                     "client.config",
                     chat_id=session_chat_id,
@@ -1679,7 +1874,17 @@ async def live_voice(websocket: WebSocket) -> None:
                 )
             elif event_type == "background_completion_received":
                 handoff_id = str(payload.get("handoff_id") or "")
-                if _acknowledge_background_completion(session_chat_id, handoff_id):
+                acknowledged = False
+                async with live_scope_lock:
+                    if live_activity_lease is not None:
+                        acknowledged = await live_activity_lease.run_sync(
+                            _acknowledge_background_completion, session_chat_id, handoff_id
+                        )
+                    elif handoff_id:
+                        acknowledged = await asyncio.to_thread(
+                            _acknowledge_background_completion, session_chat_id, handoff_id
+                        )
+                if acknowledged:
                     live_log.write(
                         "client.background_completion_received",
                         chat_id=session_chat_id,
@@ -1870,15 +2075,9 @@ async def live_voice(websocket: WebSocket) -> None:
                     if session_ended_by_tool:
                         user_text = turn_state.user_text
                         assistant_text = turn_state.assistant_text or "Done."
-                        turn_state.persist(
-                            history_store=history,
-                            workdir=session_workdir,
-                            project_id=session_project_id,
-                            chat_id=session_chat_id,
-                            fallback_assistant_text="Done.",
-                        )
-                        session_conversation_context = _chat_context(
-                            session_chat_id, session_workdir
+                        await persist_turn("Done.")
+                        session_conversation_context = await asyncio.to_thread(
+                            _chat_context, session_chat_id, session_workdir
                         )
                         live_log.write(
                             "session.auto_disconnect",
@@ -1988,15 +2187,19 @@ async def live_voice(websocket: WebSocket) -> None:
                         turn_state.reset()
                         continue
                     if used_codex:
-                        codex_handoffs.acknowledge(turn_state.handoff_ids)
-                    turn_state.persist(
-                        history_store=history,
-                        workdir=session_workdir,
-                        project_id=session_project_id,
-                        chat_id=session_chat_id,
-                        fallback_assistant_text="Done.",
+                        async with live_scope_lock:
+                            if live_activity_lease is not None:
+                                await live_activity_lease.run_sync(
+                                    codex_handoffs.acknowledge, turn_state.handoff_ids
+                                )
+                            else:
+                                await asyncio.to_thread(
+                                    codex_handoffs.acknowledge, turn_state.handoff_ids
+                                )
+                    await persist_turn("Done.")
+                    session_conversation_context = await asyncio.to_thread(
+                        _chat_context, session_chat_id, session_workdir
                     )
-                    session_conversation_context = _chat_context(session_chat_id, session_workdir)
                     if session_ended_by_tool:
                         live_log.write(
                             "session.auto_disconnect",
@@ -2071,6 +2274,12 @@ async def live_voice(websocket: WebSocket) -> None:
             )
             first_payload = None
 
+        await bind_live_activity(
+            chat_id=session_chat_id,
+            project_id=session_project_id,
+            workdir=session_workdir,
+        )
+
         session_resumption_handle = (
             _live_resumption_handles.get(session_chat_id) if session_chat_id else None
         )
@@ -2088,21 +2297,7 @@ async def live_voice(websocket: WebSocket) -> None:
             ),
         ) as raw_session:
             session = cast(_LiveSession, raw_session)
-            if session_chat_id:
-                _live_completion_subscribers.setdefault(session_chat_id, set()).add(
-                    completion_queue
-                )
-                for handoff in codex_handoffs.pending_completion_for_chat(session_chat_id):
-                    completion_queue.put_nowait(
-                        {
-                            "handoff": handoff,
-                            "result": _latest_artifact_replay(
-                                session_chat_id, "what was the result"
-                            )
-                            or str(handoff["result_summary"]),
-                            "artifacts": [],
-                        }
-                    )
+            subscribe_to_chat_completions(session_chat_id)
             live_log.write(
                 "gemini.connected",
                 chat_id=session_chat_id,
@@ -2113,6 +2308,7 @@ async def live_voice(websocket: WebSocket) -> None:
             send_task = asyncio.create_task(send_client_audio(session, first_payload))
             receive_task = asyncio.create_task(receive_gemini(session))
             completion_task = asyncio.create_task(deliver_completions())
+            live_tasks.update({send_task, receive_task, completion_task})
             done, pending = await asyncio.wait(
                 {send_task, receive_task, completion_task}, return_when=asyncio.FIRST_COMPLETED
             )
@@ -2143,6 +2339,8 @@ async def live_voice(websocket: WebSocket) -> None:
             )
             for task in pending:
                 task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
             for task in done:
                 task.result()
             await websocket.close()
@@ -2161,8 +2359,22 @@ async def live_voice(websocket: WebSocket) -> None:
         except Exception:
             return
     finally:
-        if session_chat_id:
-            _live_completion_subscribers.get(session_chat_id, set()).discard(completion_queue)
+        for task in live_tasks:
+            if not task.done():
+                task.cancel()
+        if live_tasks:
+            await asyncio.gather(*live_tasks, return_exceptions=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        subscribe_to_chat_completions(None)
+        for activity_context in reversed(live_activity_contexts):
+            try:
+                await activity_context.__aexit__(None, None, None)
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+        live_activity_contexts.clear()
         live_log.write(
             "websocket.finally",
             chat_id=session_chat_id,

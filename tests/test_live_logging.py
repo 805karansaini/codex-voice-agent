@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.app.main import _is_gemini_disconnect_cleanup_exception
 from backend.app.live_logging import JsonlEventLogger
+from backend.app.main import _is_gemini_disconnect_cleanup_exception
 
 
 class JsonlEventLoggerTests(unittest.TestCase):

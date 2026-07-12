@@ -4,11 +4,14 @@ import asyncio
 import shutil
 import subprocess
 import sys
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
-from typing import Awaitable, Callable, Protocol
+from typing import Awaitable, Callable, ParamSpec, Protocol, TypeVar
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from ..services.foreground_activity import ForegroundActivityUnavailable
 
 
 class ProjectStore(Protocol):
@@ -26,6 +29,13 @@ class ChatStore(Protocol):
 
 
 class HistoryStore(Protocol):
+    def chat_ids(
+        self,
+        project_id: str | None = None,
+        workdir: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[str]: ...
+
     def clear(
         self,
         project_id: str | None = None,
@@ -45,6 +55,43 @@ class ConsoleStore(Protocol):
 ResolveWorkdir = Callable[[str], Path]
 ProjectRoot = Callable[[str | None], Path | None]
 CloseSessions = Callable[[list[str]], Awaitable[None]]
+ClearLiveChatState = Callable[[list[str]], None]
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+class ForegroundLease(Protocol):
+    async def run_sync(self, function: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R: ...
+
+
+class ForegroundActivity(Protocol):
+    def __call__(
+        self,
+        *,
+        chat_id: str | None = None,
+        project_id: str | None = None,
+        workdir: str | None = None,
+    ) -> AbstractAsyncContextManager[ForegroundLease]: ...
+
+
+class ForegroundCleanup(Protocol):
+    def __call__(
+        self,
+        *,
+        chat_ids: list[str] | tuple[str, ...] = (),
+        project_id: str | None = None,
+        workdir: str | None = None,
+    ) -> AbstractAsyncContextManager[list[str]]: ...
+
+
+class CancelBackgroundJobs(Protocol):
+    def __call__(
+        self,
+        *,
+        chat_id: str | None = None,
+        project_id: str | None = None,
+        workdir: str | None = None,
+    ) -> Awaitable[list[str]]: ...
 
 
 class ProjectRequest(BaseModel):
@@ -69,9 +116,13 @@ _MAX_PREVIEW_BYTES = 512 * 1024
 
 
 def is_file_browser_hidden(relative_path: Path) -> bool:
-    return any(part in _IGNORED_DIRECTORIES for part in relative_path.parts) or any(
-        part == ".DS_Store" or part == ".env" or part.startswith(".env.")
-        for part in relative_path.parts
+    normalized_parts = (part.casefold() for part in relative_path.parts)
+    return any(
+        part in _IGNORED_DIRECTORIES
+        or part == ".ds_store"
+        or part == ".env"
+        or part.startswith(".env.")
+        for part in normalized_parts
     )
 
 
@@ -79,9 +130,14 @@ def file_browser_path(root: Path, relative_path: str) -> Path:
     requested = Path(relative_path)
     if not relative_path or requested.is_absolute() or ".." in requested.parts:
         raise HTTPException(status_code=400, detail="Invalid file path")
-    candidate = (root / requested).resolve()
-    if not candidate.is_relative_to(root):
+    if is_file_browser_hidden(requested):
+        raise HTTPException(status_code=404, detail="Path not found")
+    resolved_root = root.resolve()
+    candidate = (resolved_root / requested).resolve()
+    if not candidate.is_relative_to(resolved_root):
         raise HTTPException(status_code=400, detail="File must be inside the selected project")
+    if is_file_browser_hidden(candidate.relative_to(resolved_root)):
+        raise HTTPException(status_code=404, detail="Path not found")
     return candidate
 
 
@@ -184,6 +240,10 @@ def create_router(
     project_root: ProjectRoot,
     resolve_workdir: ResolveWorkdir,
     close_sessions: CloseSessions,
+    cancel_background_jobs: CancelBackgroundJobs,
+    foreground_activity: ForegroundActivity,
+    cleanup_foreground_work: ForegroundCleanup,
+    clear_live_chat_state: ClearLiveChatState,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -194,7 +254,7 @@ def create_router(
         return root
 
     @router.get("/api/projects")
-    async def list_projects() -> list[dict[str, object]]:
+    def list_projects() -> list[dict[str, object]]:
         return projects.list()
 
     @router.get("/api/projects/{project_id}/files")
@@ -207,19 +267,25 @@ def create_router(
 
     @router.post("/api/projects")
     async def save_project(req: ProjectRequest) -> dict[str, object]:
-        if not req.id.strip() or not req.name.strip():
+        project_id = req.id.strip()
+        project_name = req.name.strip()
+        if not project_id or not project_name:
             raise HTTPException(status_code=400, detail="Project id and name are required")
         try:
-            root = await asyncio.to_thread(resolve_workdir, req.path)
-            return projects.upsert(
-                {
-                    "id": req.id.strip(),
-                    "name": req.name.strip(),
-                    "path": str(root),
-                    "color": req.color,
-                    "createdAt": req.createdAt,
-                }
-            )
+            async with foreground_activity(project_id=project_id) as lease:
+                root = await asyncio.to_thread(resolve_workdir, req.path)
+                return await lease.run_sync(
+                    projects.upsert,
+                    {
+                        "id": project_id,
+                        "name": project_name,
+                        "path": str(root),
+                        "color": req.color,
+                        "createdAt": req.createdAt,
+                    },
+                )
+        except ForegroundActivityUnavailable as exc:
+            raise HTTPException(status_code=409, detail="This project is being cleared") from exc
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -227,19 +293,35 @@ def create_router(
 
     @router.delete("/api/projects/{project_id}")
     async def delete_project(project_id: str) -> dict[str, object]:
-        chat_ids = [
-            str(chat["id"])
-            for chat in chats.list(project_id=project_id)
-            if chat.get("id")
-        ]
-        await close_sessions(chat_ids)
-        projects.delete(project_id)
-        chats.delete_for_project(project_id)
-        history.clear(project_id=project_id)
-        for chat_id in chat_ids:
-            artifacts.clear(chat_id)
-            handoffs.clear(chat_id)
-        console.clear_for_project(chat_ids)
+        project_chats = await asyncio.to_thread(chats.list, project_id=project_id)
+        recovered_chat_ids = await asyncio.to_thread(history.chat_ids, project_id=project_id)
+        chat_ids = list(
+            dict.fromkeys(
+                [str(chat["id"]) for chat in project_chats if chat.get("id")] + recovered_chat_ids
+            )
+        )
+        async with cleanup_foreground_work(
+            chat_ids=chat_ids, project_id=project_id
+        ) as active_chat_ids:
+            chat_ids = list(dict.fromkeys([*chat_ids, *active_chat_ids]))
+            await cancel_background_jobs(project_id=project_id)
+            for chat_id in chat_ids:
+                # Some older jobs have only a chat id. Cancel those too before
+                # clearing the project so they cannot repopulate its stores.
+                await cancel_background_jobs(chat_id=chat_id)
+            await close_sessions(chat_ids)
+            clear_live_chat_state(chat_ids)
+
+            def delete_project_data() -> None:
+                projects.delete(project_id)
+                chats.delete_for_project(project_id)
+                history.clear(project_id=project_id)
+                for chat_id in chat_ids:
+                    artifacts.clear(chat_id)
+                    handoffs.clear(chat_id)
+                console.clear_for_project(chat_ids)
+
+            await asyncio.to_thread(delete_project_data)
         return {"ok": True}
 
     @router.post("/api/fs/pick")

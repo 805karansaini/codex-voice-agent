@@ -6,10 +6,10 @@ from unittest.mock import patch
 
 from google.genai import types
 
+from backend.app import main
 from backend.app.gemini_agent import SYSTEM_INSTRUCTION, _system_instruction, live_connect_config
 from backend.app.history import HistoryStore
 from backend.app.settings import Settings
-from backend.app import main
 
 
 class FakeLiveLog:
@@ -25,7 +25,10 @@ class LiveClientConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"
             root.mkdir()
-            with patch.object(main, "_chat_context", return_value="recent context"):
+            with (
+                patch.object(main, "_project_root", return_value=root.resolve()),
+                patch.object(main, "_chat_context", return_value="recent context"),
+            ):
                 config = main._live_client_config_from_payload(
                     {"project_id": "project-1", "chat_id": "chat-1", "workdir": str(root)},
                     current_project_id=None,
@@ -42,7 +45,10 @@ class LiveClientConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"
             root.mkdir()
-            with patch.object(main, "_chat_context", return_value="existing context"):
+            with (
+                patch.object(main, "_project_root", return_value=root.resolve()),
+                patch.object(main, "_chat_context", return_value="existing context"),
+            ):
                 config = main._live_client_config_from_payload(
                     {"type": "config"},
                     current_project_id="project-1",
@@ -100,8 +106,14 @@ class LiveModelConfigTests(unittest.TestCase):
         self.assertIn("Recent conversation in this chat:\nrecent context", instruction)
 
     def test_routine_local_work_is_authorized_without_confirmation(self) -> None:
-        self.assertIn("Treat ordinary local-work instructions as authorization to proceed.", SYSTEM_INSTRUCTION)
-        self.assertIn("for confirmation before routine inspection, edits, tests, builds, or commits.", SYSTEM_INSTRUCTION)
+        self.assertIn(
+            "Treat ordinary local-work instructions as authorization to proceed.",
+            SYSTEM_INSTRUCTION,
+        )
+        self.assertIn(
+            "for confirmation before routine inspection, edits, tests, builds, or commits.",
+            SYSTEM_INSTRUCTION,
+        )
 
     def test_default_31_model_remains_sync_tool_model(self) -> None:
         settings = Settings(GEMINI_MODEL="gemini-3.1-flash-live-preview")
@@ -392,6 +404,7 @@ class LiveCodexToolTests(unittest.IsolatedAsyncioTestCase):
         finally:
             main._codex_jobs.clear()
             main._codex_jobs.update(old_jobs)
+
 
 if __name__ == "__main__":
     unittest.main()
