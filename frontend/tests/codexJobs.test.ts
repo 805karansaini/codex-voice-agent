@@ -55,6 +55,26 @@ test("watchCodexJob reports progress and one terminal result", async () => {
   assert.deepEqual(events, ["progress:Building", "done:Passed"]);
 });
 
+test("watchCodexJob reports one failed terminal result", async () => {
+  const events: string[] = [];
+
+  await watchCodexJob(
+    "job-1",
+    {
+      onProgress: () => events.push("progress"),
+      onDone: () => events.push("done"),
+      onFailed: (_job, message) => events.push(`failed:${message}`),
+      onError: (message) => events.push(`error:${message}`),
+    },
+    {
+      loadJob: async () => job("failed", { error: "workspace rejected the change" }),
+      initialDelayMs: 0,
+    },
+  );
+
+  assert.deepEqual(events, ["failed:workspace rejected the change"]);
+});
+
 test("watchCodexJob retries a transient polling failure", async () => {
   let attempts = 0;
   const events: string[] = [];
@@ -108,4 +128,42 @@ test("watchCodexJob reports an error after the retry budget is exhausted", async
 
   assert.equal(attempts, 2);
   assert.deepEqual(events, ["still offline"]);
+});
+
+test("watchCodexJob suppresses a late result after its scope is invalidated", async () => {
+  let current = true;
+  let markLoadStarted!: () => void;
+  let resolveJob!: (value: CodexJob) => void;
+  const loadStarted = new Promise<void>((resolve) => {
+    markLoadStarted = resolve;
+  });
+  const pendingJob = new Promise<CodexJob>((resolve) => {
+    resolveJob = resolve;
+  });
+  const events: string[] = [];
+
+  const watching = watchCodexJob(
+    "job-1",
+    {
+      isCurrent: () => current,
+      onProgress: () => events.push("progress"),
+      onDone: () => events.push("done"),
+      onFailed: () => events.push("failed"),
+      onError: () => events.push("error"),
+    },
+    {
+      loadJob: async () => {
+        markLoadStarted();
+        return pendingJob;
+      },
+      initialDelayMs: 0,
+    },
+  );
+
+  await loadStarted;
+  current = false;
+  resolveJob(job("done", { result: "Too late" }));
+  await watching;
+
+  assert.deepEqual(events, []);
 });

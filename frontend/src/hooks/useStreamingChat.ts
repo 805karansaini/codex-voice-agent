@@ -2,36 +2,29 @@ import { useCallback } from "react";
 
 import * as api from "../services/api";
 import { watchCodexJob } from "../services/codexJobs";
-import type { ActionEntry, Project } from "../types";
+import type { Project } from "../types";
 import { appendArtifacts } from "../utils/artifacts";
 import { appendCodexEvent } from "../utils/codexEvents";
 import { readSseStream } from "../utils/sse";
 import type { useProjectStore } from "./useProjectStore";
+import type { ConsoleWriter } from "./useConsoleSession";
 
 type ProjectStore = Pick<ReturnType<typeof useProjectStore>, "appendMessage" | "updateMessage">;
-
-type ActionPatch = Partial<ActionEntry> | ((prev: ActionEntry) => Partial<ActionEntry>);
 
 type UseStreamingChatOptions = {
   store: ProjectStore;
   activeAbortControllerRef: { current: AbortController | null };
-  addAction: (action: Omit<ActionEntry, "id">) => string;
-  updateAction: (id: string, patch: ActionPatch) => void;
-  addHandoff: (name: string, summary: string) => void;
+  consoleForChat: (chatId: string) => ConsoleWriter;
   speak: (text: string) => void;
   playResponseAudio: (audioUrl: string) => Promise<void>;
-  setError: (message: string) => void;
 };
 
 export function useStreamingChat({
   store,
   activeAbortControllerRef,
-  addAction,
-  updateAction,
-  addHandoff,
+  consoleForChat,
   speak,
   playResponseAudio,
-  setError,
 }: UseStreamingChatOptions) {
   const streamCodex = useCallback(
     async (
@@ -41,8 +34,10 @@ export function useStreamingChat({
       userMessageId: string,
       model?: string,
       reasoningEffort?: string,
+      onBackgroundFailure?: (message: string) => void,
     ) => {
-      const actionId = addAction({
+      const telemetry = consoleForChat(chatId);
+      const actionId = telemetry.addAction({
         title: "Background Codex task",
         status: "running",
         detail: task,
@@ -75,12 +70,13 @@ export function useStreamingChat({
           ...message,
           backgroundJobId: queued.id,
         }));
-        updateAction(actionId, {
+        telemetry.updateAction(actionId, {
           detail: `${task}\n\nJob ${queued.id} is ${queued.status}.`,
           workdir: queued.workdir || project.path,
         });
 
         void watchCodexJob(queued.id, {
+          isCurrent: telemetry.isValid,
           onProgress: (job, progressText) => {
             store.updateMessage(chatId, assistantId, (current) => ({
               ...current,
@@ -90,7 +86,7 @@ export function useStreamingChat({
               codexTurnId: job.codex_turn_id || current.codexTurnId,
               codexThreadId: job.codex_thread_id || current.codexThreadId,
             }));
-            updateAction(actionId, {
+            telemetry.updateAction(actionId, {
               status: "running",
               streamingResponse: progressText,
               workdir: job.workdir || project.path,
@@ -108,12 +104,12 @@ export function useStreamingChat({
               codexThreadId: job.codex_thread_id || message.codexThreadId,
               artifacts: appendArtifacts(message.artifacts, ...(job.artifacts || [])),
             }));
-            updateAction(actionId, {
+            telemetry.updateAction(actionId, {
               status: "done",
               streamingResponse: finalText,
               workdir: job.workdir || project.path,
             });
-            addHandoff("background_codex", finalText.slice(0, 160));
+            telemetry.addHandoff("background_codex", finalText.slice(0, 160));
             speak(finalText);
           },
           onFailed: (_job, message) => {
@@ -122,8 +118,8 @@ export function useStreamingChat({
               streaming: false,
               text: message,
             }));
-            updateAction(actionId, { status: "failed", streamingResponse: message });
-            setError(message);
+            telemetry.updateAction(actionId, { status: "failed", streamingResponse: message });
+            onBackgroundFailure?.(message);
           },
           onError: (message) => {
             store.updateMessage(chatId, assistantId, (current) => ({
@@ -131,26 +127,27 @@ export function useStreamingChat({
               streaming: false,
               text: current.text && !current.streaming ? current.text : message,
             }));
-            updateAction(actionId, { status: "failed", streamingResponse: message });
-            setError(message);
+            telemetry.updateAction(actionId, { status: "failed", streamingResponse: message });
+            onBackgroundFailure?.(message);
           },
         });
       } catch (err) {
+        const failureMessage = err instanceof Error ? err.message : "Codex request failed.";
         store.updateMessage(chatId, assistantId, (message) => ({
           ...message,
           streaming: false,
-          text: message.text || "Codex request failed.",
+          text: failureMessage,
         }));
-        updateAction(actionId, {
+        telemetry.updateAction(actionId, {
           status: "failed",
-          streamingResponse: err instanceof Error ? err.message : "Codex request failed",
+          streamingResponse: failureMessage,
         });
         throw err;
       } finally {
         activeAbortControllerRef.current = null;
       }
     },
-    [activeAbortControllerRef, addAction, addHandoff, speak, store, updateAction, setError],
+    [activeAbortControllerRef, consoleForChat, speak, store],
   );
 
   const streamAgent = useCallback(
@@ -161,6 +158,7 @@ export function useStreamingChat({
       model?: string,
       reasoningEffort?: string,
     ) => {
+      const telemetry = consoleForChat(chatId);
       const assistantId = crypto.randomUUID();
       store.appendMessage(chatId, {
         id: assistantId,
@@ -175,6 +173,7 @@ export function useStreamingChat({
       let finalAudioUrl = "";
       let usedCodex = false;
       let activeActionId = "";
+      let streamError = "";
 
       try {
         const res = await api.postChatStream(
@@ -222,7 +221,7 @@ export function useStreamingChat({
             }));
           } else if (evt.type === "tool_call") {
             usedCodex = true;
-            activeActionId = addAction({
+            activeActionId = telemetry.addAction({
               title: "Vodex handoff to Codex",
               status: "running",
               detail: String(evt.task || "Local task"),
@@ -235,14 +234,14 @@ export function useStreamingChat({
             }));
           } else if (evt.type === "tool_progress" && evt.text) {
             if (activeActionId) {
-              updateAction(activeActionId, (prev) => ({
+              telemetry.updateAction(activeActionId, (prev) => ({
                 streamingResponse: (prev.streamingResponse || "") + evt.text,
               }));
             }
           } else if (evt.type === "tool_result") {
             usedCodex = true;
             const summary = String(evt.result || "").slice(0, 180);
-            addHandoff(String(evt.name || "run_codex_task"), summary);
+            telemetry.addHandoff(String(evt.name || "run_codex_task"), summary);
             store.updateMessage(chatId, assistantId, (current) => ({
               ...current,
               usedCodex: true,
@@ -253,7 +252,7 @@ export function useStreamingChat({
               artifacts: appendArtifacts(current.artifacts, evt.artifact, evt.change_artifact),
             }));
             if (activeActionId) {
-              updateAction(activeActionId, {
+              telemetry.updateAction(activeActionId, {
                 status: "done",
                 workdir: String(evt.workdir || project.path),
               });
@@ -275,22 +274,25 @@ export function useStreamingChat({
               codexThreadId: String(evt.codex_thread_id || current.codexThreadId || ""),
             }));
           } else if (evt.type === "error") {
+            streamError = String(evt.message || "Vodex failed");
             store.updateMessage(chatId, assistantId, (current) => ({
               ...current,
               streaming: false,
               text: current.text || "Vodex failed.",
             }));
             if (activeActionId) {
-              updateAction(activeActionId, {
+              telemetry.updateAction(activeActionId, {
                 status: "failed",
-                streamingResponse: String(evt.message || "Vodex failed"),
+                streamingResponse: streamError,
               });
               activeActionId = "";
             }
-            setError(String(evt.message || "Vodex failed"));
           }
         });
 
+        if (streamError) {
+          throw new Error(streamError);
+        }
         if (!streamSummary.receivedDone) {
           throw new Error(
             streamSummary.lastError || "Vodex connection ended before the response completed.",
@@ -310,7 +312,7 @@ export function useStreamingChat({
             text: message.text || "Cancelled.",
           }));
           if (activeActionId) {
-            updateAction(activeActionId, {
+            telemetry.updateAction(activeActionId, {
               status: "failed",
               streamingResponse: "Cancelled by user.",
             });
@@ -325,7 +327,7 @@ export function useStreamingChat({
           text: current.text || message,
         }));
         if (activeActionId) {
-          updateAction(activeActionId, { status: "failed", streamingResponse: message });
+          telemetry.updateAction(activeActionId, { status: "failed", streamingResponse: message });
           activeActionId = "";
         }
         throw err;
@@ -333,16 +335,7 @@ export function useStreamingChat({
         activeAbortControllerRef.current = null;
       }
     },
-    [
-      activeAbortControllerRef,
-      addAction,
-      addHandoff,
-      playResponseAudio,
-      speak,
-      store,
-      updateAction,
-      setError,
-    ],
+    [activeAbortControllerRef, consoleForChat, playResponseAudio, speak, store],
   );
 
   return { streamAgent, streamCodex };

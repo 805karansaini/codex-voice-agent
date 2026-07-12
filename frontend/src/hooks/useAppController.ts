@@ -31,16 +31,29 @@ import { useWorkspaceSearch } from "./useWorkspaceSearch";
 import { useWorkspaceSidebarState } from "./useWorkspaceSidebarState";
 import * as api from "../services/api";
 import type { ChatMode, CodexModel } from "../types";
-import { defaultCodexModel, defaultReasoningEffort } from "../utils/codexModels";
+import {
+  type BackendRecoveryState,
+  backendRecoverySucceeded,
+  shouldAttemptBackendRecovery,
+} from "../utils/backendRecovery";
+import { defaultReasoningEffort, reconcileCodexSelection } from "../utils/codexModels";
+import {
+  blockingVoiceActivity,
+  hasActiveBackgroundJob,
+  isRequestUnavailable,
+  isVoiceControlDisabled,
+} from "../utils/controlAvailability";
+import { failedSubmissionsForScope } from "../utils/requestRecovery";
 
 export function useAppController() {
   const store = useProjectStore();
-  const { syncError, clearSyncError } = store;
+  const { syncError, clearSyncError, refreshWorkspace } = store;
   const [error, setError] = useState("");
   const [mode, setMode] = useState<ChatMode>("agent");
   const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
   const [codexModel, setCodexModel] = useState("");
   const [codexReasoningEffort, setCodexReasoningEffort] = useState("");
+  const codexSelectionRef = useRef({ model: "", reasoningEffort: "" });
   const [activityView, setActivityView] = useState<"chats" | "files">("chats");
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -54,7 +67,9 @@ export function useAppController() {
     showMoreChats,
   } = useWorkspaceSidebarState();
   const messageEndRef = useRef<HTMLDivElement | null>(null);
-  const { input, textareaRef, resetComposer, onComposerInput } = useComposerInput();
+  const chatScrollRef = useRef<HTMLElement | null>(null);
+  const { input, textareaRef, resetComposer, restoreComposer, onComposerInput } =
+    useComposerInput();
   const {
     railOpen,
     setRailOpen,
@@ -74,39 +89,25 @@ export function useAppController() {
     handleTouchEnd,
   } = useAppLayout();
   const projectInfo = useProjectInfo(store.activeProject);
-  const { searchQuery, setSearchQuery, searchResults, searching, clearSearch } =
+  const { searchQuery, setSearchQuery, searchResults, searching, searchError, clearSearch } =
     useWorkspaceSearch();
   const { doctorChecks, refreshDoctor } = useSetupDoctor();
-  const status = useBackendStatus();
+  const { status, refresh: refreshBackendStatus } = useBackendStatus();
+  const backendWasOfflineRef = useRef(false);
+  const recoveryInFlightRef = useRef(false);
+  const [backendRecoveryState, setBackendRecoveryState] = useState<BackendRecoveryState>("idle");
   const handleChatSwitcherKeyDown = useChatSwitcherKeyboard();
-  const openSearchResult = useSearchResultNavigation({
-    chats: store.chats,
-    selectChat: store.selectChat,
-    clearSearch,
-    isMobile,
-    setMobileView,
-  });
-  const {
-    confirmDialog,
-    setConfirmDialog,
-    renameDialog,
-    setRenameDialog,
-    handleRemoveProject,
-    handleRemoveChat,
-    handleRenameChat,
-  } = useChatActionDialogs({
-    removeProject: store.removeProject,
-    removeChat: store.removeChat,
-  });
   const {
     debugEntries,
     handoffs,
     actions,
-    addDebug,
-    addHandoff,
     addAction,
     updateAction,
     clearConsoleState,
+    forChat: consoleForChat,
+    beginConsoleDeletion,
+    rollbackConsoleDeletion,
+    commitConsoleDeletion,
   } = useConsoleSession(store.activeChatId);
   const {
     voices,
@@ -124,29 +125,89 @@ export function useAppController() {
     setError(syncError);
     clearSyncError();
   }, [syncError, clearSyncError]);
-  useEffect(() => {
-    void api
-      .fetchCodexModels()
-      .then((models) => {
-        setCodexModels(models);
-        const selected = defaultCodexModel(models);
-        if (selected) {
-          setCodexModel(selected.model);
-          setCodexReasoningEffort(defaultReasoningEffort(selected));
-        }
-      })
-      .catch(() => {
-        setCodexModels([]);
-      });
+  const loadCodexModels = useCallback(async (): Promise<boolean> => {
+    try {
+      const models = await api.fetchCodexModels();
+      setCodexModels(models);
+      const selection = reconcileCodexSelection(
+        models,
+        codexSelectionRef.current.model,
+        codexSelectionRef.current.reasoningEffort,
+      );
+      codexSelectionRef.current = selection;
+      setCodexModel(selection.model);
+      setCodexReasoningEffort(selection.reasoningEffort);
+      return true;
+    } catch {
+      setCodexModels([]);
+      return false;
+    }
   }, []);
+  useEffect(() => {
+    void loadCodexModels();
+  }, [loadCodexModels]);
+  const recoverBackendData = useCallback(async (): Promise<boolean> => {
+    if (recoveryInFlightRef.current) return false;
+    recoveryInFlightRef.current = true;
+    setBackendRecoveryState("refreshing");
+    try {
+      const [workspaceLoaded, modelsLoaded] = await Promise.all([
+        refreshWorkspace(),
+        loadCodexModels(),
+      ]);
+      const recovered = backendRecoverySucceeded(workspaceLoaded, modelsLoaded);
+      backendWasOfflineRef.current = !recovered;
+      setBackendRecoveryState(recovered ? "idle" : "failed");
+      if (recovered) {
+        clearSyncError();
+        setError((current) =>
+          current.startsWith("Failed to load ") || current.startsWith("Backend unavailable")
+            ? ""
+            : current,
+        );
+        refreshDoctor();
+      }
+      return recovered;
+    } catch {
+      backendWasOfflineRef.current = true;
+      setBackendRecoveryState("failed");
+      return false;
+    } finally {
+      recoveryInFlightRef.current = false;
+    }
+  }, [clearSyncError, loadCodexModels, refreshDoctor, refreshWorkspace]);
+  useEffect(() => {
+    if (status.kind === "offline") {
+      backendWasOfflineRef.current = true;
+      return;
+    }
+    if (
+      shouldAttemptBackendRecovery(
+        backendWasOfflineRef.current,
+        status.kind,
+        recoveryInFlightRef.current,
+      )
+    ) {
+      void recoverBackendData();
+    }
+  }, [recoverBackendData, status]);
   const handleCodexModelChange = useCallback(
     (model: string) => {
       setCodexModel(model);
       const selected = codexModels.find((item) => item.model === model);
-      setCodexReasoningEffort(defaultReasoningEffort(selected));
+      const reasoningEffort = defaultReasoningEffort(selected);
+      codexSelectionRef.current = { model, reasoningEffort };
+      setCodexReasoningEffort(reasoningEffort);
     },
     [codexModels],
   );
+  const handleCodexReasoningEffortChange = useCallback((reasoningEffort: string) => {
+    codexSelectionRef.current = {
+      ...codexSelectionRef.current,
+      reasoningEffort,
+    };
+    setCodexReasoningEffort(reasoningEffort);
+  }, []);
   const {
     voiceContext,
     getWorkdir,
@@ -161,9 +222,8 @@ export function useAppController() {
     liveVoiceHandlers,
   } = useLiveVoiceSessionHandlers({
     store,
-    addAction,
+    consoleForChat,
     updateAction,
-    addHandoff,
     onBackgroundJobSettled: () => completeBackgroundCodexJobRef.current?.(),
   });
   const liveVoice = useLiveVoice({
@@ -171,7 +231,7 @@ export function useAppController() {
     getProjectId,
     getChatId,
     onAudio: (audioUrl) => void playResponseAudio(audioUrl),
-    onDebug: addDebug,
+    onDebug: (message) => consoleForChat(getChatId() || "").addDebug(message),
     ...liveVoiceHandlers,
   });
   useEffect(() => {
@@ -200,14 +260,19 @@ export function useAppController() {
   const { streamAgent, streamCodex } = useStreamingChat({
     store,
     activeAbortControllerRef,
-    addAction,
-    updateAction,
-    addHandoff,
+    consoleForChat,
     speak,
     playResponseAudio,
-    setError,
   });
-  const { busy, send } = useChatSubmit({
+  const {
+    busy,
+    busyChatId,
+    failedSubmissions,
+    send,
+    clearFailedSubmission,
+    clearFailedSubmissionsForScope,
+    clearFailedSubmissionsForProject,
+  } = useChatSubmit({
     input,
     mode,
     resetComposer,
@@ -219,12 +284,157 @@ export function useAppController() {
     codexModel,
     codexReasoningEffort,
   });
+  const { removeProject, removeChat } = store;
+  const removeProjectWithRecovery = useCallback(
+    (projectId: string) => {
+      const chatIds = (store.chats[projectId] || []).map((chat) => chat.id);
+      const consoleDeletion = beginConsoleDeletion(chatIds);
+      void removeProject(projectId)
+        .then((removed) => {
+          if (removed) {
+            clearFailedSubmissionsForProject(projectId);
+            void commitConsoleDeletion(consoleDeletion);
+          } else {
+            rollbackConsoleDeletion(consoleDeletion);
+          }
+        })
+        .catch(() => rollbackConsoleDeletion(consoleDeletion));
+    },
+    [
+      beginConsoleDeletion,
+      clearFailedSubmissionsForProject,
+      commitConsoleDeletion,
+      removeProject,
+      rollbackConsoleDeletion,
+      store.chats,
+    ],
+  );
+  const removeChatWithRecovery = useCallback(
+    (projectId: string, chatId: string) => {
+      const consoleDeletion = beginConsoleDeletion([chatId]);
+      void removeChat(projectId, chatId)
+        .then((removed) => {
+          if (removed) {
+            clearFailedSubmissionsForScope(projectId, chatId);
+            void commitConsoleDeletion(consoleDeletion);
+          } else {
+            rollbackConsoleDeletion(consoleDeletion);
+          }
+        })
+        .catch(() => rollbackConsoleDeletion(consoleDeletion));
+    },
+    [
+      beginConsoleDeletion,
+      clearFailedSubmissionsForScope,
+      commitConsoleDeletion,
+      removeChat,
+      rollbackConsoleDeletion,
+    ],
+  );
+  const {
+    confirmDialog,
+    setConfirmDialog,
+    renameDialog,
+    setRenameDialog,
+    handleRemoveProject,
+    handleRemoveChat,
+    handleRenameChat,
+  } = useChatActionDialogs({
+    removeProject: removeProjectWithRecovery,
+    removeChat: removeChatWithRecovery,
+  });
 
-  useMessageAutoScroll({
+  const activeFailedSubmissions = failedSubmissionsForScope(
+    failedSubmissions,
+    store.activeProject?.id,
+    store.activeChatId,
+  );
+  const activeFailedSubmission = activeFailedSubmissions[0] || null;
+
+  const blockUnavailableRequest = useCallback((): boolean => {
+    if (!isRequestUnavailable(status.kind, mode)) return false;
+    setError(
+      status.kind === "missing_key"
+        ? "Add a Google API key before sending a Vodex request."
+        : "Backend unavailable. Reconnect before sending a request.",
+    );
+    return true;
+  }, [mode, status.kind]);
+  const handleToggleVoice = useCallback(() => {
+    if (
+      isVoiceControlDisabled({
+        voiceActive,
+        hasProject: Boolean(store.activeProject),
+        busy,
+        statusKind: status.kind,
+      })
+    ) {
+      setError(
+        busy
+          ? "Cancel the current response before starting voice."
+          : !store.activeProject
+            ? "Select a project before starting voice."
+            : "Voice is unavailable until the backend is ready.",
+      );
+      return;
+    }
+    toggleVoice();
+  }, [busy, status.kind, store.activeProject, toggleVoice, voiceActive]);
+
+  const blockForegroundNavigation = useCallback(() => {
+    setError("Cancel the current response before switching or deleting chats.");
+  }, []);
+  const blockVoiceScopeChange = useCallback(
+    (projectId: string, chatId?: string, action = "deleting"): boolean => {
+      const blocker = blockingVoiceActivity({
+        projectId,
+        chatId,
+        voiceActive,
+        voiceScope: voiceContext
+          ? { projectId: voiceContext.project.id, chatId: voiceContext.chatId }
+          : null,
+        backgroundJobScope: activeCodexJob
+          ? { projectId: activeCodexJob.projectId, chatId: activeCodexJob.chatId }
+          : null,
+      });
+      if (!blocker) return false;
+
+      const scope = chatId ? "conversation" : "project";
+      setError(
+        blocker === "job"
+          ? `Wait for the voice-started Codex task to finish before ${action} this ${scope}.`
+          : `End the live voice session before ${action} this ${scope}.`,
+      );
+      return true;
+    },
+    [activeCodexJob, voiceActive, voiceContext],
+  );
+  const selectChatSafely = useCallback(
+    (projectId: string, chatId: string): boolean => {
+      if (busy && chatId !== busyChatId) {
+        blockForegroundNavigation();
+        return false;
+      }
+      setError("");
+      store.selectChat(projectId, chatId);
+      if (isMobile) setMobileView("chat");
+      return true;
+    },
+    [blockForegroundNavigation, busy, busyChatId, isMobile, setMobileView, store],
+  );
+  const openSearchResult = useSearchResultNavigation({
+    chats: store.chats,
+    selectChat: selectChatSafely,
+    clearSearch,
+    isMobile,
+    setMobileView,
+  });
+
+  const { showJumpToLatest, jumpToLatest } = useMessageAutoScroll({
+    scrollContainerRef: chatScrollRef,
     messageEndRef,
-    messageCount: store.messages.length,
-    busy,
-    activityKey: activeCodexJob?.message,
+    contentKey: store.messages,
+    conversationKey: store.activeChatId,
   });
 
   const { confirmCommitChangeReview, confirmRevertChangeReview } = useChangeReviewActions({
@@ -247,6 +457,43 @@ export function useAppController() {
       activeAbortControllerRef.current = null;
     }
   }, []);
+  const handleRestoreFailedSubmission = useCallback(() => {
+    if (!activeFailedSubmission) return;
+    restoreComposer(activeFailedSubmission.text);
+    setMode(activeFailedSubmission.mode);
+    const selection = reconcileCodexSelection(
+      codexModels,
+      activeFailedSubmission.model || codexSelectionRef.current.model,
+      activeFailedSubmission.reasoningEffort || codexSelectionRef.current.reasoningEffort,
+    );
+    codexSelectionRef.current = selection;
+    setCodexModel(selection.model);
+    setCodexReasoningEffort(selection.reasoningEffort);
+    clearFailedSubmission(
+      activeFailedSubmission.project.id,
+      activeFailedSubmission.chatId,
+      activeFailedSubmission.userMessageId,
+    );
+    setError("");
+  }, [activeFailedSubmission, clearFailedSubmission, codexModels, restoreComposer]);
+  const dismissError = useCallback(() => {
+    setError("");
+  }, []);
+  const dismissFailedSubmission = useCallback(() => {
+    if (!activeFailedSubmission) return;
+    clearFailedSubmission(
+      activeFailedSubmission.project.id,
+      activeFailedSubmission.chatId,
+      activeFailedSubmission.userMessageId,
+    );
+  }, [activeFailedSubmission, clearFailedSubmission]);
+  const retryBackend = useCallback(() => {
+    if (backendRecoveryState === "failed" && status.kind !== "offline") {
+      void recoverBackendData();
+      return;
+    }
+    void refreshBackendStatus();
+  }, [backendRecoveryState, recoverBackendData, refreshBackendStatus, status.kind]);
   const { voiceTitle, voiceMessage, liveStatusText, streamingStatusText, suggestions } =
     useChatDisplayState({
       liveVoice,
@@ -266,6 +513,7 @@ export function useAppController() {
     searchQuery,
     searchResults,
     searching,
+    searchError,
     railOpen,
     panelOpen,
     filePanelOpen,
@@ -311,11 +559,17 @@ export function useAppController() {
       mode,
       busy,
       suggestions,
+      scrollContainerRef: chatScrollRef,
       messageEndRef,
+      showJumpToLatest,
       liveStatusText,
       streamingStatusText,
       input,
       error,
+      failedRequestError: activeFailedSubmission?.errorMessage || "",
+      failedRequestText: activeFailedSubmission?.text || "",
+      failedRequestCount: activeFailedSubmissions.length,
+      backendRecoveryState,
       codexModels,
       codexModel,
       codexReasoningEffort,
@@ -345,7 +599,14 @@ export function useAppController() {
       pendingAudioUrl,
     },
     handlers: {
-      onNewProject: () => setShowAdd(true),
+      onNewProject: () => {
+        if (busy) {
+          setError("Cancel the current response before changing projects.");
+          return;
+        }
+        setError("");
+        setShowAdd(true);
+      },
       onActivityViewChange: (view) => {
         setActivityView(view);
         if (isMobile) setMobileView(view === "files" ? "files" : "explorer");
@@ -357,17 +618,33 @@ export function useAppController() {
       },
       onToggleProject: toggleProjectExpanded,
       onCreateChat: (projectId) => {
+        if (busy) {
+          blockForegroundNavigation();
+          return;
+        }
+        setError("");
         store.createChat(projectId);
         markProjectExpanded(projectId);
         if (isMobile) setMobileView("chat");
       },
-      onRemoveProject: handleRemoveProject,
-      onSelectChat: (projectId, chatId) => {
-        store.selectChat(projectId, chatId);
-        if (isMobile) setMobileView("chat");
+      onRemoveProject: (projectId, name) => {
+        if (busy) blockForegroundNavigation();
+        else if (blockVoiceScopeChange(projectId)) return;
+        else {
+          setError("");
+          handleRemoveProject(projectId, name);
+        }
       },
+      onSelectChat: selectChatSafely,
       onRenameChat: handleRenameChat,
-      onRemoveChat: handleRemoveChat,
+      onRemoveChat: (projectId, chatId) => {
+        if (busy) blockForegroundNavigation();
+        else if (blockVoiceScopeChange(projectId, chatId)) return;
+        else {
+          setError("");
+          handleRemoveChat(projectId, chatId);
+        }
+      },
       onShowMoreChats: showMoreChats,
       onOpenVoiceSettings: () => {
         setMobileView("console");
@@ -377,23 +654,58 @@ export function useAppController() {
       onStartRailDrag: startRailDrag,
       onStartPanelDrag: startPanelDrag,
       onStartFileViewerDrag: startFileViewerDrag,
-      onModeChange: setMode,
+      onModeChange: (nextMode) => {
+        if (busy) {
+          setError("Wait for the current response to finish before changing modes.");
+          return;
+        }
+        setError("");
+        setMode(nextMode);
+      },
       onExportChat: () => void handleExportChat(),
-      onToggleVoice: toggleVoice,
-      onSuggestion: (suggestion) => void send(suggestion),
+      onToggleVoice: handleToggleVoice,
+      onSuggestion: (suggestion) => {
+        if (blockUnavailableRequest()) return;
+        void send(suggestion);
+      },
       onCommitChangeReview: (artifact) => void confirmCommitChangeReview(artifact),
       onRevertChangeReview: (artifact) => void confirmRevertChangeReview(artifact),
       onInputChange: onComposerInput,
-      onSubmit: () => void send(),
+      onSubmit: () => {
+        if (blockUnavailableRequest()) return;
+        void send();
+      },
       onCancelTask: handleCancelTask,
+      onRestoreFailedRequest: handleRestoreFailedSubmission,
+      onDismissError: dismissError,
+      onDismissFailedRequest: dismissFailedSubmission,
+      onRetryBackend: retryBackend,
+      onJumpToLatest: jumpToLatest,
       onCodexModelChange: handleCodexModelChange,
-      onCodexReasoningEffortChange: setCodexReasoningEffort,
+      onCodexReasoningEffortChange: handleCodexReasoningEffortChange,
       onToggleMute: liveVoice.toggleMute,
       onHoldToTalk: holdToTalk,
       onReleaseToMute: releaseToMute,
       onHideConsole: () => setPanelOpen(false),
       onBackToChat: () => setMobileView("chat"),
-      onClearThread: clearThread,
+      onClearThread: () => {
+        if (busy) {
+          setError("Cancel the current response before clearing this chat.");
+          return;
+        }
+        if (hasActiveBackgroundJob(store.messages)) {
+          setError("Wait for the background Codex task to finish before clearing this chat.");
+          return;
+        }
+        const projectId = store.activeProject?.id;
+        const chatId = store.activeChatId;
+        if (projectId && chatId && blockVoiceScopeChange(projectId, chatId, "clearing")) return;
+        void clearThread().then((cleared) => {
+          if (cleared && projectId && chatId) {
+            clearFailedSubmissionsForScope(projectId, chatId);
+          }
+        });
+      },
       onConsoleTabChange: setActiveConsoleTab,
       onRefreshDoctor: refreshDoctor,
       onSelectedVoiceChange: setSelectedVoiceURI,
@@ -409,6 +721,12 @@ export function useAppController() {
     renameDialog,
     onCloseAdd: () => setShowAdd(false),
     onCreateProject: (project) => {
+      if (busy) {
+        setShowAdd(false);
+        setError("Cancel the current response before changing projects.");
+        return;
+      }
+      setError("");
       store.createProject(project);
       setShowAdd(false);
     },

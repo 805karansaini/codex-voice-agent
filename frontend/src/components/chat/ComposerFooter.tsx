@@ -1,9 +1,12 @@
 import React from "react";
-import { ArrowUp, Mic, MicOff } from "lucide-react";
+import { ArrowUp, Mic, MicOff, PencilLine, RefreshCw, WifiOff, X } from "lucide-react";
 
 import { cn } from "../../utils";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
-import type { CodexModel } from "../../types";
+import type { ChatMode, CodexModel } from "../../types";
+import type { BackendStatus } from "../../hooks/useBackendStatus";
+import type { BackendRecoveryState } from "../../utils/backendRecovery";
+import { isRequestUnavailable } from "../../utils/controlAvailability";
 
 type ComposerFooterProps = {
   isMobile: boolean;
@@ -18,11 +21,18 @@ type ComposerFooterProps = {
   voiceTranscriptPreview: string;
   voiceMuted: boolean;
   voiceSupported: boolean;
+  voiceDisabled: boolean;
   voiceInputMode: VoiceInputMode;
+  mode: ChatMode;
   input: string;
   busy: boolean;
   hasActiveProject: boolean;
   error: string;
+  failedRequestError: string;
+  failedRequestText: string;
+  failedRequestCount: number;
+  backendStatus: BackendStatus;
+  backendRecoveryState: BackendRecoveryState;
   codexModels: CodexModel[];
   codexModel: string;
   codexReasoningEffort: string;
@@ -30,6 +40,10 @@ type ComposerFooterProps = {
   onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
   onSubmit: () => void;
   onCancelTask: () => void;
+  onRestoreFailedRequest: () => void;
+  onDismissError: () => void;
+  onDismissFailedRequest: () => void;
+  onRetryBackend: () => void;
   onCodexModelChange: (model: string) => void;
   onCodexReasoningEffortChange: (effort: string) => void;
   onToggleVoice: () => void;
@@ -37,6 +51,12 @@ type ComposerFooterProps = {
   onHoldToTalk: () => void;
   onReleaseToMute: () => void;
 };
+
+function formatElapsed(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
 
 export default function ComposerFooter({
   isMobile,
@@ -51,11 +71,18 @@ export default function ComposerFooter({
   voiceTranscriptPreview,
   voiceMuted,
   voiceSupported,
+  voiceDisabled,
   voiceInputMode,
+  mode,
   input,
   busy,
   hasActiveProject,
   error,
+  failedRequestError,
+  failedRequestText,
+  failedRequestCount,
+  backendStatus,
+  backendRecoveryState,
   codexModels,
   codexModel,
   codexReasoningEffort,
@@ -63,6 +90,10 @@ export default function ComposerFooter({
   onInputChange,
   onSubmit,
   onCancelTask,
+  onRestoreFailedRequest,
+  onDismissError,
+  onDismissFailedRequest,
+  onRetryBackend,
   onCodexModelChange,
   onCodexReasoningEffortChange,
   onToggleVoice,
@@ -70,8 +101,38 @@ export default function ComposerFooter({
   onHoldToTalk,
   onReleaseToMute,
 }: ComposerFooterProps) {
-  const canSend = Boolean(input.trim() && hasActiveProject && !busy);
+  const [elapsed, setElapsed] = React.useState(0);
+  const [cancelling, setCancelling] = React.useState(false);
+  const busyStartedAtRef = React.useRef<number | null>(null);
+  const backendOffline = backendStatus.kind === "offline";
+  const backendUnavailable = isRequestUnavailable(backendStatus.kind, mode);
+  const showBackendStatus = backendStatus.kind !== "ready" || backendRecoveryState !== "idle";
+  const backendRecoveryFailed =
+    backendStatus.kind !== "offline" &&
+    backendStatus.kind !== "checking" &&
+    backendRecoveryState === "failed";
+  const backendRefreshing =
+    backendStatus.kind !== "offline" &&
+    backendStatus.kind !== "checking" &&
+    backendRecoveryState === "refreshing";
+  const canSend = Boolean(input.trim() && hasActiveProject && !busy && !backendUnavailable);
   const selectedCodexModel = codexModels.find((item) => item.model === codexModel);
+
+  React.useEffect(() => {
+    if (!busy) {
+      busyStartedAtRef.current = null;
+      setElapsed(0);
+      setCancelling(false);
+      return;
+    }
+    busyStartedAtRef.current ??= Date.now();
+    const update = () => {
+      setElapsed(Math.max(0, Math.floor((Date.now() - (busyStartedAtRef.current || 0)) / 1000)));
+    };
+    update();
+    const timer = window.setInterval(update, 1_000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
   return (
     <footer
@@ -87,6 +148,50 @@ export default function ComposerFooter({
         <div className="sr-only" aria-live="polite" aria-atomic="false">
           {streamingStatusText}
         </div>
+        {showBackendStatus && (
+          <div
+            role={backendOffline || backendRecoveryFailed ? "alert" : "status"}
+            className={cn(
+              "mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-[11.5px]",
+              backendOffline || backendRecoveryFailed
+                ? "border-danger/30 bg-danger/10 text-danger"
+                : backendStatus.kind === "missing_key"
+                  ? "border-warn/30 bg-warn/10 text-warn"
+                  : "border-line bg-surface-2 text-fg-muted",
+            )}
+          >
+            {backendOffline ? (
+              <WifiOff className="h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <RefreshCw
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0",
+                  (backendStatus.kind === "checking" || backendRefreshing) && "animate-spin",
+                )}
+              />
+            )}
+            <span className="min-w-0 flex-1">
+              {backendOffline
+                ? "Backend unavailable. Your draft is safe while you reconnect."
+                : backendRecoveryFailed
+                  ? "Backend reconnected, but some workspace data could not be refreshed."
+                  : backendRefreshing
+                    ? "Backend reconnected. Refreshing projects, chats, and models…"
+                    : backendStatus.kind === "missing_key"
+                      ? "Google API key is missing. Vodex and voice are unavailable; Codex mode still works."
+                      : "Checking the backend connection…"}
+            </span>
+            {(backendOffline || backendRecoveryFailed) && (
+              <button
+                type="button"
+                onClick={onRetryBackend}
+                className="rounded border border-danger/30 px-2 py-1 font-semibold hover:bg-danger/10"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
         {(voiceActive || codexActive) && (
           <div className="mb-3 rounded-lg border border-accent/25 bg-surface-2 p-3.5 shadow-lg flex items-center gap-3.5 animate-in slide-in-from-bottom-2 duration-200">
             <div className={cn("equalizer shrink-0", voiceMuted && "paused")}>
@@ -126,6 +231,7 @@ export default function ComposerFooter({
                 {voiceInputMode === "push" ? (
                   <button
                     type="button"
+                    aria-label={voiceMuted ? "Hold to talk" : "Voice input is listening"}
                     onPointerDown={onHoldToTalk}
                     onPointerUp={onReleaseToMute}
                     onPointerCancel={onReleaseToMute}
@@ -153,6 +259,8 @@ export default function ComposerFooter({
                 ) : (
                   <button
                     type="button"
+                    aria-label={voiceMuted ? "Unmute voice input" : "Mute voice input"}
+                    aria-pressed={voiceMuted}
                     onClick={onToggleMute}
                     className={cn(
                       "flex min-h-14 min-w-14 items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors sm:min-h-0 sm:min-w-0",
@@ -171,6 +279,7 @@ export default function ComposerFooter({
                 )}
                 <button
                   type="button"
+                  aria-label="End live voice session"
                   onClick={onToggleVoice}
                   className="flex min-h-14 min-w-14 items-center justify-center gap-1.5 rounded-md bg-danger px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition-colors hover:brightness-110 sm:min-h-0 sm:min-w-0"
                 >
@@ -182,6 +291,19 @@ export default function ComposerFooter({
           </div>
         )}
 
+        {busy && (
+          <div className="mb-2 flex items-center gap-2 px-1 text-[11.5px] text-fg-muted">
+            <span className="h-1.5 w-1.5 rounded-full bg-accent pulse-dot" />
+            <span>
+              {cancelling
+                ? "Cancelling response…"
+                : mode === "codex"
+                  ? `Starting Codex task · ${formatElapsed(elapsed)}`
+                  : `Response in progress · ${formatElapsed(elapsed)}`}
+            </span>
+          </div>
+        )}
+
         <div className="surface-elevated ring-accent-focus overflow-hidden rounded-xl border border-line bg-surface-1 transition-all">
           <textarea
             ref={textareaRef}
@@ -190,7 +312,7 @@ export default function ComposerFooter({
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                onSubmit();
+                if (canSend) onSubmit();
               }
             }}
             disabled={!hasActiveProject || busy}
@@ -243,7 +365,7 @@ export default function ComposerFooter({
                 <button
                   title={voiceTitle}
                   onClick={onToggleVoice}
-                  disabled={!hasActiveProject}
+                  disabled={voiceDisabled}
                   className={cn(
                     "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11.5px] disabled:opacity-40 transition-colors",
                     voiceActive
@@ -262,12 +384,17 @@ export default function ComposerFooter({
             </div>
 
             <div className="flex items-center gap-2">
-              {busy && (
+              {busy && mode === "agent" && (
                 <button
-                  onClick={onCancelTask}
+                  onClick={() => {
+                    setCancelling(true);
+                    onCancelTask();
+                  }}
+                  disabled={cancelling}
+                  aria-label={cancelling ? "Cancelling response" : "Cancel response"}
                   className="rounded px-2.5 py-1 text-[11px] font-mono uppercase bg-danger/10 hover:bg-danger/25 text-danger font-semibold border border-danger/20 transition-colors"
                 >
-                  Cancel
+                  {cancelling ? "Cancelling…" : "Cancel"}
                 </button>
               )}
               <button
@@ -288,9 +415,58 @@ export default function ComposerFooter({
         </div>
 
         {error && (
-          <div className="mt-2 text-xs text-danger flex items-center gap-1.5 font-mono px-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-danger inline-block animate-ping" />
-            <span>{error}</span>
+          <div
+            role="alert"
+            className="mt-2 flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/10 px-3 py-2.5 text-xs text-danger"
+          >
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
+            <div className="min-w-0 flex-1">
+              <p className="break-words leading-relaxed">{error}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onDismissError}
+              className="rounded p-1 hover:bg-danger/10"
+              aria-label="Dismiss error"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+        {failedRequestError && (
+          <div
+            role="alert"
+            className="mt-2 flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/10 px-3 py-2.5 text-xs text-danger"
+          >
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
+            <div className="min-w-0 flex-1">
+              <p className="break-words leading-relaxed">{failedRequestError}</p>
+              {failedRequestText && !busy && (
+                <div className="mt-2">
+                  <p className="mb-2 text-[11px] leading-relaxed text-danger/90">
+                    {failedRequestCount > 1
+                      ? `${failedRequestCount} requests from this chat need review. Check existing results and file changes before sending any of them again.`
+                      : "This request may have started before the connection failed. Review existing results and file changes before sending it again."}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onRestoreFailedRequest}
+                    className="inline-flex items-center gap-1 rounded border border-danger/30 px-2 py-1 font-semibold hover:bg-danger/10"
+                  >
+                    <PencilLine className="h-3 w-3" />
+                    Review request
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onDismissFailedRequest}
+              className="rounded p-1 hover:bg-danger/10"
+              aria-label="Dismiss failed request"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         )}
       </div>

@@ -9,7 +9,7 @@ export function useSearchResultNavigation({
   setMobileView,
 }: {
   chats: Record<string, Chat[]>;
-  selectChat: (projectId: string, chatId: string) => void;
+  selectChat: (projectId: string, chatId: string) => boolean;
   clearSearch: () => void;
   isMobile: boolean;
   setMobileView: (view: MobileView) => void;
@@ -26,7 +26,7 @@ export function useSearchResultNavigation({
       }
     }
     if (!projectId) return;
-    selectChat(projectId, result.chat_id);
+    if (!selectChat(projectId, result.chat_id)) return;
     clearSearch();
     if (isMobile) setMobileView("chat");
   };

@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { watchCodexJob } from "../services/codexJobs";
-import type { ActionPatch } from "./useConsoleSession";
+import type { ActionPatch, ConsoleWriter } from "./useConsoleSession";
 import type { useProjectStore } from "./useProjectStore";
 import type { ChatArtifact, CodexTimelineEvent, GeminiLiveUsage, Project } from "../types";
 import type { ServerEvent } from "../types/protocol";
@@ -14,20 +14,14 @@ type ProjectStore = ReturnType<typeof useProjectStore>;
 
 type UseLiveVoiceSessionHandlersOptions = {
   store: ProjectStore;
-  addAction: (action: {
-    title: string;
-    status: "running" | "done" | "failed";
-    detail: string;
-    streamingResponse?: string;
-    workdir?: string;
-  }) => string;
+  consoleForChat: (chatId: string) => ConsoleWriter;
   updateAction: (id: string, patch: ActionPatch) => void;
-  addHandoff: (name: string, summary: string) => void;
   onBackgroundJobSettled?: () => void;
 };
 
 export type ActiveCodexJobStatus = {
   jobId: string;
+  projectId: string;
   chatId: string;
   status: "queued" | "running" | "done" | "failed";
   task: string;
@@ -42,9 +36,8 @@ function stringValue(value: unknown, fallback = ""): string {
 
 export function useLiveVoiceSessionHandlers({
   store,
-  addAction,
+  consoleForChat,
   updateAction,
-  addHandoff,
   onBackgroundJobSettled,
 }: UseLiveVoiceSessionHandlersOptions) {
   const voiceCtxRef = useRef<{ project: Project; chatId: string } | null>(null);
@@ -270,7 +263,7 @@ export function useLiveVoiceSessionHandlers({
             workdir: workdir || m.workdir,
           }));
         }
-        const id = addAction({
+        const id = consoleForChat(ctx.chatId).addAction({
           title: "Vodex handoff to Codex",
           status: "running",
           detail: task,
@@ -281,6 +274,7 @@ export function useLiveVoiceSessionHandlers({
         activeVoiceJobIdRef.current = null;
         setActiveCodexJob({
           jobId: "",
+          projectId: ctx.project.id,
           chatId: ctx.chatId,
           status: "running",
           task: task || "Codex is starting the local work.",
@@ -362,8 +356,8 @@ export function useLiveVoiceSessionHandlers({
         }
       },
       onHandoff: (name: string, summary: string, workdir?: string, details?: ServerEvent) => {
-        addHandoff(name, summary);
         const ctx = voiceCtxRef.current;
+        if (ctx) consoleForChat(ctx.chatId).addHandoff(name, summary);
         const backgroundJobId =
           typeof details?.background_job_id === "string" ? details.background_job_id : "";
         if (backgroundJobId && activeVoiceActionIdRef.current) {
@@ -380,6 +374,7 @@ export function useLiveVoiceSessionHandlers({
           });
           const actionId = activeVoiceActionIdRef.current;
           const chatId = ctx.chatId;
+          const telemetry = consoleForChat(chatId);
           const startedAt = Date.now();
           const updateCodexMessage = (patch: {
             text: string;
@@ -410,6 +405,7 @@ export function useLiveVoiceSessionHandlers({
           });
           setActiveCodexJob({
             jobId: backgroundJobId,
+            projectId: ctx.project.id,
             chatId,
             status: "running",
             task,
@@ -425,7 +421,7 @@ export function useLiveVoiceSessionHandlers({
             onBackgroundJobSettled?.();
           };
           void watchCodexJob(backgroundJobId, {
-            isCurrent: () => activeVoiceJobIdRef.current === backgroundJobId,
+            isCurrent: () => activeVoiceJobIdRef.current === backgroundJobId && telemetry.isValid(),
             onProgress: (job, progressText) => {
               updateCodexMessage({
                 text: progressText,
@@ -434,13 +430,14 @@ export function useLiveVoiceSessionHandlers({
                 events: job.codex_events,
                 workdir: job.workdir,
               });
-              updateAction(actionId, {
+              telemetry.updateAction(actionId, {
                 status: "running",
                 streamingResponse: progressText,
                 workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
               });
               setActiveCodexJob({
                 jobId: backgroundJobId,
+                projectId: ctx.project.id,
                 chatId,
                 status: job.status,
                 task: job.task || task,
@@ -458,13 +455,13 @@ export function useLiveVoiceSessionHandlers({
                 artifacts: job.artifacts,
                 workdir: job.workdir,
               });
-              updateAction(actionId, {
+              telemetry.updateAction(actionId, {
                 status: "done",
                 detail: job.task,
                 streamingResponse: finalText,
                 workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
               });
-              addHandoff(name, finalText.slice(0, 160));
+              telemetry.addHandoff(name, finalText.slice(0, 160));
               finishJob();
             },
             onFailed: (job, failureText) => {
@@ -475,7 +472,7 @@ export function useLiveVoiceSessionHandlers({
                 events: job.codex_events,
                 workdir: job.workdir,
               });
-              updateAction(actionId, {
+              telemetry.updateAction(actionId, {
                 status: "failed",
                 streamingResponse: failureText,
                 workdir: job.workdir || workdir || voiceCtxRef.current?.project.path,
@@ -483,7 +480,7 @@ export function useLiveVoiceSessionHandlers({
               finishJob();
             },
             onError: (message) => {
-              updateAction(actionId, { status: "failed", streamingResponse: message });
+              telemetry.updateAction(actionId, { status: "failed", streamingResponse: message });
               updateCodexMessage({ text: message, streaming: false, status: "failed" });
               finishJob();
             },
@@ -534,8 +531,8 @@ export function useLiveVoiceSessionHandlers({
           activeCodexMsgIdRef.current = null;
           setActiveCodexJob(null);
           onBackgroundJobSettled?.();
-        } else {
-          addAction({
+        } else if (ctx) {
+          consoleForChat(ctx.chatId).addAction({
             title: "Vodex handoff to Codex",
             status: "done",
             detail: summary,

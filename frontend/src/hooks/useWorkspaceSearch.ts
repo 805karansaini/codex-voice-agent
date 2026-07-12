@@ -7,16 +7,20 @@ export function useWorkspaceSearch() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
   useEffect(() => {
     const query = searchQuery.trim();
     if (query.length < 2) {
       setSearchResults([]);
       setSearching(false);
+      setSearchError("");
       return;
     }
     let cancelled = false;
+    setSearchResults([]);
     setSearching(true);
+    setSearchError("");
     const timer = window.setTimeout(() => {
       api
         .searchContent(query)
@@ -24,7 +28,10 @@ export function useWorkspaceSearch() {
           if (!cancelled) setSearchResults(results);
         })
         .catch(() => {
-          if (!cancelled) setSearchResults([]);
+          if (!cancelled) {
+            setSearchResults([]);
+            setSearchError("Search is unavailable. Check the backend and try again.");
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -40,6 +47,7 @@ export function useWorkspaceSearch() {
     setSearchQuery("");
     setSearchResults([]);
     setSearching(false);
+    setSearchError("");
   };
 
   return {
@@ -47,6 +55,7 @@ export function useWorkspaceSearch() {
     setSearchQuery,
     searchResults,
     searching,
+    searchError,
     clearSearch,
   };
 }

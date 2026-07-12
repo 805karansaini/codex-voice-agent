@@ -2,6 +2,8 @@ import type { ChangeEvent, KeyboardEvent, MouseEvent, RefObject } from "react";
 
 import type { ConsoleTabId } from "../../hooks/useConsolePanelState";
 import type { BackendStatus } from "../../hooks/useBackendStatus";
+import type { BackendRecoveryState } from "../../utils/backendRecovery";
+import { hasActiveBackgroundJob, isVoiceControlDisabled } from "../../utils/controlAvailability";
 import type { MobileView } from "../../hooks/useAppLayout";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 import type {
@@ -53,11 +55,17 @@ export type WorkspaceLayoutProps = {
     mode: ChatMode;
     busy: boolean;
     suggestions: string[];
+    scrollContainerRef: RefObject<HTMLElement | null>;
     messageEndRef: RefObject<HTMLDivElement | null>;
+    showJumpToLatest: boolean;
     liveStatusText: string;
     streamingStatusText: string;
     input: string;
     error: string;
+    failedRequestError: string;
+    failedRequestText: string;
+    failedRequestCount: number;
+    backendRecoveryState: BackendRecoveryState;
     codexModels: CodexModel[];
     codexModel: string;
     codexReasoningEffort: string;
@@ -112,6 +120,11 @@ export type WorkspaceLayoutProps = {
     onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
     onSubmit: () => void;
     onCancelTask: () => void;
+    onRestoreFailedRequest: () => void;
+    onDismissError: () => void;
+    onDismissFailedRequest: () => void;
+    onRetryBackend: () => void;
+    onJumpToLatest: () => void;
     onCodexModelChange: (model: string) => void;
     onCodexReasoningEffortChange: (effort: string) => void;
     onToggleMute: () => void;
@@ -164,11 +177,17 @@ export default function WorkspaceLayout({
     mode,
     busy,
     suggestions,
+    scrollContainerRef,
     messageEndRef,
+    showJumpToLatest,
     liveStatusText,
     streamingStatusText,
     input,
     error,
+    failedRequestError,
+    failedRequestText,
+    failedRequestCount,
+    backendRecoveryState,
     textareaRef,
   } = chat;
   const {
@@ -220,6 +239,11 @@ export default function WorkspaceLayout({
     onInputChange,
     onSubmit,
     onCancelTask,
+    onRestoreFailedRequest,
+    onDismissError,
+    onDismissFailedRequest,
+    onRetryBackend,
+    onJumpToLatest,
     onToggleMute,
     onHoldToTalk,
     onReleaseToMute,
@@ -317,13 +341,20 @@ export default function WorkspaceLayout({
           voiceActive={voiceActive}
           voiceReconnecting={voiceReconnecting}
           codexActive={codexActive}
-          voiceDisabled={!activeProject}
+          voiceDisabled={isVoiceControlDisabled({
+            voiceActive,
+            hasProject: Boolean(activeProject),
+            busy,
+            statusKind: status.kind,
+          })}
           onToggleVoice={onToggleVoice}
           busy={busy}
           activeProject={activeProject}
           messages={messages}
           suggestions={suggestions}
+          scrollContainerRef={scrollContainerRef}
           messageEndRef={messageEndRef}
+          showJumpToLatest={showJumpToLatest}
           onAddProject={onNewProject}
           onSuggestion={onSuggestion}
           onCommitChangeReview={onCommitChangeReview}
@@ -339,6 +370,11 @@ export default function WorkspaceLayout({
           input={input}
           hasActiveProject={Boolean(activeProject)}
           error={error}
+          failedRequestError={failedRequestError}
+          failedRequestText={failedRequestText}
+          failedRequestCount={failedRequestCount}
+          backendStatus={status}
+          backendRecoveryState={backendRecoveryState}
           codexModels={chat.codexModels}
           codexModel={chat.codexModel}
           codexReasoningEffort={chat.codexReasoningEffort}
@@ -346,6 +382,11 @@ export default function WorkspaceLayout({
           onInputChange={onInputChange}
           onSubmit={onSubmit}
           onCancelTask={onCancelTask}
+          onRestoreFailedRequest={onRestoreFailedRequest}
+          onDismissError={onDismissError}
+          onDismissFailedRequest={onDismissFailedRequest}
+          onRetryBackend={onRetryBackend}
+          onJumpToLatest={onJumpToLatest}
           onCodexModelChange={handlers.onCodexModelChange}
           onCodexReasoningEffortChange={handlers.onCodexReasoningEffortChange}
           onToggleMute={onToggleMute}
@@ -401,7 +442,7 @@ export default function WorkspaceLayout({
             isMobile={isMobile}
             width={panelWidth}
             status={status}
-            canClear={Boolean(activeChatId)}
+            canClear={Boolean(activeChatId) && !busy && !hasActiveBackgroundJob(messages)}
             activeTab={activeConsoleTab}
             debugEntries={debugEntries}
             actions={actions}

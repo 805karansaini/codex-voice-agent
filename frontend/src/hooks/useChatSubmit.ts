@@ -3,6 +3,14 @@ import { useCallback, useState } from "react";
 import type { useProjectStore } from "./useProjectStore";
 import type { ChatMode, Project } from "../types";
 import { chatTitleFrom } from "../utils";
+import {
+  type ChatSubmission,
+  type FailedChatSubmissions,
+  withFailedSubmission,
+  withoutFailedSubmission,
+  withoutFailedSubmissionsForScope,
+  withoutFailedSubmissionsForProject,
+} from "../utils/requestRecovery";
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
 
@@ -25,6 +33,7 @@ type UseChatSubmitOptions = {
     userMessageId: string,
     model?: string,
     reasoningEffort?: string,
+    onBackgroundFailure?: (message: string) => void,
   ) => Promise<void>;
   codexModel?: string;
   codexReasoningEffort?: string;
@@ -45,6 +54,50 @@ export function useChatSubmit({
   codexReasoningEffort,
 }: UseChatSubmitOptions) {
   const [busy, setBusy] = useState(false);
+  const [busyChatId, setBusyChatId] = useState("");
+  const [failedSubmissions, setFailedSubmissions] = useState<FailedChatSubmissions>({});
+
+  const recordFailedSubmission = useCallback((submission: ChatSubmission, errorMessage: string) => {
+    setFailedSubmissions((current) => withFailedSubmission(current, submission, errorMessage));
+  }, []);
+
+  const runSubmission = useCallback(
+    async (submission: ChatSubmission) => {
+      setError("");
+      setBusy(true);
+      setBusyChatId(submission.chatId);
+
+      try {
+        if (submission.mode === "codex") {
+          await streamCodex(
+            submission.text,
+            submission.project,
+            submission.chatId,
+            submission.userMessageId,
+            submission.model,
+            submission.reasoningEffort,
+            (message) => recordFailedSubmission(submission, message),
+          );
+        } else {
+          await streamAgent(
+            submission.text,
+            submission.project,
+            submission.chatId,
+            submission.model,
+            submission.reasoningEffort,
+          );
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Something went wrong";
+        recordFailedSubmission(submission, message);
+      } finally {
+        activeAbortControllerRef.current = null;
+        setBusy(false);
+        setBusyChatId("");
+      }
+    },
+    [activeAbortControllerRef, recordFailedSubmission, setError, streamAgent, streamCodex],
+  );
 
   const send = useCallback(
     async (raw?: string, projectOverride?: Project, chatOverride?: string) => {
@@ -60,8 +113,6 @@ export function useChatSubmit({
       }
 
       resetComposer();
-      setError("");
-      setBusy(true);
 
       if (!createdChatForSend && (store.messagesByChat[chatId] || []).length === 0) {
         store.renameChat(project.id, chatId, chatTitleFrom(text));
@@ -75,33 +126,43 @@ export function useChatSubmit({
         workdir: project.path,
       });
 
-      try {
-        if (mode === "codex") {
-          await streamCodex(text, project, chatId, userMessageId, codexModel, codexReasoningEffort);
-        } else {
-          await streamAgent(text, project, chatId, codexModel, codexReasoningEffort);
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong");
-      } finally {
-        activeAbortControllerRef.current = null;
-        setBusy(false);
-      }
+      await runSubmission({
+        text,
+        project,
+        chatId,
+        userMessageId,
+        mode,
+        model: codexModel,
+        reasoningEffort: codexReasoningEffort,
+      });
     },
-    [
-      activeAbortControllerRef,
-      busy,
-      input,
-      mode,
-      resetComposer,
-      setError,
-      store,
-      streamAgent,
-      streamCodex,
-      codexModel,
-      codexReasoningEffort,
-    ],
+    [busy, input, mode, resetComposer, runSubmission, store, codexModel, codexReasoningEffort],
   );
 
-  return { busy, send };
+  const clearFailedSubmission = useCallback(
+    (projectId: string, chatId: string, userMessageId: string) => {
+      setFailedSubmissions((current) =>
+        withoutFailedSubmission(current, projectId, chatId, userMessageId),
+      );
+    },
+    [],
+  );
+
+  const clearFailedSubmissionsForScope = useCallback((projectId: string, chatId: string) => {
+    setFailedSubmissions((current) => withoutFailedSubmissionsForScope(current, projectId, chatId));
+  }, []);
+
+  const clearFailedSubmissionsForProject = useCallback((projectId: string) => {
+    setFailedSubmissions((current) => withoutFailedSubmissionsForProject(current, projectId));
+  }, []);
+
+  return {
+    busy,
+    busyChatId,
+    failedSubmissions,
+    send,
+    clearFailedSubmission,
+    clearFailedSubmissionsForScope,
+    clearFailedSubmissionsForProject,
+  };
 }

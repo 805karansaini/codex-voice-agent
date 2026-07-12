@@ -3,6 +3,7 @@ import { Project, Chat, Message } from "../types";
 import * as api from "../services/api";
 import { mergeUniqueById } from "../utils/collections";
 import { isOneOf, isString, isStringRecord, loadJSON, saveJSON } from "../utils/storage";
+import { excludeDeletedChats, excludeDeletedProjects } from "../utils/workspaceReconciliation";
 import {
   insertMessageBefore,
   mergeBackendHistoryWithLocalMessages,
@@ -23,10 +24,14 @@ type ChatState = {
   activeChat: Record<string, string>;
 };
 
+type DeletionState = "pending" | "committed";
+
 export function useProjectStore() {
   const selectionVersionRef = useRef(0);
   const projectsMutationVersionRef = useRef(0);
   const chatsMutationVersionRef = useRef(0);
+  const projectDeletionStatesRef = useRef(new Map<string, DeletionState>());
+  const chatDeletionStatesRef = useRef(new Map<string, DeletionState>());
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeId, setActiveId] = useState<string>(() => loadJSON(LS_ACTIVE, "", isString));
   const [chats, setChats] = useState<ChatState["chats"]>({});
@@ -56,85 +61,128 @@ export function useProjectStore() {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
-  // Load from backend
-  useEffect(() => {
-    let cancelled = false;
+  const loadProjects = useCallback(async (isCancelled: () => boolean = () => false) => {
     const mutationVersion = projectsMutationVersionRef.current;
-    api
-      .fetchProjects()
-      .then((serverProjects) => {
-        if (cancelled) return;
-        const hasLocalChanges = projectsMutationVersionRef.current !== mutationVersion;
-        if (!hasLocalChanges) selectionVersionRef.current += 1;
-        setProjects((current) =>
-          hasLocalChanges ? mergeUniqueById(current, serverProjects) : serverProjects,
-        );
-        setActiveId((current) => {
-          if (hasLocalChanges && current) return current;
-          return serverProjects.some((project) => project.id === current)
-            ? current
-            : serverProjects[0]?.id || "";
-        });
-      })
-      .catch((error: unknown) => setSyncError(syncErrorMessage("Failed to load projects", error)));
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const loadedProjects = await api.fetchProjects();
+      if (isCancelled()) return false;
+      const serverProjects = excludeDeletedProjects(
+        loadedProjects,
+        projectDeletionStatesRef.current,
+      );
+      const hasPendingDeletion = [...projectDeletionStatesRef.current.values()].includes("pending");
+      const hasLocalChanges =
+        projectsMutationVersionRef.current !== mutationVersion || hasPendingDeletion;
+      if (!hasLocalChanges) selectionVersionRef.current += 1;
+      setProjects((current) =>
+        hasLocalChanges ? mergeUniqueById(current, serverProjects) : serverProjects,
+      );
+      setActiveId((current) => {
+        if (hasLocalChanges && current) return current;
+        return serverProjects.some((project) => project.id === current)
+          ? current
+          : serverProjects[0]?.id || "";
+      });
+      return true;
+    } catch (error: unknown) {
+      if (!isCancelled()) {
+        setSyncError(syncErrorMessage("Failed to load projects", error));
+      }
+      return false;
+    }
   }, []);
 
+  const loadChats = useCallback(async (isCancelled: () => boolean = () => false) => {
+    const mutationVersion = chatsMutationVersionRef.current;
+    try {
+      const loadedChats = await api.fetchChats();
+      if (isCancelled()) return false;
+      const serverChats = excludeDeletedChats(
+        loadedChats,
+        chatDeletionStatesRef.current,
+        projectDeletionStatesRef.current,
+      );
+      const next: Record<string, Chat[]> = {};
+      for (const chat of serverChats) {
+        next[chat.projectId] = [...(next[chat.projectId] || []), chat];
+      }
+      for (const projectId of Object.keys(next)) {
+        next[projectId] = next[projectId].sort((a, b) => b.createdAt - a.createdAt);
+      }
+      const hasPendingDeletion =
+        [...chatDeletionStatesRef.current.values()].includes("pending") ||
+        [...projectDeletionStatesRef.current.values()].includes("pending");
+      const hasLocalChanges =
+        chatsMutationVersionRef.current !== mutationVersion || hasPendingDeletion;
+      setChats((current) => {
+        if (!hasLocalChanges) return next;
+        const merged = { ...next };
+        for (const [projectId, localChats] of Object.entries(current)) {
+          merged[projectId] = mergeUniqueById(localChats, next[projectId] || []);
+        }
+        return merged;
+      });
+      return true;
+    } catch (error: unknown) {
+      if (!isCancelled()) {
+        setSyncError(syncErrorMessage("Failed to load chats", error));
+      }
+      return false;
+    }
+  }, []);
+
+  // Load from backend and expose the same safe reconciliation for reconnects.
   useEffect(() => {
     let cancelled = false;
-    const mutationVersion = chatsMutationVersionRef.current;
-    api
-      .fetchChats()
-      .then((serverChats) => {
-        if (cancelled) return;
-        const next: Record<string, Chat[]> = {};
-        for (const chat of serverChats) {
-          next[chat.projectId] = [...(next[chat.projectId] || []), chat];
-        }
-        for (const projectId of Object.keys(next)) {
-          next[projectId] = next[projectId].sort((a, b) => b.createdAt - a.createdAt);
-        }
-        const hasLocalChanges = chatsMutationVersionRef.current !== mutationVersion;
-        setChats((current) => {
-          if (!hasLocalChanges) return next;
-          const merged = { ...next };
-          for (const [projectId, localChats] of Object.entries(current)) {
-            merged[projectId] = mergeUniqueById(localChats, next[projectId] || []);
-          }
-          return merged;
-        });
-      })
-      .catch((error: unknown) => setSyncError(syncErrorMessage("Failed to load chats", error)));
+    void loadProjects(() => cancelled);
+    void loadChats(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadChats, loadProjects]);
 
-  // Hydrate chat history when active chat changes
+  const loadHistory = useCallback(
+    async (chatId: string, isCancelled: () => boolean = () => false): Promise<boolean> => {
+      try {
+        const rows = await api.fetchHistory(chatId);
+        if (isCancelled()) return false;
+        if (chatDeletionStatesRef.current.has(chatId)) return true;
+        setMessagesByChat((current) => {
+          const localMessages = current[chatId] || [];
+          return {
+            ...current,
+            [chatId]: mergeBackendHistoryWithLocalMessages(rows, localMessages),
+          };
+        });
+        return true;
+      } catch (error: unknown) {
+        if (!isCancelled()) {
+          setSyncError(syncErrorMessage("Failed to load chat history", error));
+        }
+        return false;
+      }
+    },
+    [],
+  );
+
+  // Hydrate chat history when active chat changes.
   useEffect(() => {
     if (!activeChatId) return;
     let cancelled = false;
-    api
-      .fetchHistory(activeChatId)
-      .then((rows) => {
-        if (cancelled) return;
-        setMessagesByChat((current) => {
-          const localMessages = current[activeChatId] || [];
-          return {
-            ...current,
-            [activeChatId]: mergeBackendHistoryWithLocalMessages(rows, localMessages),
-          };
-        });
-      })
-      .catch((error: unknown) =>
-        setSyncError(syncErrorMessage("Failed to load chat history", error)),
-      );
+    void loadHistory(activeChatId, () => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [activeChatId]);
+  }, [activeChatId, loadHistory]);
+
+  const refreshWorkspace = useCallback(async (): Promise<boolean> => {
+    const [projectsLoaded, chatsLoaded, historyLoaded] = await Promise.all([
+      loadProjects(),
+      loadChats(),
+      activeChatId ? loadHistory(activeChatId) : Promise.resolve(true),
+    ]);
+    return projectsLoaded && chatsLoaded && historyLoaded;
+  }, [activeChatId, loadChats, loadHistory, loadProjects]);
 
   const createChat = useCallback(
     (projectId: string, opts?: { title?: string; activate?: boolean }) => {
@@ -234,11 +282,11 @@ export function useProjectStore() {
   );
 
   const removeChat = useCallback(
-    (projectId: string, chatId: string) => {
+    async (projectId: string, chatId: string): Promise<boolean> => {
       chatsMutationVersionRef.current += 1;
+      chatDeletionStatesRef.current.set(chatId, "pending");
       window.speechSynthesis?.cancel();
       const previousChat = (chats[projectId] || []).find((chat) => chat.id === chatId);
-      const previousMessages = messagesByChat[chatId] || [];
       const previousActiveChat = activeChatByProject[projectId] || "";
       const changedSelection = previousActiveChat === chatId;
       const selectionVersion = changedSelection ? ++selectionVersionRef.current : null;
@@ -249,28 +297,36 @@ export function useProjectStore() {
       setActiveChatByProject((current) =>
         current[projectId] === chatId ? { ...current, [projectId]: "" } : current,
       );
-      setMessagesByChat((current) => {
-        const next = { ...current };
-        delete next[chatId];
-        return next;
-      });
-      api.deleteChat(chatId).catch((error: unknown) => {
+      try {
+        await api.deleteChat(chatId);
+        chatDeletionStatesRef.current.set(chatId, "committed");
+        chatsMutationVersionRef.current += 1;
+        setMessagesByChat((current) => {
+          const next = { ...current };
+          delete next[chatId];
+          return next;
+        });
+        return true;
+      } catch (error: unknown) {
+        chatDeletionStatesRef.current.delete(chatId);
+        chatsMutationVersionRef.current += 1;
         setSyncError(syncErrorMessage("Failed to delete chat", error));
         if (previousChat) {
           setChats((current) => ({
             ...current,
-            [projectId]: [previousChat, ...(current[projectId] || [])].sort(
-              (a, b) => b.createdAt - a.createdAt,
-            ),
+            [projectId]: [
+              previousChat,
+              ...(current[projectId] || []).filter((chat) => chat.id !== previousChat.id),
+            ].sort((a, b) => b.createdAt - a.createdAt),
           }));
         }
-        setMessagesByChat((current) => ({ ...current, [chatId]: previousMessages }));
         if (selectionVersionRef.current === selectionVersion) {
           setActiveChatByProject((current) => ({ ...current, [projectId]: previousActiveChat }));
         }
-      });
+        return false;
+      }
     },
-    [activeChatByProject, chats, messagesByChat],
+    [activeChatByProject, chats],
   );
 
   const createProject = useCallback(
@@ -295,9 +351,10 @@ export function useProjectStore() {
   );
 
   const removeProject = useCallback(
-    (id: string) => {
+    async (id: string): Promise<boolean> => {
       projectsMutationVersionRef.current += 1;
       chatsMutationVersionRef.current += 1;
+      projectDeletionStatesRef.current.set(id, "pending");
       const previousProject = projects.find((project) => project.id === id);
       const previousChats = chats[id] || [];
       const previousActiveId = activeId;
@@ -305,9 +362,10 @@ export function useProjectStore() {
       const selectionVersion = changedSelection ? ++selectionVersionRef.current : null;
       const previousActiveChat = activeChatByProject[id] || "";
       const chatIds = new Set((chats[id] || []).map((c) => c.id));
-      const previousMessages = Object.fromEntries(
-        Object.entries(messagesByChat).filter(([cid]) => chatIds.has(cid)),
+      const previousChatDeletionStates = new Map(
+        [...chatIds].map((chatId) => [chatId, chatDeletionStatesRef.current.get(chatId)]),
       );
+      for (const chatId of chatIds) chatDeletionStatesRef.current.set(chatId, "pending");
       setProjects((current) => current.filter((p) => p.id !== id));
       setChats((current) => {
         const next = { ...current };
@@ -319,49 +377,71 @@ export function useProjectStore() {
         delete next[id];
         return next;
       });
-      setMessagesByChat((current) => {
-        const next: Record<string, Message[]> = {};
-        for (const [cid, msgs] of Object.entries(current)) {
-          if (!chatIds.has(cid)) next[cid] = msgs;
-        }
-        return next;
-      });
       setActiveId((current) => (current === id ? "" : current));
-      api.deleteProject(id).catch((error: unknown) => {
+      try {
+        await api.deleteProject(id);
+        projectDeletionStatesRef.current.set(id, "committed");
+        for (const chatId of chatIds) chatDeletionStatesRef.current.set(chatId, "committed");
+        projectsMutationVersionRef.current += 1;
+        chatsMutationVersionRef.current += 1;
+        setMessagesByChat((current) => {
+          const next: Record<string, Message[]> = {};
+          for (const [chatId, messages] of Object.entries(current)) {
+            if (!chatIds.has(chatId)) next[chatId] = messages;
+          }
+          return next;
+        });
+        return true;
+      } catch (error: unknown) {
+        projectDeletionStatesRef.current.delete(id);
+        for (const [chatId, previousState] of previousChatDeletionStates) {
+          if (previousState) chatDeletionStatesRef.current.set(chatId, previousState);
+          else chatDeletionStatesRef.current.delete(chatId);
+        }
+        projectsMutationVersionRef.current += 1;
+        chatsMutationVersionRef.current += 1;
         setSyncError(syncErrorMessage("Failed to delete project", error));
         if (previousProject) {
           setProjects((current) =>
-            [previousProject, ...current].sort((a, b) => b.createdAt - a.createdAt),
+            [
+              previousProject,
+              ...current.filter((project) => project.id !== previousProject.id),
+            ].sort((a, b) => b.createdAt - a.createdAt),
           );
         }
         setChats((current) => ({ ...current, [id]: previousChats }));
-        setMessagesByChat((current) => ({ ...current, ...previousMessages }));
         setActiveChatByProject((current) => ({ ...current, [id]: previousActiveChat }));
         if (selectionVersionRef.current === selectionVersion) {
           setActiveId(previousActiveId);
         }
-      });
+        return false;
+      }
     },
-    [activeChatByProject, activeId, chats, messagesByChat, projects],
+    [activeChatByProject, activeId, chats, projects],
   );
 
   const clearChatThread = useCallback(
-    (chatId: string) => {
+    async (chatId: string): Promise<boolean> => {
       window.speechSynthesis?.cancel();
       const previousMessages = messagesByChat[chatId] || [];
       setMessagesByChat((current) => ({ ...current, [chatId]: [] }));
-      api.deleteHistory(chatId).catch((error: unknown) => {
+      try {
+        await api.deleteHistory(chatId);
+        return true;
+      } catch (error: unknown) {
         setSyncError(syncErrorMessage("Failed to clear chat history", error));
         setMessagesByChat((current) => ({
           ...current,
           [chatId]: restoreMessagesAfterFailedClear(previousMessages, current[chatId] || []),
         }));
-      });
+        return false;
+      }
     },
     [messagesByChat],
   );
 
   const appendMessage = useCallback((chatId: string, msg: Message) => {
+    if (chatDeletionStatesRef.current.get(chatId) === "committed") return;
     setMessagesByChat((current) => ({
       ...current,
       [chatId]: [...(current[chatId] || []), msg],
@@ -369,6 +449,7 @@ export function useProjectStore() {
   }, []);
 
   const insertMessage = useCallback((chatId: string, msg: Message, beforeId?: string | null) => {
+    if (chatDeletionStatesRef.current.get(chatId) === "committed") return;
     setMessagesByChat((current) => ({
       ...current,
       [chatId]: insertMessageBefore(current[chatId] || [], msg, beforeId),
@@ -377,6 +458,7 @@ export function useProjectStore() {
 
   const updateMessage = useCallback(
     (chatId: string, id: string, patch: (m: Message) => Message) => {
+      if (chatDeletionStatesRef.current.get(chatId) === "committed") return;
       setMessagesByChat((current) => {
         const thread = current[chatId] || [];
         return {
@@ -405,6 +487,7 @@ export function useProjectStore() {
     activeChatByProject,
     setTheme,
     clearSyncError,
+    refreshWorkspace,
     setActiveId,
     createProject,
     removeProject,

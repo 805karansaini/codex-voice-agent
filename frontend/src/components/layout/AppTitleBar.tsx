@@ -10,11 +10,14 @@ import {
   Search,
   Sparkles,
   SquareTerminal,
+  X,
 } from "lucide-react";
+import { useState } from "react";
 
 import type { MobileView } from "../../hooks/useAppLayout";
 import type { ProjectInfo, SearchResult } from "../../types";
 import { cn } from "../../utils";
+import WorkspaceSearchBox from "./WorkspaceSearchBox";
 
 export type AppTitleBarProps = {
   isMobile: boolean;
@@ -25,6 +28,7 @@ export type AppTitleBarProps = {
   searchQuery: string;
   searchResults: SearchResult[];
   searching: boolean;
+  searchError: string;
   railOpen: boolean;
   panelOpen: boolean;
   filePanelOpen: boolean;
@@ -46,6 +50,7 @@ export default function AppTitleBar({
   searchQuery,
   searchResults,
   searching,
+  searchError,
   railOpen,
   panelOpen,
   filePanelOpen,
@@ -57,9 +62,11 @@ export default function AppTitleBar({
   onTogglePanel,
   onToggleFilePanel,
 }: AppTitleBarProps) {
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+
   if (isMobile) {
     return (
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-line bg-surface-1/95 px-3 shadow-sm backdrop-blur-xl">
+      <header className="relative z-50 flex h-14 shrink-0 items-center justify-between border-b border-line bg-surface-1 px-3 shadow-sm">
         <button
           onClick={() =>
             onMobileViewChange(
@@ -97,25 +104,51 @@ export default function AppTitleBar({
           )}
         </div>
 
-        <button
-          onClick={() => onMobileViewChange(mobileView === "console" ? "chat" : "console")}
-          className={cn(
-            "relative flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted transition-colors",
-            mobileView === "console" && "bg-surface-3 text-accent border-accent/30",
-          )}
-          aria-label={mobileView === "console" ? "Return to chat" : "Open console"}
-        >
-          <SquareTerminal className="h-4.5 w-4.5" />
-          {voiceActive && (
-            <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
-          )}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => setMobileSearchOpen((open) => !open)}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted"
+            aria-label={mobileSearchOpen ? "Close search" : "Search chats"}
+            aria-expanded={mobileSearchOpen}
+          >
+            {mobileSearchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
+          </button>
+          <button
+            onClick={() => onMobileViewChange(mobileView === "console" ? "chat" : "console")}
+            className={cn(
+              "relative flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted transition-colors",
+              mobileView === "console" && "bg-surface-3 text-accent border-accent/30",
+            )}
+            aria-label={mobileView === "console" ? "Return to chat" : "Open console"}
+          >
+            <SquareTerminal className="h-4.5 w-4.5" />
+            {voiceActive && (
+              <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
+            )}
+          </button>
+        </div>
+        {mobileSearchOpen && (
+          <div className="absolute inset-x-2 top-[calc(100%+6px)] z-40">
+            <WorkspaceSearchBox
+              mobile
+              searchQuery={searchQuery}
+              searchResults={searchResults}
+              searching={searching}
+              searchError={searchError}
+              onSearchQueryChange={onSearchQueryChange}
+              onOpenSearchResult={onOpenSearchResult}
+              onDismiss={() => setMobileSearchOpen(false)}
+            />
+          </div>
+        )}
       </header>
     );
   }
 
   return (
-    <header className="flex h-13 shrink-0 items-center gap-4 border-b border-line bg-surface-1/95 px-3.5 shadow-sm backdrop-blur-xl">
+    <header className="relative z-50 flex h-13 shrink-0 items-center gap-4 border-b border-line bg-surface-1 px-3.5 shadow-sm">
       <div className="flex items-center gap-2 min-w-0">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/25 bg-accent/15 text-accent shadow-sm">
           <Sparkles className="h-4 w-4" />
@@ -146,50 +179,14 @@ export default function AppTitleBar({
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <div className="relative">
-          <div className="flex h-8 items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 text-[11.5px] text-fg-muted transition-colors focus-within:border-accent/60 focus-within:bg-surface-1">
-            <Search className="h-3.5 w-3.5" />
-            <input
-              value={searchQuery}
-              onChange={(event) => onSearchQueryChange(event.target.value)}
-              placeholder="Search chats"
-              aria-label="Search chats"
-              className="w-52 bg-transparent text-[12px] text-fg outline-none placeholder:text-fg-dim"
-            />
-          </div>
-          {searchQuery.trim().length >= 2 && (
-            <div className="absolute right-0 top-8 z-30 w-80 overflow-hidden rounded-md border border-line bg-surface-1 shadow-xl">
-              <div className="border-b border-line-soft px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-fg-dim">
-                {searching
-                  ? "Searching"
-                  : `${searchResults.length} result${searchResults.length === 1 ? "" : "s"}`}
-              </div>
-              <div className="max-h-80 overflow-y-auto py-1">
-                {!searching && searchResults.length === 0 ? (
-                  <div className="px-3 py-3 text-[12px] text-fg-dim">No matches found.</div>
-                ) : (
-                  searchResults.map((result) => (
-                    <button
-                      key={`${result.type}-${result.id}`}
-                      onClick={() => onOpenSearchResult(result)}
-                      className="flex w-full flex-col gap-1 px-3 py-2 text-left hover:bg-surface-2"
-                    >
-                      <span className="flex items-center gap-2 text-[12px] font-semibold text-fg">
-                        <span className="rounded border border-line-soft px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg-dim">
-                          {result.type}
-                        </span>
-                        {result.title || "Result"}
-                      </span>
-                      <span className="max-h-9 overflow-hidden text-[11.5px] leading-relaxed text-fg-muted">
-                        {result.snippet || "No preview available."}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        <WorkspaceSearchBox
+          searchQuery={searchQuery}
+          searchResults={searchResults}
+          searching={searching}
+          searchError={searchError}
+          onSearchQueryChange={onSearchQueryChange}
+          onOpenSearchResult={onOpenSearchResult}
+        />
         <button
           title={railOpen ? "Hide workspace sidebar" : "Show workspace sidebar"}
           aria-label={railOpen ? "Hide workspace sidebar" : "Show workspace sidebar"}

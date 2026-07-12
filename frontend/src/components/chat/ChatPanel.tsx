@@ -2,6 +2,8 @@ import type { ChangeEvent, RefObject } from "react";
 
 import type { ChatArtifact, ChatMode, CodexModel, Message, Project } from "../../types";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
+import type { BackendStatus } from "../../hooks/useBackendStatus";
+import type { BackendRecoveryState } from "../../utils/backendRecovery";
 import ChatStream from "./ChatStream";
 import ChatTopBar from "./ChatTopBar";
 import ComposerFooter from "./ComposerFooter";
@@ -21,7 +23,9 @@ type ChatPanelProps = {
   activeProject?: Project | null;
   messages: Message[];
   suggestions: string[];
+  scrollContainerRef: RefObject<HTMLElement | null>;
   messageEndRef: RefObject<HTMLDivElement | null>;
+  showJumpToLatest: boolean;
   liveStatusText: string;
   streamingStatusText: string;
   voiceTitle: string;
@@ -33,6 +37,11 @@ type ChatPanelProps = {
   input: string;
   hasActiveProject: boolean;
   error: string;
+  failedRequestError: string;
+  failedRequestText: string;
+  failedRequestCount: number;
+  backendRecoveryState: BackendRecoveryState;
+  backendStatus: BackendStatus;
   codexModels: CodexModel[];
   codexModel: string;
   codexReasoningEffort: string;
@@ -47,6 +56,11 @@ type ChatPanelProps = {
   onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onSubmit: () => void;
   onCancelTask: () => void;
+  onRestoreFailedRequest: () => void;
+  onDismissError: () => void;
+  onDismissFailedRequest: () => void;
+  onRetryBackend: () => void;
+  onJumpToLatest: () => void;
   onCodexModelChange: (model: string) => void;
   onCodexReasoningEffortChange: (effort: string) => void;
   onToggleMute: () => void;
@@ -69,7 +83,9 @@ export default function ChatPanel({
   activeProject,
   messages,
   suggestions,
+  scrollContainerRef,
   messageEndRef,
+  showJumpToLatest,
   liveStatusText,
   streamingStatusText,
   voiceTitle,
@@ -81,6 +97,11 @@ export default function ChatPanel({
   input,
   hasActiveProject,
   error,
+  failedRequestError,
+  failedRequestText,
+  failedRequestCount,
+  backendRecoveryState,
+  backendStatus,
   codexModels,
   codexModel,
   codexReasoningEffort,
@@ -95,6 +116,11 @@ export default function ChatPanel({
   onInputChange,
   onSubmit,
   onCancelTask,
+  onRestoreFailedRequest,
+  onDismissError,
+  onDismissFailedRequest,
+  onRetryBackend,
+  onJumpToLatest,
   onCodexModelChange,
   onCodexReasoningEffortChange,
   onToggleMute,
@@ -123,11 +149,14 @@ export default function ChatPanel({
         activeProject={activeProject}
         messages={messages}
         suggestions={suggestions}
+        scrollContainerRef={scrollContainerRef}
         messageEndRef={messageEndRef}
+        showJumpToLatest={showJumpToLatest}
         onAddProject={onAddProject}
         onSuggestion={onSuggestion}
         onCommitChangeReview={onCommitChangeReview}
         onRevertChangeReview={onRevertChangeReview}
+        onJumpToLatest={onJumpToLatest}
       />
 
       <ComposerFooter
@@ -143,11 +172,18 @@ export default function ChatPanel({
         voiceTranscriptPreview={voiceTranscriptPreview}
         voiceMuted={voiceMuted}
         voiceSupported={voiceSupported}
+        voiceDisabled={voiceDisabled}
         voiceInputMode={voiceInputMode}
+        mode={mode}
         input={input}
         busy={busy}
         hasActiveProject={hasActiveProject}
         error={error}
+        failedRequestError={failedRequestError}
+        failedRequestText={failedRequestText}
+        failedRequestCount={failedRequestCount}
+        backendStatus={backendStatus}
+        backendRecoveryState={backendRecoveryState}
         codexModels={codexModels}
         codexModel={codexModel}
         codexReasoningEffort={codexReasoningEffort}
@@ -155,6 +191,10 @@ export default function ChatPanel({
         onInputChange={onInputChange}
         onSubmit={onSubmit}
         onCancelTask={onCancelTask}
+        onRestoreFailedRequest={onRestoreFailedRequest}
+        onDismissError={onDismissError}
+        onDismissFailedRequest={onDismissFailedRequest}
+        onRetryBackend={onRetryBackend}
         onCodexModelChange={onCodexModelChange}
         onCodexReasoningEffortChange={onCodexReasoningEffortChange}
         onToggleVoice={onToggleVoice}
