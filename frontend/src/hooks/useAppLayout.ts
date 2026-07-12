@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { loadJSON, saveJSON } from "../utils";
+import { isNumberInRange, loadJSON, saveJSON } from "../utils/storage";
 
 export type MobileView = "explorer" | "files" | "chat" | "console";
 
 const COMPACT_LAYOUT_MAX_WIDTH = 1100;
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value));
+}
 
 export function useAppLayout() {
   const [railOpen, setRailOpen] = useState(true);
@@ -13,71 +17,78 @@ export function useAppLayout() {
     typeof window !== "undefined" ? window.innerWidth <= COMPACT_LAYOUT_MAX_WIDTH : false,
   );
   const [mobileView, setMobileView] = useState<MobileView>("chat");
-  const [railWidth, setRailWidth] = useState(() => loadJSON<number>("cva.railWidth.v2", 268));
-  const [panelWidth, setPanelWidth] = useState(() => loadJSON<number>("cva.panelWidth.v2", 380));
+  const [railWidth, setRailWidth] = useState(() =>
+    loadJSON("cva.railWidth.v2", 268, isNumberInRange(180, 420)),
+  );
+  const [panelWidth, setPanelWidth] = useState(() =>
+    loadJSON("cva.panelWidth.v2", 380, isNumberInRange(260, 600)),
+  );
   const [fileViewerWidth, setFileViewerWidth] = useState(() =>
-    loadJSON<number>("cva.fileViewerWidth.v1", 420),
+    loadJSON("cva.fileViewerWidth.v1", 420, isNumberInRange(260, 900)),
   );
   const [isDragging, setIsDragging] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
 
-  const startRailDrag = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(180, Math.min(420, moveEvent.clientX - 56));
-      setRailWidth(newWidth);
-    };
-    const handleMouseUp = () => {
-      setIsDragging(false);
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-  }, []);
-
-  const startPanelDrag = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
+  const beginHorizontalDrag = useCallback(
+    (event: React.MouseEvent, onMove: (clientX: number) => void) => {
+      event.preventDefault();
+      dragCleanupRef.current?.();
       setIsDragging(true);
-      const startX = e.clientX;
-      const startWidth = panelWidth;
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const newWidth = Math.max(260, Math.min(600, startWidth + startX - moveEvent.clientX));
-        setPanelWidth(newWidth);
-      };
-      const handleMouseUp = () => {
-        setIsDragging(false);
+
+      const cleanup = () => {
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
+        dragCleanupRef.current = null;
+        setIsDragging(false);
       };
+      const handleMouseMove = (moveEvent: MouseEvent) => onMove(moveEvent.clientX);
+      const handleMouseUp = () => cleanup();
+
+      dragCleanupRef.current = cleanup;
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
     },
-    [panelWidth],
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      dragCleanupRef.current?.();
+    },
+    [],
+  );
+
+  const startRailDrag = useCallback(
+    (event: React.MouseEvent) => {
+      beginHorizontalDrag(event, (clientX) => {
+        setRailWidth(clamp(clientX - 56, 180, 420));
+      });
+    },
+    [beginHorizontalDrag],
+  );
+
+  const startPanelDrag = useCallback(
+    (event: React.MouseEvent) => {
+      const startX = event.clientX;
+      const startWidth = panelWidth;
+      beginHorizontalDrag(event, (clientX) => {
+        setPanelWidth(clamp(startWidth + startX - clientX, 260, 600));
+      });
+    },
+    [beginHorizontalDrag, panelWidth],
   );
 
   const startFileViewerDrag = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      setIsDragging(true);
-      const startX = e.clientX;
+    (event: React.MouseEvent) => {
+      const startX = event.clientX;
       const startWidth = fileViewerWidth;
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const newWidth = Math.max(260, Math.min(900, startWidth + startX - moveEvent.clientX));
-        setFileViewerWidth(newWidth);
-      };
-      const handleMouseUp = () => {
-        setIsDragging(false);
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("mouseup", handleMouseUp);
-      };
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
+      beginHorizontalDrag(event, (clientX) => {
+        setFileViewerWidth(clamp(startWidth + startX - clientX, 260, 900));
+      });
     },
-    [fileViewerWidth],
+    [beginHorizontalDrag, fileViewerWidth],
   );
 
   useEffect(() => saveJSON("cva.railWidth.v2", railWidth), [railWidth]);

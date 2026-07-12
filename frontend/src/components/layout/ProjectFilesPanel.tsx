@@ -11,7 +11,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, ProjectFileEntry } from "../../types";
 import * as api from "../../services/api";
-import { cn, loadJSON, saveJSON } from "../../utils";
+import { cn } from "../../utils";
+import { makeFileTree, mergeFileEntries, type FileTree } from "../../utils/projectFiles";
+import { isStringArrayRecord, loadJSON, saveJSON } from "../../utils/storage";
 
 type ProjectFilesPanelProps = {
   project: Project | null | undefined;
@@ -19,54 +21,10 @@ type ProjectFilesPanelProps = {
   isMobile?: boolean;
   onOpenFile?: (path: string) => void;
 };
-type FileTree = { name: string; path: string; isDirectory: boolean; children: FileTree[] };
 const EXPANDED_FOLDERS_KEY = "cva.fileTreeExpanded.v1";
-
-function mergeFileEntries(
-  current: ProjectFileEntry[],
-  incoming: ProjectFileEntry[],
-): ProjectFileEntry[] {
-  const entries = new Map(current.map((entry) => [entry.path, entry]));
-  incoming.forEach((entry) => entries.set(entry.path, entry));
-  return [...entries.values()];
-}
 
 function fileIcon(path: string) {
   return /\.(md|mdx|txt)$/i.test(path) ? FileText : FileCode2;
-}
-
-function makeTree(entries: ProjectFileEntry[]): FileTree[] {
-  const root: FileTree = { name: "", path: "", isDirectory: true, children: [] };
-  const known = new Map([["", root]]);
-  for (const entry of entries.sort((a, b) => a.path.localeCompare(b.path))) {
-    const parts = entry.path.split("/");
-    let parent = root;
-    let path = "";
-    for (let index = 0; index < parts.length; index += 1) {
-      const name = parts[index];
-      path = path ? `${path}/${name}` : name;
-      let node = known.get(path);
-      if (!node) {
-        node = {
-          name,
-          path,
-          isDirectory: index < parts.length - 1 || entry.is_directory,
-          children: [],
-        };
-        known.set(path, node);
-        parent.children.push(node);
-      }
-      parent = node;
-    }
-  }
-  const sortNodes = (nodes: FileTree[]) => {
-    nodes.sort(
-      (a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name),
-    );
-    nodes.forEach((node) => sortNodes(node.children));
-  };
-  sortNodes(root.children);
-  return root.children;
 }
 
 export default function ProjectFilesPanel({
@@ -83,7 +41,7 @@ export default function ProjectFilesPanel({
   const [truncated, setTruncated] = useState(false);
   const restoredProjectRef = useRef("");
   const loadRequestRef = useRef(0);
-  const tree = useMemo(() => makeTree(entries), [entries]);
+  const tree = useMemo(() => makeFileTree(entries), [entries]);
 
   const loadFiles = useCallback(async () => {
     if (!project) return;
@@ -96,7 +54,7 @@ export default function ProjectFilesPanel({
       setEntries(result.entries);
       setTruncated(result.truncated);
       setLoadedDirectories(new Set([""]));
-      const saved = loadJSON<Record<string, string[]>>(EXPANDED_FOLDERS_KEY, {})[project.id] || [];
+      const saved = loadJSON(EXPANDED_FOLDERS_KEY, {}, isStringArrayRecord)[project.id] || [];
       restoredProjectRef.current = project.id;
       setExpanded(new Set(saved));
       if (saved.length) {
@@ -129,7 +87,7 @@ export default function ProjectFilesPanel({
 
   useEffect(() => {
     if (!project || restoredProjectRef.current !== project.id) return;
-    const saved = loadJSON<Record<string, string[]>>(EXPANDED_FOLDERS_KEY, {});
+    const saved = loadJSON(EXPANDED_FOLDERS_KEY, {}, isStringArrayRecord);
     saveJSON(EXPANDED_FOLDERS_KEY, { ...saved, [project.id]: [...expanded] });
   }, [expanded, project]);
 

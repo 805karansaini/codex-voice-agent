@@ -11,6 +11,18 @@ export function insertMessageBefore(
   return [...messages.slice(0, index), message, ...messages.slice(index)];
 }
 
+export function restoreMessagesAfterFailedClear(
+  previous: readonly Message[],
+  current: readonly Message[],
+): Message[] {
+  const currentById = new Map(current.map((message) => [message.id, message]));
+  const previousIds = new Set(previous.map((message) => message.id));
+  return [
+    ...previous.map((message) => currentById.get(message.id) || message),
+    ...current.filter((message) => !previousIds.has(message.id)),
+  ];
+}
+
 export function historyRowsToMessages(rows: HistoryRow[]): Message[] {
   return rows
     .filter(

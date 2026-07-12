@@ -5,6 +5,7 @@ import {
   historyRowsToMessages,
   insertMessageBefore,
   mergeBackendHistoryWithLocalMessages,
+  restoreMessagesAfterFailedClear,
 } from "../src/utils/history.ts";
 import type { ChatArtifact, CodexTimelineEvent, HistoryRow, Message } from "../src/types.ts";
 
@@ -20,6 +21,16 @@ test("insertMessageBefore appends when the target response is unavailable", () =
   const user = { id: "user-live", role: "user" as const, text: "New request" };
 
   assert.deepEqual(insertMessageBefore([existing], user, "missing"), [existing, user]);
+});
+
+test("failed clear rollback restores old messages without dropping newer messages", () => {
+  const previous = [{ id: "old", role: "user" as const, text: "Before clear" }];
+  const current = [{ id: "new", role: "user" as const, text: "Sent while clearing" }];
+
+  assert.deepEqual(
+    restoreMessagesAfterFailedClear(previous, current).map((message) => message.id),
+    ["old", "new"],
+  );
 });
 
 test("historyRowsToMessages keeps only chat message roles", () => {

@@ -1,8 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Project, Chat, Message } from "../types";
 import * as api from "../services/api";
-import { loadJSON, saveJSON } from "../utils";
-import { insertMessageBefore, mergeBackendHistoryWithLocalMessages } from "../utils/history";
+import { mergeUniqueById } from "../utils/collections";
+import { isOneOf, isString, isStringRecord, loadJSON, saveJSON } from "../utils/storage";
+import {
+  insertMessageBefore,
+  mergeBackendHistoryWithLocalMessages,
+  restoreMessagesAfterFailedClear,
+} from "../utils/history";
 
 const LS_ACTIVE = "cva.activeProject.v1";
 const LS_ACTIVE_CHAT = "cva.activeChat.v1";
@@ -18,26 +23,20 @@ type ChatState = {
   activeChat: Record<string, string>;
 };
 
-function loadChatState(): ChatState {
-  return {
-    chats: {},
-    activeChat: loadJSON<Record<string, string>>(LS_ACTIVE_CHAT, {}),
-  };
-}
-
 export function useProjectStore() {
+  const selectionVersionRef = useRef(0);
+  const projectsMutationVersionRef = useRef(0);
+  const chatsMutationVersionRef = useRef(0);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeId, setActiveId] = useState<string>(() => loadJSON<string>(LS_ACTIVE, ""));
-
-  const initialChatState = useRef(loadChatState()).current;
-  const [chats, setChats] = useState<Record<string, Chat[]>>(initialChatState.chats);
+  const [activeId, setActiveId] = useState<string>(() => loadJSON(LS_ACTIVE, "", isString));
+  const [chats, setChats] = useState<ChatState["chats"]>({});
   const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>({});
-  const [activeChatByProject, setActiveChatByProject] = useState<Record<string, string>>(
-    initialChatState.activeChat,
+  const [activeChatByProject, setActiveChatByProject] = useState<ChatState["activeChat"]>(() =>
+    loadJSON(LS_ACTIVE_CHAT, {}, isStringRecord),
   );
   const [syncError, setSyncError] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">(() =>
-    loadJSON<"dark" | "light">(LS_THEME, "dark"),
+    loadJSON(LS_THEME, "dark", isOneOf("dark", "light")),
   );
 
   const activeProject = useMemo(
@@ -60,16 +59,22 @@ export function useProjectStore() {
   // Load from backend
   useEffect(() => {
     let cancelled = false;
+    const mutationVersion = projectsMutationVersionRef.current;
     api
       .fetchProjects()
       .then((serverProjects) => {
         if (cancelled) return;
-        setProjects(serverProjects);
-        setActiveId((current) =>
-          serverProjects.some((project) => project.id === current)
-            ? current
-            : serverProjects[0]?.id || "",
+        const hasLocalChanges = projectsMutationVersionRef.current !== mutationVersion;
+        if (!hasLocalChanges) selectionVersionRef.current += 1;
+        setProjects((current) =>
+          hasLocalChanges ? mergeUniqueById(current, serverProjects) : serverProjects,
         );
+        setActiveId((current) => {
+          if (hasLocalChanges && current) return current;
+          return serverProjects.some((project) => project.id === current)
+            ? current
+            : serverProjects[0]?.id || "";
+        });
       })
       .catch((error: unknown) => setSyncError(syncErrorMessage("Failed to load projects", error)));
     return () => {
@@ -79,6 +84,7 @@ export function useProjectStore() {
 
   useEffect(() => {
     let cancelled = false;
+    const mutationVersion = chatsMutationVersionRef.current;
     api
       .fetchChats()
       .then((serverChats) => {
@@ -90,7 +96,15 @@ export function useProjectStore() {
         for (const projectId of Object.keys(next)) {
           next[projectId] = next[projectId].sort((a, b) => b.createdAt - a.createdAt);
         }
-        setChats(next);
+        const hasLocalChanges = chatsMutationVersionRef.current !== mutationVersion;
+        setChats((current) => {
+          if (!hasLocalChanges) return next;
+          const merged = { ...next };
+          for (const [projectId, localChats] of Object.entries(current)) {
+            merged[projectId] = mergeUniqueById(localChats, next[projectId] || []);
+          }
+          return merged;
+        });
       })
       .catch((error: unknown) => setSyncError(syncErrorMessage("Failed to load chats", error)));
     return () => {
@@ -124,6 +138,11 @@ export function useProjectStore() {
 
   const createChat = useCallback(
     (projectId: string, opts?: { title?: string; activate?: boolean }) => {
+      chatsMutationVersionRef.current += 1;
+      const previousActiveId = activeId;
+      const previousActiveChat = activeChatByProject[projectId] || "";
+      const shouldActivate = opts?.activate !== false;
+      const selectionVersion = shouldActivate ? ++selectionVersionRef.current : null;
       const chat: Chat = {
         id: crypto.randomUUID(),
         projectId,
@@ -135,7 +154,7 @@ export function useProjectStore() {
         [projectId]: [chat, ...(current[projectId] || [])],
       }));
       setMessagesByChat((current) => ({ ...current, [chat.id]: [] }));
-      if (opts?.activate !== false) {
+      if (shouldActivate) {
         setActiveChatByProject((current) => ({ ...current, [projectId]: chat.id }));
         setActiveId(projectId);
       }
@@ -150,13 +169,18 @@ export function useProjectStore() {
           delete next[chat.id];
           return next;
         });
-        setActiveChatByProject((current) =>
-          current[projectId] === chat.id ? { ...current, [projectId]: "" } : current,
-        );
+        if (selectionVersionRef.current === selectionVersion) {
+          setActiveChatByProject((current) =>
+            current[projectId] === chat.id
+              ? { ...current, [projectId]: previousActiveChat }
+              : current,
+          );
+          setActiveId((current) => (current === projectId ? previousActiveId : current));
+        }
       });
       return chat;
     },
-    [setActiveId],
+    [activeChatByProject, activeId, setActiveId],
   );
 
   useEffect(() => {
@@ -174,42 +198,50 @@ export function useProjectStore() {
 
   const selectChat = useCallback(
     (projectId: string, chatId: string) => {
+      selectionVersionRef.current += 1;
       setActiveChatByProject((current) => ({ ...current, [projectId]: chatId }));
       setActiveId(projectId);
     },
     [setActiveId],
   );
 
-  const renameChat = useCallback((projectId: string, chatId: string, title: string) => {
-    const clean = title.trim();
-    if (!clean) return;
-    setChats((current) => {
-      let updated: Chat | undefined;
-      const next = (current[projectId] || []).map((c) => {
-        if (c.id !== chatId) return c;
-        const previous = c;
-        updated = { ...c, title: clean };
-        api.saveChat(updated).catch((error: unknown) => {
-          setSyncError(syncErrorMessage("Failed to rename chat", error));
-          setChats((rollbackCurrent) => ({
-            ...rollbackCurrent,
-            [projectId]: (rollbackCurrent[projectId] || []).map((item) =>
-              item.id === chatId ? previous : item,
-            ),
-          }));
-        });
-        return updated;
+  const renameChat = useCallback(
+    (projectId: string, chatId: string, title: string) => {
+      const clean = title.trim();
+      if (!clean) return;
+      const previous = (chats[projectId] || []).find((chat) => chat.id === chatId);
+      if (!previous || previous.title === clean) return;
+      chatsMutationVersionRef.current += 1;
+      const updated = { ...previous, title: clean };
+
+      setChats((current) => ({
+        ...current,
+        [projectId]: (current[projectId] || []).map((chat) =>
+          chat.id === chatId ? updated : chat,
+        ),
+      }));
+      api.saveChat(updated).catch((error: unknown) => {
+        setSyncError(syncErrorMessage("Failed to rename chat", error));
+        setChats((current) => ({
+          ...current,
+          [projectId]: (current[projectId] || []).map((chat) =>
+            chat.id === chatId && chat.title === clean ? previous : chat,
+          ),
+        }));
       });
-      return { ...current, [projectId]: next };
-    });
-  }, []);
+    },
+    [chats],
+  );
 
   const removeChat = useCallback(
     (projectId: string, chatId: string) => {
+      chatsMutationVersionRef.current += 1;
       window.speechSynthesis?.cancel();
       const previousChat = (chats[projectId] || []).find((chat) => chat.id === chatId);
       const previousMessages = messagesByChat[chatId] || [];
       const previousActiveChat = activeChatByProject[projectId] || "";
+      const changedSelection = previousActiveChat === chatId;
+      const selectionVersion = changedSelection ? ++selectionVersionRef.current : null;
       setChats((current) => ({
         ...current,
         [projectId]: (current[projectId] || []).filter((c) => c.id !== chatId),
@@ -233,32 +265,44 @@ export function useProjectStore() {
           }));
         }
         setMessagesByChat((current) => ({ ...current, [chatId]: previousMessages }));
-        setActiveChatByProject((current) => ({ ...current, [projectId]: previousActiveChat }));
+        if (selectionVersionRef.current === selectionVersion) {
+          setActiveChatByProject((current) => ({ ...current, [projectId]: previousActiveChat }));
+        }
       });
     },
     [activeChatByProject, chats, messagesByChat],
   );
 
-  const createProject = useCallback((p: Omit<Project, "id" | "createdAt">) => {
-    const project: Project = {
-      ...p,
-      id: crypto.randomUUID(),
-      createdAt: Date.now(),
-    };
-    setProjects((current) => [project, ...current]);
-    setActiveId(project.id);
-    api.saveProject(project).catch((error: unknown) => {
-      setSyncError(syncErrorMessage("Failed to save project", error));
-      setProjects((current) => current.filter((item) => item.id !== project.id));
-      setActiveId((current) => (current === project.id ? "" : current));
-    });
-  }, []);
+  const createProject = useCallback(
+    (p: Omit<Project, "id" | "createdAt">) => {
+      projectsMutationVersionRef.current += 1;
+      const previousActiveId = activeId;
+      selectionVersionRef.current += 1;
+      const project: Project = {
+        ...p,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+      };
+      setProjects((current) => [project, ...current]);
+      setActiveId(project.id);
+      api.saveProject(project).catch((error: unknown) => {
+        setSyncError(syncErrorMessage("Failed to save project", error));
+        setProjects((current) => current.filter((item) => item.id !== project.id));
+        setActiveId((current) => (current === project.id ? previousActiveId : current));
+      });
+    },
+    [activeId],
+  );
 
   const removeProject = useCallback(
     (id: string) => {
+      projectsMutationVersionRef.current += 1;
+      chatsMutationVersionRef.current += 1;
       const previousProject = projects.find((project) => project.id === id);
       const previousChats = chats[id] || [];
       const previousActiveId = activeId;
+      const changedSelection = activeId === id;
+      const selectionVersion = changedSelection ? ++selectionVersionRef.current : null;
       const previousActiveChat = activeChatByProject[id] || "";
       const chatIds = new Set((chats[id] || []).map((c) => c.id));
       const previousMessages = Object.fromEntries(
@@ -293,7 +337,9 @@ export function useProjectStore() {
         setChats((current) => ({ ...current, [id]: previousChats }));
         setMessagesByChat((current) => ({ ...current, ...previousMessages }));
         setActiveChatByProject((current) => ({ ...current, [id]: previousActiveChat }));
-        setActiveId(previousActiveId);
+        if (selectionVersionRef.current === selectionVersion) {
+          setActiveId(previousActiveId);
+        }
       });
     },
     [activeChatByProject, activeId, chats, messagesByChat, projects],
@@ -306,7 +352,10 @@ export function useProjectStore() {
       setMessagesByChat((current) => ({ ...current, [chatId]: [] }));
       api.deleteHistory(chatId).catch((error: unknown) => {
         setSyncError(syncErrorMessage("Failed to clear chat history", error));
-        setMessagesByChat((current) => ({ ...current, [chatId]: previousMessages }));
+        setMessagesByChat((current) => ({
+          ...current,
+          [chatId]: restoreMessagesAfterFailedClear(previousMessages, current[chatId] || []),
+        }));
       });
     },
     [messagesByChat],
