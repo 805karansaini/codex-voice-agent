@@ -73,7 +73,7 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
       }
       onCreate({ name: cleanName, path: resolved, color });
     } catch (err) {
-      if (err instanceof Error && err.message.includes("404")) {
+      if (err instanceof api.ApiError && err.status === 404) {
         setError(
           "That directory does not exist. Paste the full absolute path to an existing folder.",
         );

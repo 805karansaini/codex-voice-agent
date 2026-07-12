@@ -16,6 +16,16 @@ const configuredApiToken: unknown = import.meta.env?.VITE_API_TOKEN;
 export const API_BASE = typeof configuredApiBase === "string" ? configuredApiBase : "";
 const API_TOKEN = typeof configuredApiToken === "string" ? configuredApiToken : "";
 
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 function authHeaders(headers: HeadersInit = {}): HeadersInit {
   return API_TOKEN ? { ...headers, Authorization: `Bearer ${API_TOKEN}` } : headers;
 }
@@ -34,7 +44,7 @@ async function apiFetch(
     ...init,
     headers: authHeaders(init.headers),
   });
-  if (!res.ok) throw new Error(await errorDetail(res, errorMessage));
+  if (!res.ok) throw new ApiError(res.status, await errorDetail(res, errorMessage));
   return res;
 }
 
@@ -71,19 +81,29 @@ function jsonPost(body?: unknown): RequestInit {
 // this returns the raw response without throwing on non-OK status.
 function streamFetch(
   path: string,
-  options: StreamOptions,
+  options: ChatStreamOptions,
   signal?: AbortSignal,
 ): Promise<Response> {
   return fetch(`${API_BASE}${path}`, {
-    ...jsonPost(streamPayload(options)),
+    ...jsonPost(chatStreamPayload(options)),
     headers: authHeaders({ "Content-Type": "application/json" }),
     signal,
   });
 }
 
-function streamPayload(options: StreamOptions) {
+function codexJobPayload(options: CodexJobOptions) {
   return {
     task: options.task,
+    workdir: options.workdir,
+    project_id: options.projectId,
+    chat_id: options.chatId,
+    model: options.model,
+    reasoning_effort: options.reasoningEffort,
+  };
+}
+
+function chatStreamPayload(options: ChatStreamOptions) {
+  return {
     message: options.message,
     workdir: options.workdir,
     project_id: options.projectId,
@@ -264,15 +284,19 @@ export async function commitChangeReview(
   );
 }
 
-export interface StreamOptions {
-  task?: string;
-  message?: string;
-  workdir: string;
-  projectId: string;
-  chatId: string;
+interface ModelSelection {
   model?: string;
   reasoningEffort?: string;
 }
+
+interface ChatScope {
+  workdir: string;
+  projectId: string;
+  chatId: string;
+}
+
+export type CodexJobOptions = ChatScope & ModelSelection & { task: string };
+export type ChatStreamOptions = ChatScope & ModelSelection & { message: string };
 
 export async function fetchCodexModels(): Promise<CodexModel[]> {
   const response = await apiJson<{ models: CodexModel[] }>(
@@ -283,10 +307,10 @@ export async function fetchCodexModels(): Promise<CodexModel[]> {
   return response.models;
 }
 
-export async function enqueueCodexJob(options: StreamOptions): Promise<CodexJob> {
+export async function enqueueCodexJob(options: CodexJobOptions): Promise<CodexJob> {
   return apiJson(
     "/api/codex/jobs",
-    jsonPost(streamPayload(options)),
+    jsonPost(codexJobPayload(options)),
     "Failed to enqueue Codex job",
   );
 }
@@ -296,7 +320,7 @@ export async function fetchCodexJob(jobId: string): Promise<CodexJob> {
 }
 
 export async function postChatStream(
-  options: StreamOptions,
+  options: ChatStreamOptions,
   signal?: AbortSignal,
 ): Promise<Response> {
   return streamFetch("/api/chat/stream", options, signal);

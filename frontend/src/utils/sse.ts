@@ -1,8 +1,17 @@
 import type { ServerEvent } from "../types/protocol";
 import { parseServerEventJson } from "../types/protocol.ts";
 
-export async function readSseStream(res: Response, onEvent: (evt: ServerEvent) => void) {
-  if (!res.body) return;
+export type SseStreamSummary = {
+  receivedDone: boolean;
+  lastError: string;
+};
+
+export async function readSseStream(
+  res: Response,
+  onEvent: (evt: ServerEvent) => void,
+): Promise<SseStreamSummary> {
+  const summary: SseStreamSummary = { receivedDone: false, lastError: "" };
+  if (!res.body) return summary;
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -21,7 +30,12 @@ export async function readSseStream(res: Response, onEvent: (evt: ServerEvent) =
         .join("\n");
       if (!data) continue;
       const event = parseServerEventJson(data.trim());
-      if (event) onEvent(event);
+      if (event) {
+        if (event.type === "done") summary.receivedDone = true;
+        if (event.type === "error") summary.lastError = event.message || "Vodex failed.";
+        onEvent(event);
+      }
     }
   }
+  return summary;
 }

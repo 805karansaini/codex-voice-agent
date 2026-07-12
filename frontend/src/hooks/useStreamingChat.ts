@@ -2,8 +2,9 @@ import { useCallback } from "react";
 
 import * as api from "../services/api";
 import { watchCodexJob } from "../services/codexJobs";
-import type { ActionEntry, CodexTimelineEvent, Project } from "../types";
+import type { ActionEntry, Project } from "../types";
 import { appendArtifacts } from "../utils/artifacts";
+import { appendCodexEvent } from "../utils/codexEvents";
 import { readSseStream } from "../utils/sse";
 import type { useProjectStore } from "./useProjectStore";
 
@@ -21,17 +22,6 @@ type UseStreamingChatOptions = {
   playResponseAudio: (audioUrl: string) => Promise<void>;
   setError: (message: string) => void;
 };
-
-function appendCodexEvent(
-  events: CodexTimelineEvent[] | undefined,
-  event: CodexTimelineEvent,
-): CodexTimelineEvent[] {
-  const current = events || [];
-  const key = `${event.method}:${event.item_id || ""}:${event.turn_id || ""}`;
-  const existing = new Set(current.map((e) => `${e.method}:${e.item_id || ""}:${e.turn_id || ""}`));
-  if (existing.has(key)) return current;
-  return [...current, event].slice(-80);
-}
 
 export function useStreamingChat({
   store,
@@ -136,6 +126,11 @@ export function useStreamingChat({
             setError(message);
           },
           onError: (message) => {
+            store.updateMessage(chatId, assistantId, (current) => ({
+              ...current,
+              streaming: false,
+              text: current.text && !current.streaming ? current.text : message,
+            }));
             updateAction(actionId, { status: "failed", streamingResponse: message });
             setError(message);
           },
@@ -208,7 +203,7 @@ export function useStreamingChat({
           throw new Error(detail || "Vodex request failed");
         }
 
-        await readSseStream(res, (evt) => {
+        const streamSummary = await readSseStream(res, (evt) => {
           if (evt.type === "codex_event" && evt.event) {
             const event = evt.event;
             store.updateMessage(chatId, assistantId, (current) => ({
@@ -262,6 +257,7 @@ export function useStreamingChat({
                 status: "done",
                 workdir: String(evt.workdir || project.path),
               });
+              activeActionId = "";
             }
           } else if (evt.type === "done") {
             finalText = String(evt.text ?? finalText);
@@ -289,10 +285,17 @@ export function useStreamingChat({
                 status: "failed",
                 streamingResponse: String(evt.message || "Vodex failed"),
               });
+              activeActionId = "";
             }
             setError(String(evt.message || "Vodex failed"));
           }
         });
+
+        if (!streamSummary.receivedDone) {
+          throw new Error(
+            streamSummary.lastError || "Vodex connection ended before the response completed.",
+          );
+        }
 
         store.updateMessage(chatId, assistantId, (message) =>
           message.streaming ? { ...message, streaming: false } : message,
@@ -311,8 +314,19 @@ export function useStreamingChat({
               status: "failed",
               streamingResponse: "Cancelled by user.",
             });
+            activeActionId = "";
           }
           return;
+        }
+        const message = err instanceof Error ? err.message : "Vodex request failed.";
+        store.updateMessage(chatId, assistantId, (current) => ({
+          ...current,
+          streaming: false,
+          text: current.text || message,
+        }));
+        if (activeActionId) {
+          updateAction(activeActionId, { status: "failed", streamingResponse: message });
+          activeActionId = "";
         }
         throw err;
       } finally {

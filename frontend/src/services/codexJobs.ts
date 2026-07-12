@@ -22,6 +22,8 @@ type WatchCodexJobOptions = {
   loadJob?: (jobId: string) => Promise<CodexJob>;
   initialDelayMs?: number;
   pollIntervalMs?: number;
+  retryDelayMs?: number;
+  maxConsecutiveErrors?: number;
 };
 
 export async function watchCodexJob(
@@ -30,14 +32,19 @@ export async function watchCodexJob(
   options: WatchCodexJobOptions = {},
 ): Promise<void> {
   const loadJob = options.loadJob || fetchCodexJob;
+  const pollIntervalMs = options.pollIntervalMs ?? 1500;
+  const retryDelayMs = options.retryDelayMs ?? pollIntervalMs;
+  const maxConsecutiveErrors = Math.max(1, options.maxConsecutiveErrors ?? 3);
+  let consecutiveErrors = 0;
   await wait(options.initialDelayMs ?? 1000);
   while (handlers.isCurrent?.() !== false) {
     try {
       const job = await loadJob(jobId);
+      consecutiveErrors = 0;
       if (handlers.isCurrent?.() === false) return;
       if (job.status === "queued" || job.status === "running") {
         handlers.onProgress(job, codexJobProgress(job));
-        await wait(options.pollIntervalMs ?? 1500);
+        await wait(pollIntervalMs);
         continue;
       }
       if (job.status === "done") {
@@ -47,8 +54,13 @@ export async function watchCodexJob(
       handlers.onFailed(job, job.error || "Codex background task failed.");
       return;
     } catch (error) {
-      handlers.onError(error instanceof Error ? error.message : "Failed to poll Codex job");
-      return;
+      if (handlers.isCurrent?.() === false) return;
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= maxConsecutiveErrors) {
+        handlers.onError(error instanceof Error ? error.message : "Failed to poll Codex job");
+        return;
+      }
+      await wait(retryDelayMs);
     }
   }
 }

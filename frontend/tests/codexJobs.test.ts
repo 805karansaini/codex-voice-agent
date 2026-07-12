@@ -54,3 +54,58 @@ test("watchCodexJob reports progress and one terminal result", async () => {
 
   assert.deepEqual(events, ["progress:Building", "done:Passed"]);
 });
+
+test("watchCodexJob retries a transient polling failure", async () => {
+  let attempts = 0;
+  const events: string[] = [];
+
+  await watchCodexJob(
+    "job-1",
+    {
+      onProgress: () => undefined,
+      onDone: (_job, result) => events.push(`done:${result}`),
+      onFailed: (_job, message) => events.push(`failed:${message}`),
+      onError: (message) => events.push(`error:${message}`),
+    },
+    {
+      loadJob: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("temporary disconnect");
+        return job("done", { result: "Recovered" });
+      },
+      initialDelayMs: 0,
+      retryDelayMs: 0,
+      maxConsecutiveErrors: 2,
+    },
+  );
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(events, ["done:Recovered"]);
+});
+
+test("watchCodexJob reports an error after the retry budget is exhausted", async () => {
+  let attempts = 0;
+  const events: string[] = [];
+
+  await watchCodexJob(
+    "job-1",
+    {
+      onProgress: () => undefined,
+      onDone: () => undefined,
+      onFailed: () => undefined,
+      onError: (message) => events.push(message),
+    },
+    {
+      loadJob: async () => {
+        attempts += 1;
+        throw new Error("still offline");
+      },
+      initialDelayMs: 0,
+      retryDelayMs: 0,
+      maxConsecutiveErrors: 2,
+    },
+  );
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(events, ["still offline"]);
+});

@@ -61,3 +61,22 @@ test("readSseStream skips malformed and unknown frames and continues reading", a
 
   assert.deepEqual(events, [{ type: "status", message: "Working" }]);
 });
+
+test("readSseStream reports whether the stream reached a done event", async () => {
+  const incomplete = await readSseStream(
+    responseFromChunks(['data: {"type":"delta","text":"partial"}\n\n']),
+    () => undefined,
+  );
+  const failed = await readSseStream(
+    responseFromChunks(['data: {"type":"error","message":"connection lost"}\n\n']),
+    () => undefined,
+  );
+  const complete = await readSseStream(
+    responseFromChunks(['data: {"type":"done","text":"Done."}\n\n']),
+    () => undefined,
+  );
+
+  assert.deepEqual(incomplete, { receivedDone: false, lastError: "" });
+  assert.deepEqual(failed, { receivedDone: false, lastError: "connection lost" });
+  assert.deepEqual(complete, { receivedDone: true, lastError: "" });
+});
