@@ -149,6 +149,25 @@ class HistoryStore(_SQLiteStore):
             "meta": meta,
         }
 
+    @staticmethod
+    def _scope_filter(
+        project_id: str | None = None,
+        workdir: str | None = None,
+        chat_id: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value in (
+            ("project_id", project_id),
+            ("workdir", workdir),
+            ("chat_id", chat_id),
+        ):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where_clause, params
+
     def list(
         self,
         project_id: str | None = None,
@@ -157,37 +176,56 @@ class HistoryStore(_SQLiteStore):
     ) -> list[dict[str, Any]]:
         with self.lock:
             with self._connect() as conn:
-                query = "SELECT * FROM history"
-                params: list[Any] = []
-                if chat_id is not None:
-                    query += " WHERE chat_id = ?"
-                    params.append(chat_id)
-                elif project_id is not None:
-                    query += " WHERE project_id = ?"
-                    params.append(project_id)
-                elif workdir is not None:
-                    query += " WHERE workdir = ?"
-                    params.append(workdir)
+                where_clause, params = self._scope_filter(project_id, workdir, chat_id)
+                query = f"SELECT * FROM history{where_clause}"
                 query += " ORDER BY created_at ASC"
                 return [self._row_to_item(row) for row in conn.execute(query, params)]
+
+    def chat_ids(
+        self,
+        project_id: str | None = None,
+        workdir: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[str]:
+        """Return the distinct chats represented by a history scope."""
+        with self.lock:
+            with self._connect() as conn:
+                where_clause, params = self._scope_filter(project_id, workdir, chat_id)
+                joiner = " AND " if where_clause else " WHERE "
+                query = (
+                    f"SELECT DISTINCT chat_id FROM history{where_clause}{joiner}"
+                    "chat_id IS NOT NULL AND TRIM(chat_id) != '' ORDER BY chat_id"
+                )
+                return [str(row["chat_id"]) for row in conn.execute(query, params)]
 
     def chat_summaries(self, project_id: str | None = None) -> List[dict[str, Any]]:
         with self.lock:
             with self._connect() as conn:
                 query = """
                     SELECT
-                        chat_id,
-                        project_id,
-                        MIN(created_at) AS first_created_at,
-                        MIN(CASE WHEN role = 'user' THEN text END) AS first_user_text
-                    FROM history
-                    WHERE chat_id IS NOT NULL
+                        conversation.chat_id,
+                        conversation.project_id,
+                        MIN(conversation.created_at) AS first_created_at,
+                        (
+                            SELECT first_user.text
+                            FROM history AS first_user
+                            WHERE first_user.chat_id = conversation.chat_id
+                              AND first_user.project_id IS conversation.project_id
+                              AND first_user.role = 'user'
+                            ORDER BY first_user.created_at ASC, first_user.rowid ASC
+                            LIMIT 1
+                        ) AS first_user_text
+                    FROM history AS conversation
+                    WHERE conversation.chat_id IS NOT NULL
                 """
                 params: list[Any] = []
                 if project_id is not None:
-                    query += " AND project_id = ?"
+                    query += " AND conversation.project_id = ?"
                     params.append(project_id)
-                query += " GROUP BY chat_id, project_id ORDER BY first_created_at DESC"
+                query += (
+                    " GROUP BY conversation.chat_id, conversation.project_id"
+                    " ORDER BY first_created_at DESC"
+                )
                 rows = []
                 for row in conn.execute(query, params):
                     if not row["chat_id"] or not row["project_id"]:
@@ -270,21 +308,8 @@ class HistoryStore(_SQLiteStore):
     ) -> None:
         with self.lock:
             with self._connect() as conn:
-                if project_id is None and workdir is None and chat_id is None:
-                    conn.execute("DELETE FROM history")
-                    return
-                clauses = []
-                params: list[Any] = []
-                if chat_id is not None:
-                    clauses.append("chat_id = ?")
-                    params.append(chat_id)
-                if project_id is not None:
-                    clauses.append("project_id = ?")
-                    params.append(project_id)
-                if workdir is not None:
-                    clauses.append("workdir = ?")
-                    params.append(workdir)
-                conn.execute(f"DELETE FROM history WHERE {' OR '.join(clauses)}", params)
+                where_clause, params = self._scope_filter(project_id, workdir, chat_id)
+                conn.execute(f"DELETE FROM history{where_clause}", params)
 
 
 class ArtifactStore(_SQLiteStore):
@@ -361,7 +386,9 @@ class ArtifactStore(_SQLiteStore):
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_chat ON artifacts(chat_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_message ON artifacts(message_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_artifacts_message ON artifacts(message_id)"
+            )
 
     def _row_to_item(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
@@ -428,7 +455,9 @@ class ArtifactStore(_SQLiteStore):
                 )
         return item
 
-    def list(self, chat_id: str | None = None, message_id: str | None = None) -> list[dict[str, Any]]:
+    def list(
+        self, chat_id: str | None = None, message_id: str | None = None
+    ) -> list[dict[str, Any]]:
         with self.lock:
             with self._connect() as conn:
                 query = "SELECT * FROM artifacts"
@@ -467,11 +496,7 @@ class ArtifactStore(_SQLiteStore):
                         "message_id": row["message_id"],
                         "title": row["title"],
                         "snippet": _snippet(
-                            " ".join(
-                                part
-                                for part in (row["summary"], row["content"])
-                                if part
-                            ),
+                            " ".join(part for part in (row["summary"], row["content"]) if part),
                             value,
                         ),
                         "content_type": row["content_type"],
@@ -967,15 +992,21 @@ class ConsoleStore(_SQLiteStore):
                     "SELECT state_json FROM console_states WHERE chat_id = ?",
                     (chat_id,),
                 ).fetchone()
-        state = json.loads(row["state_json"]) if row else {"actions": [], "handoffs": [], "debugEntries": []}
+        state = (
+            json.loads(row["state_json"])
+            if row
+            else {"actions": [], "handoffs": [], "debugEntries": []}
+        )
         return self._mark_stale_running_actions(state)
 
     def put(self, chat_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        clean = self._mark_stale_running_actions({
-            "actions": list(state.get("actions") or [])[:16],
-            "handoffs": list(state.get("handoffs") or [])[:12],
-            "debugEntries": list(state.get("debugEntries") or [])[:40],
-        })
+        clean = self._mark_stale_running_actions(
+            {
+                "actions": list(state.get("actions") or [])[:16],
+                "handoffs": list(state.get("handoffs") or [])[:12],
+                "debugEntries": list(state.get("debugEntries") or [])[:40],
+            }
+        )
         with self.lock:
             with self._connect() as conn:
                 conn.execute(

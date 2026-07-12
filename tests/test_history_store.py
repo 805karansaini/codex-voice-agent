@@ -24,7 +24,9 @@ class HistoryStoreTests(unittest.TestCase):
             second = store.append("assistant", "hi", {"chat_id": "chat-1"})
 
             self.assertNotEqual(first["id"], second["id"])
-            self.assertEqual([item["id"] for item in store.list(chat_id="chat-1")], [first["id"], second["id"]])
+            self.assertEqual(
+                [item["id"] for item in store.list(chat_id="chat-1")], [first["id"], second["id"]]
+            )
 
     def test_history_scope_columns_are_queryable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -41,6 +43,193 @@ class HistoryStoreTests(unittest.TestCase):
             self.assertEqual(row, ("chat-1", "project-1", "/tmp/project-1"))
             self.assertEqual(len(store.list(project_id="project-1")), 1)
             self.assertEqual(len(store.list(workdir="/tmp/project-1")), 1)
+
+    def test_list_combines_all_provided_scope_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HistoryStore(Path(tmp) / "history.json")
+            matching = store.append(
+                "user",
+                "matching",
+                {
+                    "chat_id": "chat-1",
+                    "project_id": "project-1",
+                    "workdir": "/tmp/project-1",
+                },
+            )
+            store.append(
+                "user",
+                "different chat",
+                {
+                    "chat_id": "chat-2",
+                    "project_id": "project-1",
+                    "workdir": "/tmp/project-1",
+                },
+            )
+            store.append(
+                "user",
+                "different project",
+                {
+                    "chat_id": "chat-1",
+                    "project_id": "project-2",
+                    "workdir": "/tmp/project-1",
+                },
+            )
+            store.append(
+                "user",
+                "different workdir",
+                {
+                    "chat_id": "chat-1",
+                    "project_id": "project-1",
+                    "workdir": "/tmp/project-other",
+                },
+            )
+
+            rows = store.list(
+                project_id="project-1",
+                workdir="/tmp/project-1",
+                chat_id="chat-1",
+            )
+
+            self.assertEqual([item["id"] for item in rows], [matching["id"]])
+
+    def test_chat_ids_returns_distinct_chats_for_combined_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HistoryStore(Path(tmp) / "history.json")
+            matching_scope = {
+                "project_id": "project-1",
+                "workdir": "/tmp/project-1",
+            }
+            store.append("user", "first", {**matching_scope, "chat_id": "chat-2"})
+            store.append("assistant", "duplicate", {**matching_scope, "chat_id": "chat-2"})
+            store.append("user", "second", {**matching_scope, "chat_id": "chat-1"})
+            store.append(
+                "user",
+                "different project",
+                {
+                    "project_id": "project-2",
+                    "workdir": "/tmp/project-1",
+                    "chat_id": "chat-other-project",
+                },
+            )
+            store.append(
+                "user",
+                "different workdir",
+                {
+                    "project_id": "project-1",
+                    "workdir": "/tmp/project-other",
+                    "chat_id": "chat-other-workdir",
+                },
+            )
+            store.append("user", "unscoped chat", matching_scope)
+            store.append("user", "blank chat", {**matching_scope, "chat_id": ""})
+
+            self.assertEqual(
+                store.chat_ids(project_id="project-1", workdir="/tmp/project-1"),
+                ["chat-1", "chat-2"],
+            )
+            self.assertEqual(
+                store.chat_ids(project_id="project-1", chat_id="chat-2"),
+                ["chat-2"],
+            )
+
+    def test_clear_combines_scope_filters_without_removing_nearby_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HistoryStore(Path(tmp) / "history.json")
+            matching = store.append(
+                "user",
+                "remove me",
+                {
+                    "chat_id": "chat-1",
+                    "project_id": "project-1",
+                    "workdir": "/tmp/project-1",
+                },
+            )
+            retained = [
+                store.append(
+                    "user",
+                    "keep different chat",
+                    {
+                        "chat_id": "chat-2",
+                        "project_id": "project-1",
+                        "workdir": "/tmp/project-1",
+                    },
+                ),
+                store.append(
+                    "user",
+                    "keep different project",
+                    {
+                        "chat_id": "chat-1",
+                        "project_id": "project-2",
+                        "workdir": "/tmp/project-1",
+                    },
+                ),
+                store.append(
+                    "user",
+                    "keep different workdir",
+                    {
+                        "chat_id": "chat-1",
+                        "project_id": "project-1",
+                        "workdir": "/tmp/project-other",
+                    },
+                ),
+            ]
+
+            store.clear(
+                project_id="project-1",
+                workdir="/tmp/project-1",
+                chat_id="chat-1",
+            )
+
+            remaining_ids = {item["id"] for item in store.list()}
+            self.assertNotIn(matching["id"], remaining_ids)
+            self.assertEqual(remaining_ids, {item["id"] for item in retained})
+
+    def test_clear_preserves_single_scope_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HistoryStore(Path(tmp) / "history.json")
+            removed = store.append("user", "remove", {"project_id": "project-1"})
+            retained = store.append("user", "keep", {"project_id": "project-2"})
+
+            store.clear(project_id="project-1")
+
+            remaining_ids = {item["id"] for item in store.list()}
+            self.assertNotIn(removed["id"], remaining_ids)
+            self.assertEqual(remaining_ids, {retained["id"]})
+
+    def test_chat_summary_uses_first_user_message_by_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HistoryStore(Path(tmp) / "history.json")
+            assistant = store.append(
+                "assistant",
+                "How can I help?",
+                {"chat_id": "chat-1", "project_id": "project-1"},
+            )
+            first_user = store.append(
+                "user",
+                "Zulu request came first",
+                {"chat_id": "chat-1", "project_id": "project-1"},
+            )
+            later_user = store.append(
+                "user",
+                "Alpha request came later",
+                {"chat_id": "chat-1", "project_id": "project-1"},
+            )
+            timestamps = {
+                assistant["id"]: "2026-01-01T00:00:00+00:00",
+                first_user["id"]: "2026-01-01T00:01:00+00:00",
+                later_user["id"]: "2026-01-01T00:02:00+00:00",
+            }
+            with sqlite3.connect(store.path) as conn:
+                conn.executemany(
+                    "UPDATE history SET created_at = ? WHERE id = ?",
+                    [(created_at, item_id) for item_id, created_at in timestamps.items()],
+                )
+
+            summaries = store.chat_summaries(project_id="project-1")
+
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(summaries[0]["created_at"], timestamps[assistant["id"]])
+            self.assertEqual(summaries[0]["first_user_text"], first_user["text"])
 
     def test_existing_history_rows_backfill_scope_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -63,7 +252,13 @@ class HistoryStoreTests(unittest.TestCase):
                         "row-1",
                         "user",
                         "hello",
-                        json.dumps({"chat_id": "chat-1", "project_id": "project-1", "workdir": "/tmp/project-1"}),
+                        json.dumps(
+                            {
+                                "chat_id": "chat-1",
+                                "project_id": "project-1",
+                                "workdir": "/tmp/project-1",
+                            }
+                        ),
                         "2026-01-01T00:00:00+00:00",
                     ),
                 )
@@ -207,9 +402,7 @@ class CodexHandoffStoreTests(unittest.TestCase):
                 artifact_ids=["artifact-1", "artifact-2"],
             )
 
-            store.mark_delivery(
-                handoff["id"], "tool_response_failed_to_gemini", acknowledged=False
-            )
+            store.mark_delivery(handoff["id"], "tool_response_failed_to_gemini", acknowledged=False)
 
             pending = store.pending_for_chat("chat-1")
             self.assertEqual(len(pending), 1)
@@ -272,7 +465,9 @@ class CodexHandoffStoreTests(unittest.TestCase):
 
             store.acknowledge([])
 
-            self.assertEqual([item["id"] for item in store.pending_for_chat("chat-1")], [handoff["id"]])
+            self.assertEqual(
+                [item["id"] for item in store.pending_for_chat("chat-1")], [handoff["id"]]
+            )
 
 
 class ProjectStoreTests(unittest.TestCase):
@@ -351,7 +546,9 @@ class ConsoleStoreTests(unittest.TestCase):
 
             self.assertEqual(saved["actions"][0]["id"], "done")
             self.assertEqual(loaded["actions"][0]["id"], "done")
-            self.assertEqual(store.get("chat-1"), {"actions": [], "handoffs": [], "debugEntries": []})
+            self.assertEqual(
+                store.get("chat-1"), {"actions": [], "handoffs": [], "debugEntries": []}
+            )
 
 
 if __name__ == "__main__":
