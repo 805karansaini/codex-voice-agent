@@ -42,7 +42,7 @@ export default function ChatTopBar({
           <h1 className="truncate text-[15px] font-semibold tracking-[-0.015em]">{title}</h1>
           {messageCount > 0 && (
             <span className="shrink-0 rounded-full border border-line bg-surface-2 px-2 py-0.5 font-mono text-[10px] text-fg-muted">
-              {messageCount} turns
+              {messageCount} {messageCount === 1 ? "message" : "messages"}
             </span>
           )}
         </div>

@@ -39,10 +39,14 @@ export default function ConsoleStatsFooter({ messages }: ConsoleStatsFooterProps
           <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
             {messages.length}
           </span>
-          <span className="font-mono text-[9px] text-fg-dim">turns</span>
+          <span className="font-mono text-[9px] text-fg-dim">messages</span>
         </div>
       </div>
-      <div className="px-3 py-1.5 border-l border-line-soft">
+      <div
+        className="px-3 py-1.5 border-l border-line-soft"
+        title="Rough estimate based on message text length. Actual model context may differ."
+        aria-label={`Estimated context: approximately ${estimatedContextTokens.toLocaleString()} tokens. Rough estimate based on message text length; actual model context may differ.`}
+      >
         <div className="label text-[9px]">estimated context</div>
         <div className="mt-0.5 flex items-baseline gap-0.5">
           <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
@@ -52,7 +56,7 @@ export default function ConsoleStatsFooter({ messages }: ConsoleStatsFooterProps
         </div>
       </div>
       <div className="px-3 py-1.5 border-l border-line-soft">
-        <div className="label text-[9px]">vodex usage</div>
+        <div className="label text-[9px]">codex tokens</div>
         <div className="mt-0.5 flex items-baseline gap-0.5">
           <span className="font-mono text-[13px] font-semibold text-fg tabular-nums">
             {codexTokenTotal(messages).toLocaleString()}

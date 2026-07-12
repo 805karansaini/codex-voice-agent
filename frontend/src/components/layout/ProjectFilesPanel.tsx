@@ -205,6 +205,7 @@ export default function ProjectFilesPanel({
           </button>
           <button
             title="Refresh files"
+            aria-label={`Refresh files for ${project.name}`}
             onClick={() => void loadFiles()}
             className="grid h-7 w-7 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-accent"
           >

@@ -20,7 +20,14 @@ export default function ConsoleHeader({
   onBackToChat,
   onClear,
 }: ConsoleHeaderProps) {
-  const online = status.kind === "ready";
+  const statusText =
+    status.kind === "ready"
+      ? "online"
+      : status.kind === "missing_key"
+        ? "setup"
+        : status.kind === "checking"
+          ? "checking"
+          : "offline";
 
   return (
     <div className="flex items-center justify-between border-b border-line-soft px-3 py-2.5 shrink-0">
@@ -53,10 +60,14 @@ export default function ConsoleHeader({
           <span
             className={cn(
               "h-1.5 w-1.5 rounded-full pulse-dot",
-              online ? "bg-success" : "bg-danger",
+              status.kind === "ready"
+                ? "bg-success"
+                : status.kind === "missing_key" || status.kind === "checking"
+                  ? "bg-warn"
+                  : "bg-danger",
             )}
           />
-          {online ? "online" : "offline"}
+          {statusText}
         </span>
       </div>
     </div>
