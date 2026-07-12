@@ -1,9 +1,10 @@
+import AppErrorBoundary from "./components/common/AppErrorBoundary";
 import AppModals from "./components/layout/AppModals";
 import AppTitleBar from "./components/layout/AppTitleBar";
 import WorkspaceLayout from "./components/layout/WorkspaceLayout";
 import { useAppController } from "./hooks/useAppController";
 
-export function App() {
+function AppContent() {
   const { rootProps, titleBarProps, workspaceLayoutProps, modalProps } = useAppController();
 
   return (
@@ -14,4 +15,13 @@ export function App() {
     </div>
   );
 }
+
+export function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
+  );
+}
+
 export default App;

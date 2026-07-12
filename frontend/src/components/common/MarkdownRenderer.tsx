@@ -1,13 +1,16 @@
-import React, { useState } from "react";
-import { Copy, Check } from "lucide-react";
-import { highlightCode, languageForCodeFence } from "../../utils/syntaxHighlight";
+import React, { useEffect, useRef, useState } from "react";
+import { Check, CircleAlert, Copy } from "lucide-react";
 import { safeExternalUrl } from "../../utils/links";
+import { copyTextToClipboard } from "../../utils/clipboard";
+import { useSyntaxHighlight } from "../../hooks/useSyntaxHighlight";
 
 interface MarkdownRendererProps {
   content: string;
 }
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
+export const MarkdownRenderer = React.memo(function MarkdownRenderer({
+  content,
+}: MarkdownRendererProps) {
   if (!content) return null;
 
   // Split by code blocks
@@ -30,7 +33,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
       })}
     </div>
   );
-};
+});
 
 interface CodeBlockProps {
   language: string;
@@ -38,28 +41,61 @@ interface CodeBlockProps {
 }
 
 const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
-  const [copied, setCopied] = useState(false);
-  const highlightLanguage = languageForCodeFence(language);
-  const highlighted = highlightCode(code.trim(), highlightLanguage);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
+  const resetTimer = useRef<number | undefined>(undefined);
+  const { language: highlightLanguage, highlighted } = useSyntaxHighlight(
+    code.trim(),
+    language,
+    "fence",
+  );
 
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
+
+  const handleCopy = async () => {
+    window.clearTimeout(resetTimer.current);
+    setCopyStatus("copying");
+
+    const copied = await copyTextToClipboard(code);
+    setCopyStatus(copied ? "copied" : "failed");
+    resetTimer.current = window.setTimeout(() => setCopyStatus("idle"), copied ? 2000 : 3000);
   };
+
+  const copyLabel =
+    copyStatus === "copying"
+      ? "Copying…"
+      : copyStatus === "copied"
+        ? "Copied!"
+        : copyStatus === "failed"
+          ? "Copy failed"
+          : "Copy";
 
   return (
     <div className="code-block-wrapper">
       <div className="code-block-header">
         <span className="code-block-lang">{language || "text"}</span>
-        <button className="code-block-copy" onClick={handleCopy} title="Copy code">
-          {copied ? (
+        <button
+          type="button"
+          className="code-block-copy"
+          onClick={() => void handleCopy()}
+          disabled={copyStatus === "copying"}
+          title={copyStatus === "failed" ? "Unable to copy code. Try again." : "Copy code"}
+        >
+          {copyStatus === "copied" ? (
             <Check className="h-3.5 w-3.5" strokeWidth={3} />
+          ) : copyStatus === "failed" ? (
+            <CircleAlert className="h-3.5 w-3.5" />
           ) : (
             <Copy className="h-3.5 w-3.5" />
           )}
-          <span>{copied ? "Copied!" : "Copy"}</span>
+          <span>{copyLabel}</span>
         </button>
+        <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {copyStatus === "copied"
+            ? "Code copied to clipboard."
+            : copyStatus === "failed"
+              ? "Unable to copy code to the clipboard."
+              : ""}
+        </span>
       </div>
       <pre className="code-block-pre file-preview">
         <code

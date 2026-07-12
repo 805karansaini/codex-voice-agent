@@ -3,8 +3,16 @@ import { useEffect, useState } from "react";
 
 import type { Project } from "../../types";
 import * as api from "../../services/api";
-import { highlightCode, languageForPath } from "../../utils/syntaxHighlight";
+import { useSyntaxHighlight } from "../../hooks/useSyntaxHighlight";
 import MarkdownRenderer from "../common/MarkdownRenderer";
+
+type FileLoadState = {
+  projectId: string;
+  path: string;
+  loading: boolean;
+  content: string;
+  error: string;
+};
 
 export default function FileReaderPanel({
   project,
@@ -19,27 +27,46 @@ export default function FileReaderPanel({
   isMobile?: boolean;
   onClose: () => void;
 }) {
-  const [content, setContent] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [fileState, setFileState] = useState<FileLoadState>(() => ({
+    projectId: project.id,
+    path,
+    loading: true,
+    content: "",
+    error: "",
+  }));
 
   useEffect(() => {
     let cancelled = false;
-    setContent("");
-    setError("");
-    setLoading(true);
+    setFileState({
+      projectId: project.id,
+      path,
+      loading: true,
+      content: "",
+      error: "",
+    });
     api
       .fetchProjectFileContent(project.id, path)
       .then((result) => {
-        if (!cancelled) setContent(result.content);
+        if (!cancelled) {
+          setFileState({
+            projectId: project.id,
+            path,
+            loading: false,
+            content: result.content,
+            error: "",
+          });
+        }
       })
       .catch((reason) => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Could not load file");
+          setFileState({
+            projectId: project.id,
+            path,
+            loading: false,
+            content: "",
+            error: reason instanceof Error ? reason.message : "Could not load file",
+          });
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
 
     return () => {
@@ -47,9 +74,12 @@ export default function FileReaderPanel({
     };
   }, [path, project.id]);
 
+  const currentFile = fileState.projectId === project.id && fileState.path === path;
+  const content = currentFile ? fileState.content : "";
+  const error = currentFile ? fileState.error : "";
+  const loading = !currentFile || fileState.loading;
   const markdown = /\.mdx?$/i.test(path);
-  const language = languageForPath(path);
-  const highlighted = highlightCode(content, language);
+  const { language, highlighted } = useSyntaxHighlight(markdown ? "" : content, path, "path");
   return (
     <aside
       style={{ width: isMobile ? "100%" : `${width}px` }}
@@ -60,6 +90,7 @@ export default function FileReaderPanel({
         <span className="min-w-0 flex-1 truncate text-xs font-medium">{path}</span>
         <button
           title="Close file"
+          aria-label={`Close ${path}`}
           onClick={onClose}
           className="grid h-7 w-7 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
         >

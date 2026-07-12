@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { Check, ChevronDown, ChevronRight, Clipboard, FileCode2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, ChevronRight, CircleAlert, Clipboard, FileCode2 } from "lucide-react";
 
 import MarkdownRenderer from "../common/MarkdownRenderer";
 import { ChatArtifact } from "../../types";
 import { cn } from "../../utils";
+import { copyTextToClipboard } from "../../utils/clipboard";
 
 export default function ArtifactCard({
   artifact,
@@ -14,19 +15,35 @@ export default function ArtifactCard({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [raw, setRaw] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
+  const resetTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
 
   const copyArtifact = async () => {
-    await navigator.clipboard.writeText(artifact.content || "");
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
+    window.clearTimeout(resetTimer.current);
+    setCopyStatus("copying");
+
+    const copied = await copyTextToClipboard(artifact.content || "");
+    setCopyStatus(copied ? "copied" : "failed");
+    resetTimer.current = window.setTimeout(() => setCopyStatus("idle"), copied ? 1600 : 3000);
   };
+
+  const copyLabel =
+    copyStatus === "copying"
+      ? "Copying…"
+      : copyStatus === "copied"
+        ? "Copied"
+        : copyStatus === "failed"
+          ? "Copy failed"
+          : "Copy";
 
   return (
     <div className="mt-3 overflow-hidden rounded-lg border border-line bg-surface-1">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
         className="flex w-full items-start gap-3 px-3.5 py-3 text-left transition-colors hover:bg-surface-2"
       >
         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line bg-surface-2 text-accent">
@@ -58,6 +75,7 @@ export default function ArtifactCard({
               <button
                 type="button"
                 onClick={() => setRaw(false)}
+                aria-pressed={!raw}
                 className={cn(
                   "rounded px-2 py-1 text-[11px]",
                   !raw ? "bg-accent text-accent-foreground" : "text-fg-muted",
@@ -68,6 +86,7 @@ export default function ArtifactCard({
               <button
                 type="button"
                 onClick={() => setRaw(true)}
+                aria-pressed={raw}
                 className={cn(
                   "rounded px-2 py-1 text-[11px]",
                   raw ? "bg-accent text-accent-foreground" : "text-fg-muted",
@@ -79,11 +98,26 @@ export default function ArtifactCard({
             <button
               type="button"
               onClick={() => void copyArtifact()}
+              disabled={copyStatus === "copying"}
+              title={copyStatus === "failed" ? "Unable to copy this output. Try again." : undefined}
               className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-[11px] text-fg-muted hover:text-fg"
             >
-              {copied ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
-              {copied ? "Copied" : "Copy"}
+              {copyStatus === "copied" ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : copyStatus === "failed" ? (
+                <CircleAlert className="h-3.5 w-3.5" />
+              ) : (
+                <Clipboard className="h-3.5 w-3.5" />
+              )}
+              {copyLabel}
             </button>
+            <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+              {copyStatus === "copied"
+                ? "Output copied to clipboard."
+                : copyStatus === "failed"
+                  ? "Unable to copy this output to the clipboard."
+                  : ""}
+            </span>
           </div>
           <div className="max-h-[520px] overflow-auto border-t border-line px-3.5 py-3">
             {raw ? (
