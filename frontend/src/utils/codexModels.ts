@@ -12,3 +12,20 @@ export function defaultReasoningEffort(model: CodexModel | undefined): string {
   }
   return supported[0] ?? "";
 }
+
+export function reconcileCodexSelection(
+  models: CodexModel[],
+  currentModel: string,
+  currentReasoningEffort: string,
+): { model: string; reasoningEffort: string } {
+  const selected =
+    models.find((model) => model.model === currentModel) ?? defaultCodexModel(models);
+  if (!selected) return { model: "", reasoningEffort: "" };
+  const supported = selected.supportedReasoningEfforts.map((effort) => effort.reasoningEffort);
+  return {
+    model: selected.model,
+    reasoningEffort: supported.includes(currentReasoningEffort)
+      ? currentReasoningEffort
+      : defaultReasoningEffort(selected),
+  };
+}
