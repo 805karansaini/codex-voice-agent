@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from backend.app.codex_runner import _normalize_event
+from backend.app.codex_runner import _enable_ultra_reasoning_effort, _normalize_event
 
 
 class FakePayload:
@@ -16,6 +16,13 @@ class FakePayload:
 
 
 class CodexEventTests(unittest.TestCase):
+    def test_codex_sdk_accepts_ultra_reasoning_effort(self) -> None:
+        from openai_codex.generated.v2_all import ReasoningEffort
+
+        _enable_ultra_reasoning_effort()
+
+        self.assertEqual(ReasoningEffort("ultra").value, "ultra")
+
     def test_token_usage_event_keeps_compact_usage(self) -> None:
         event = SimpleNamespace(method="thread/tokenUsage/updated", payload=FakePayload())
 

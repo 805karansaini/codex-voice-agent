@@ -19,6 +19,21 @@ def _installed_codex_bin() -> str | None:
     return shutil.which("codex")
 
 
+def _enable_ultra_reasoning_effort() -> None:
+    """Bridge Codex's newer ultra mode until openai-codex includes it."""
+    from openai_codex.generated.v2_all import ReasoningEffort
+
+    if "ultra" in ReasoningEffort._value2member_map_:
+        return
+
+    ultra = object.__new__(ReasoningEffort)
+    ultra._name_ = "ultra"
+    ultra._value_ = "ultra"
+    ReasoningEffort._member_map_["ultra"] = ultra
+    ReasoningEffort._member_names_.append("ultra")
+    ReasoningEffort._value2member_map_["ultra"] = ultra
+
+
 class _InterruptibleTurn(Protocol):
     async def interrupt(self) -> None: ...
 
@@ -373,6 +388,7 @@ async def _get_thread_session_locked(
     model: str | None = None,
     reasoning_effort: str | None = None,
 ) -> _ThreadSession:
+    _enable_ultra_reasoning_effort()
     from openai_codex import AsyncCodex, CodexConfig
 
     root = resolve_workdir(workdir)
