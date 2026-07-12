@@ -3,7 +3,9 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path, PurePosixPath
-from typing import Protocol, TypedDict
+from typing import Protocol
+
+from typing_extensions import TypedDict
 
 from ..codex_runner import resolve_workdir
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Protocol
 
@@ -35,7 +36,7 @@ def create_router(
     @router.post("/api/change-review/revert")
     async def revert_change_review(req: ChangeReviewRevertRequest) -> RevertResult:
         try:
-            result = revert_changed_files(req.workdir, req.files)
+            result = await asyncio.to_thread(revert_changed_files, req.workdir, req.files)
         except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         write_log(
@@ -48,7 +49,9 @@ def create_router(
     @router.post("/api/change-review/commit")
     async def commit_change_review(req: ChangeReviewCommitRequest) -> CommitResult:
         try:
-            result = commit_changed_files(req.workdir, req.files, req.message)
+            result = await asyncio.to_thread(
+                commit_changed_files, req.workdir, req.files, req.message
+            )
         except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         write_log(
