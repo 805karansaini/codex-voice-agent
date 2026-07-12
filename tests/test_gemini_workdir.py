@@ -12,7 +12,9 @@ class GeminiWorkdirTests(unittest.TestCase):
             subdir = root / "services" / "api"
             subdir.mkdir(parents=True)
 
-            self.assertEqual(_resolve_tool_workdir(str(subdir), str(root), str(root)), str(subdir.resolve()))
+            self.assertEqual(
+                _resolve_tool_workdir(str(subdir), str(root), str(root)), str(subdir.resolve())
+            )
 
     def test_tool_workdir_cannot_escape_project_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

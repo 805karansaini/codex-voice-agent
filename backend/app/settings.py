@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
 

@@ -13,6 +13,7 @@ dependencies = [
     "python-dotenv==1.1.1",
     "pydantic>=2.12",
     "pydantic-settings>=2.10",
+    "typing-extensions>=4.12",
 ]
 
 [tool.uv]
@@ -23,14 +24,14 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "B"]
+select = ["E", "F", "B", "I"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["backend"]
 
 [tool.pyright]
-include = ["backend/app", "tests"]
+include = ["backend/app", "tests", "run.py"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 

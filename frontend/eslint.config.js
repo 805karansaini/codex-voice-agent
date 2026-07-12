@@ -45,7 +45,18 @@ export default tseslint.config(
   },
   {
     files: ["tests/**/*.ts"],
-    extends: [tseslint.configs.disableTypeChecked],
+    extends: [tseslint.configs.recommendedTypeChecked],
+    languageOptions: {
+      globals: nodeGlobals,
+      parserOptions: {
+        project: ["./tsconfig.test.json"],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "off",
+      "@typescript-eslint/require-await": "off",
+    },
   },
   {
     files: ["scripts/**/*.mjs"],
@@ -82,8 +93,6 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
-      "react-hooks/immutability": "off",
-      "react-hooks/refs": "off",
       "react-hooks/set-state-in-effect": "off",
       "@typescript-eslint/no-unused-vars": [
         "warn",

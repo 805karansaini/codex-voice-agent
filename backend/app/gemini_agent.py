@@ -8,10 +8,9 @@ from typing import Any, AsyncIterator, cast
 from google import genai
 from google.genai import types
 
-from .codex_runner import run_codex_stream_with_timer, CancellationToken
+from .codex_runner import CancellationToken, run_codex_stream_with_timer
 from .prompting import improve_codex_task_prompt
 from .settings import Settings
-
 
 SYSTEM_INSTRUCTION = """
 You are a voice-first local work assistant. Your spoken replies must be short, factual, and honest.

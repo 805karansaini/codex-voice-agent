@@ -1,7 +1,6 @@
 import re
 from typing import Any
 
-
 _TOOL_CALL_PATTERNS = [
     # Multiline: "run_codex_task\ntask: ...\nworkdir: ..."
     re.compile(
@@ -29,9 +28,7 @@ def _sanitize_assistant_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def build_recent_conversation_context(
-    rows: list[dict[str, Any]], limit: int = 5
-) -> str:
+def build_recent_conversation_context(rows: list[dict[str, Any]], limit: int = 5) -> str:
     relevant = []
     for row in rows[-limit:]:
         role = str(row.get("role") or "").strip()
