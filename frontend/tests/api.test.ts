@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
   ApiError,
+  describeRequestFailure,
   enqueueCodexJob,
   fetchCodingHarnesses,
   fetchHealth,
+  NO_RESPONSE_STATUS,
+  TIMEOUT_STATUS,
 } from "../src/services/api.ts";
 
 test("coding agent discovery returns Claude and Codex options", async () => {
@@ -95,6 +98,60 @@ test("API errors preserve the HTTP status and backend detail", async () => {
       assert.ok(error instanceof ApiError);
       assert.equal(error.status, 404);
       assert.equal(error.message, "Project folder not found");
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a network failure is reported as an unreachable backend", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError("Failed to fetch");
+  };
+
+  try {
+    await assert.rejects(fetchHealth(), (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, NO_RESPONSE_STATUS);
+      assert.match(error.message, /Could not reach the Vodex backend/);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a request that outlives its timeout is reported as a timeout", () => {
+  const timeout = new Error("The operation was aborted due to timeout");
+  timeout.name = "TimeoutError";
+
+  const described = describeRequestFailure(timeout);
+  assert.ok(described instanceof ApiError);
+  assert.equal(described.status, TIMEOUT_STATUS);
+  assert.match(described.message, /did not respond in time/);
+});
+
+test("a deliberate cancellation is passed through untouched", () => {
+  const aborted = new Error("The user aborted a request");
+  aborted.name = "AbortError";
+
+  assert.equal(describeRequestFailure(aborted), aborted);
+});
+
+test("a non-JSON success response is reported as a request failure", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response("<html>proxy error</html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    });
+
+  try {
+    await assert.rejects(fetchHealth(), (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.match(error.message, /unreadable response/);
       return true;
     });
   } finally {

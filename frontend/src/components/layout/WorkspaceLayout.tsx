@@ -4,7 +4,12 @@ import type { ConsoleTabId } from "../../hooks/useConsolePanelState";
 import type { BackendStatus } from "../../hooks/useBackendStatus";
 import type { BackendRecoveryState } from "../../utils/backendRecovery";
 import { hasActiveBackgroundJob, isVoiceControlDisabled } from "../../utils/controlAvailability";
-import type { MobileView } from "../../hooks/useAppLayout";
+import {
+  FILE_VIEWER_WIDTH_BOUNDS,
+  PANEL_WIDTH_BOUNDS,
+  RAIL_WIDTH_BOUNDS,
+  type MobileView,
+} from "../../hooks/useAppLayout";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 import type {
   ActionEntry,
@@ -20,7 +25,9 @@ import type {
   Message,
   Project,
 } from "../../types";
+import PanelErrorBoundary from "../common/PanelErrorBoundary";
 import ActivityRail from "./ActivityRail";
+import PanelResizer from "./PanelResizer";
 import WorkspaceSidebar from "./WorkspaceSidebar";
 import ProjectFilesPanel from "./ProjectFilesPanel";
 import FileReaderPanel from "./FileReaderPanel";
@@ -115,6 +122,9 @@ export type WorkspaceLayoutProps = {
     onStartRailDrag: (event: MouseEvent) => void;
     onStartPanelDrag: (event: MouseEvent) => void;
     onStartFileViewerDrag: (event: MouseEvent) => void;
+    onResizeRail: (width: number) => void;
+    onResizePanel: (width: number) => void;
+    onResizeFileViewer: (width: number) => void;
     onModeChange: (mode: ChatMode) => void;
     onExportChat: () => void;
     onToggleVoice: () => void;
@@ -235,6 +245,9 @@ export default function WorkspaceLayout({
     onStartRailDrag,
     onStartPanelDrag,
     onStartFileViewerDrag,
+    onResizeRail,
+    onResizePanel,
+    onResizeFileViewer,
     onModeChange,
     onExportChat,
     onToggleVoice,
@@ -281,195 +294,221 @@ export default function WorkspaceLayout({
       )}
 
       {activityView === "chats" && (!isMobile ? railOpen : mobileView === "explorer") && (
-        <WorkspaceSidebar
-          isMobile={isMobile}
-          width={railWidth}
-          projects={projects}
-          chats={chats}
-          activeProjectId={activeProjectId}
-          activeChatByProject={activeChatByProject}
-          expandedProjects={expandedProjects}
-          visibleChatsCount={visibleChatsCount}
-          theme={theme}
-          activeView={activityView}
-          onAddProject={onNewProject}
-          onToggleProject={onToggleProject}
-          onCreateChat={onCreateChat}
-          onRemoveProject={onRemoveProject}
-          onSelectChat={onSelectChat}
-          onRenameChat={onRenameChat}
-          onRemoveChat={onRemoveChat}
-          onShowMoreChats={onShowMoreChats}
-          onToggleTheme={onToggleTheme}
-          onOpenVoiceSettings={onOpenVoiceSettings}
-          onViewChange={onActivityViewChange}
-          onChatKeyDown={onChatKeyDown}
-        />
+        <PanelErrorBoundary name="Workspace">
+          <WorkspaceSidebar
+            isMobile={isMobile}
+            width={railWidth}
+            projects={projects}
+            chats={chats}
+            activeProjectId={activeProjectId}
+            activeChatByProject={activeChatByProject}
+            expandedProjects={expandedProjects}
+            visibleChatsCount={visibleChatsCount}
+            theme={theme}
+            activeView={activityView}
+            onAddProject={onNewProject}
+            onToggleProject={onToggleProject}
+            onCreateChat={onCreateChat}
+            onRemoveProject={onRemoveProject}
+            onSelectChat={onSelectChat}
+            onRenameChat={onRenameChat}
+            onRemoveChat={onRemoveChat}
+            onShowMoreChats={onShowMoreChats}
+            onToggleTheme={onToggleTheme}
+            onOpenVoiceSettings={onOpenVoiceSettings}
+            onViewChange={onActivityViewChange}
+            onChatKeyDown={onChatKeyDown}
+          />
+        </PanelErrorBoundary>
       )}
 
       {activityView === "files" &&
         (!isMobile || mobileView === "files") &&
         (isMobile && openFilePath && activeProject ? (
-          <FileReaderPanel
-            project={activeProject}
-            path={openFilePath}
-            width={railWidth}
-            isMobile
-            onClose={() => setOpenFilePath("")}
-          />
+          <PanelErrorBoundary name="File viewer">
+            <FileReaderPanel
+              project={activeProject}
+              path={openFilePath}
+              width={railWidth}
+              isMobile
+              onClose={() => setOpenFilePath("")}
+            />
+          </PanelErrorBoundary>
         ) : (
-          <ProjectFilesPanel
-            project={activeProject}
-            width={railWidth}
-            isMobile={isMobile}
-            onOpenFile={isMobile ? setOpenFilePath : undefined}
-          />
+          <PanelErrorBoundary name="Project files">
+            <ProjectFilesPanel
+              project={activeProject}
+              width={railWidth}
+              isMobile={isMobile}
+              onOpenFile={isMobile ? setOpenFilePath : undefined}
+            />
+          </PanelErrorBoundary>
         ))}
 
       {!isMobile && railOpen && (
-        <div
-          className="w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent transition-colors bg-line-soft shrink-0"
-          onMouseDown={onStartRailDrag}
+        <PanelResizer
+          label="Resize workspace sidebar"
+          width={railWidth}
+          bounds={RAIL_WIDTH_BOUNDS}
+          direction="grow-right"
+          onDragStart={onStartRailDrag}
+          onResize={onResizeRail}
         />
       )}
 
       {(!isMobile || mobileView === "chat") && (
-        <ChatPanel
-          isMobile={isMobile}
-          title={activeChatTitle || "No Thread Selected"}
-          messageCount={messages.length}
-          mode={mode}
-          onModeChange={onModeChange}
-          onExport={onExportChat}
-          exportDisabled={!activeChatId || messages.length === 0}
-          voiceSupported={voiceSupported}
-          voiceActive={voiceActive}
-          voiceReconnecting={voiceReconnecting}
-          codexActive={codexActive}
-          voiceDisabled={isVoiceControlDisabled({
-            voiceActive,
-            hasProject: Boolean(activeProject),
-            busy,
-            statusKind: status.kind,
-          })}
-          onToggleVoice={onToggleVoice}
-          busy={busy}
-          activeProject={activeProject}
-          messages={messages}
-          suggestions={suggestions}
-          scrollContainerRef={scrollContainerRef}
-          messageEndRef={messageEndRef}
-          showJumpToLatest={showJumpToLatest}
-          onAddProject={onNewProject}
-          onSuggestion={onSuggestion}
-          onCommitChangeReview={onCommitChangeReview}
-          onRevertChangeReview={onRevertChangeReview}
-          liveStatusText={liveStatusText}
-          streamingStatusText={streamingStatusText}
-          voiceTitle={voiceTitle}
-          voiceMessage={voiceMessage}
-          voiceContextLabel={voiceContextLabel}
-          voiceTranscriptPreview={voiceTranscriptPreview}
-          voiceMuted={voiceMuted}
-          voiceInputMode={voiceInputMode}
-          input={input}
-          hasActiveProject={Boolean(activeProject)}
-          error={error}
-          failedRequestError={failedRequestError}
-          failedRequestText={failedRequestText}
-          failedRequestCount={failedRequestCount}
-          backendStatus={status}
-          backendRecoveryState={backendRecoveryState}
-          codexModels={chat.codexModels}
-          codingHarnesses={chat.codingHarnesses}
-          codingHarness={chat.codingHarness}
-          codexModel={chat.codexModel}
-          codexReasoningEffort={chat.codexReasoningEffort}
-          textareaRef={textareaRef}
-          onInputChange={onInputChange}
-          onSubmit={onSubmit}
-          onCancelTask={onCancelTask}
-          onRestoreFailedRequest={onRestoreFailedRequest}
-          onDismissError={onDismissError}
-          onDismissFailedRequest={onDismissFailedRequest}
-          onRetryBackend={onRetryBackend}
-          onJumpToLatest={onJumpToLatest}
-          onCodexModelChange={handlers.onCodexModelChange}
-          onCodingHarnessChange={handlers.onCodingHarnessChange}
-          onCodexReasoningEffortChange={handlers.onCodexReasoningEffortChange}
-          onToggleMute={onToggleMute}
-          onHoldToTalk={onHoldToTalk}
-          onReleaseToMute={onReleaseToMute}
-        />
+        <PanelErrorBoundary name="Chat">
+          <ChatPanel
+            isMobile={isMobile}
+            title={activeChatTitle || "No Thread Selected"}
+            messageCount={messages.length}
+            mode={mode}
+            onModeChange={onModeChange}
+            onExport={onExportChat}
+            exportDisabled={!activeChatId || messages.length === 0}
+            voiceSupported={voiceSupported}
+            voiceActive={voiceActive}
+            voiceReconnecting={voiceReconnecting}
+            codexActive={codexActive}
+            voiceDisabled={isVoiceControlDisabled({
+              voiceActive,
+              hasProject: Boolean(activeProject),
+              busy,
+              statusKind: status.kind,
+            })}
+            onToggleVoice={onToggleVoice}
+            busy={busy}
+            activeProject={activeProject}
+            messages={messages}
+            suggestions={suggestions}
+            scrollContainerRef={scrollContainerRef}
+            messageEndRef={messageEndRef}
+            showJumpToLatest={showJumpToLatest}
+            onAddProject={onNewProject}
+            onSuggestion={onSuggestion}
+            onCommitChangeReview={onCommitChangeReview}
+            onRevertChangeReview={onRevertChangeReview}
+            liveStatusText={liveStatusText}
+            streamingStatusText={streamingStatusText}
+            voiceTitle={voiceTitle}
+            voiceMessage={voiceMessage}
+            voiceContextLabel={voiceContextLabel}
+            voiceTranscriptPreview={voiceTranscriptPreview}
+            voiceMuted={voiceMuted}
+            voiceInputMode={voiceInputMode}
+            input={input}
+            hasActiveProject={Boolean(activeProject)}
+            error={error}
+            failedRequestError={failedRequestError}
+            failedRequestText={failedRequestText}
+            failedRequestCount={failedRequestCount}
+            backendStatus={status}
+            backendRecoveryState={backendRecoveryState}
+            codexModels={chat.codexModels}
+            codingHarnesses={chat.codingHarnesses}
+            codingHarness={chat.codingHarness}
+            codexModel={chat.codexModel}
+            codexReasoningEffort={chat.codexReasoningEffort}
+            textareaRef={textareaRef}
+            onInputChange={onInputChange}
+            onSubmit={onSubmit}
+            onCancelTask={onCancelTask}
+            onRestoreFailedRequest={onRestoreFailedRequest}
+            onDismissError={onDismissError}
+            onDismissFailedRequest={onDismissFailedRequest}
+            onRetryBackend={onRetryBackend}
+            onJumpToLatest={onJumpToLatest}
+            onCodexModelChange={handlers.onCodexModelChange}
+            onCodingHarnessChange={handlers.onCodingHarnessChange}
+            onCodexReasoningEffortChange={handlers.onCodexReasoningEffortChange}
+            onToggleMute={onToggleMute}
+            onHoldToTalk={onHoldToTalk}
+            onReleaseToMute={onReleaseToMute}
+          />
+        </PanelErrorBoundary>
       )}
 
-      {!isMobile && (panelOpen || filePanelOpen) && (
-        <div
-          role="separator"
-          aria-label={
-            filePanelOpen && openFilePath
-              ? "Resize file viewer"
-              : filePanelOpen
-                ? "Resize file tree"
-                : "Resize console panel"
-          }
-          aria-orientation="vertical"
-          className="w-2 cursor-col-resize shrink-0 bg-line-soft transition-colors hover:bg-accent/40 active:bg-accent"
-          onMouseDown={filePanelOpen && openFilePath ? onStartFileViewerDrag : onStartPanelDrag}
-        />
-      )}
+      {!isMobile &&
+        (panelOpen || filePanelOpen) &&
+        (filePanelOpen && openFilePath ? (
+          <PanelResizer
+            label="Resize file viewer"
+            width={fileViewerWidth}
+            bounds={FILE_VIEWER_WIDTH_BOUNDS}
+            direction="grow-left"
+            onDragStart={onStartFileViewerDrag}
+            onResize={onResizeFileViewer}
+          />
+        ) : (
+          <PanelResizer
+            label={filePanelOpen ? "Resize file tree" : "Resize console panel"}
+            width={panelWidth}
+            bounds={PANEL_WIDTH_BOUNDS}
+            direction="grow-left"
+            onDragStart={onStartPanelDrag}
+            onResize={onResizePanel}
+          />
+        ))}
 
       {!isMobile && filePanelOpen ? (
         <>
           {openFilePath && activeProject && (
             <>
-              <FileReaderPanel
-                project={activeProject}
-                path={openFilePath}
-                width={fileViewerWidth}
-                onClose={() => setOpenFilePath("")}
-              />
-              <div
-                role="separator"
-                aria-label="Resize file tree"
-                aria-orientation="vertical"
-                className="w-2 cursor-col-resize shrink-0 bg-line-soft transition-colors hover:bg-accent/40 active:bg-accent"
-                onMouseDown={onStartPanelDrag}
+              <PanelErrorBoundary name="File viewer">
+                <FileReaderPanel
+                  project={activeProject}
+                  path={openFilePath}
+                  width={fileViewerWidth}
+                  onClose={() => setOpenFilePath("")}
+                />
+              </PanelErrorBoundary>
+              <PanelResizer
+                label="Resize file tree"
+                width={panelWidth}
+                bounds={PANEL_WIDTH_BOUNDS}
+                direction="grow-left"
+                onDragStart={onStartPanelDrag}
+                onResize={onResizePanel}
               />
             </>
           )}
-          <ProjectFilesPanel
-            project={activeProject}
-            width={panelWidth}
-            onOpenFile={setOpenFilePath}
-          />
+          <PanelErrorBoundary name="Project files">
+            <ProjectFilesPanel
+              project={activeProject}
+              width={panelWidth}
+              onOpenFile={setOpenFilePath}
+            />
+          </PanelErrorBoundary>
         </>
       ) : (
         (!isMobile ? panelOpen : mobileView === "console") && (
-          <ConsolePanel
-            isMobile={isMobile}
-            width={panelWidth}
-            status={status}
-            canClear={Boolean(activeChatId) && !busy && !hasActiveBackgroundJob(messages)}
-            activeTab={activeConsoleTab}
-            debugEntries={debugEntries}
-            actions={actions}
-            handoffs={handoffs}
-            messages={messages}
-            doctorChecks={doctorChecks}
-            voices={voices}
-            selectedVoiceURI={selectedVoiceURI}
-            voiceInputMode={voiceInputMode}
-            pendingAudioUrl={pendingAudioUrl}
-            onHide={onHideConsole}
-            onBackToChat={onBackToChat}
-            onClear={onClearThread}
-            onTabChange={onConsoleTabChange}
-            onRefreshDoctor={onRefreshDoctor}
-            onSelectedVoiceChange={onSelectedVoiceChange}
-            onVoiceInputModeChange={onVoiceInputModeChange}
-            onPlayResponseAudio={onPlayResponseAudio}
-          />
+          <PanelErrorBoundary name="Console">
+            <ConsolePanel
+              isMobile={isMobile}
+              width={panelWidth}
+              status={status}
+              canClear={Boolean(activeChatId) && !busy && !hasActiveBackgroundJob(messages)}
+              activeTab={activeConsoleTab}
+              debugEntries={debugEntries}
+              actions={actions}
+              handoffs={handoffs}
+              messages={messages}
+              codingHarnesses={chat.codingHarnesses}
+              doctorChecks={doctorChecks}
+              voices={voices}
+              selectedVoiceURI={selectedVoiceURI}
+              voiceInputMode={voiceInputMode}
+              pendingAudioUrl={pendingAudioUrl}
+              onHide={onHideConsole}
+              onBackToChat={onBackToChat}
+              onClear={onClearThread}
+              onTabChange={onConsoleTabChange}
+              onRefreshDoctor={onRefreshDoctor}
+              onSelectedVoiceChange={onSelectedVoiceChange}
+              onVoiceInputModeChange={onVoiceInputModeChange}
+              onPlayResponseAudio={onPlayResponseAudio}
+            />
+          </PanelErrorBoundary>
         )
       )}
     </div>

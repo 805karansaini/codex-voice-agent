@@ -89,6 +89,7 @@ export default function FileReaderPanel({
         <FileCode2 className="h-4 w-4 text-accent" />
         <span className="min-w-0 flex-1 truncate text-xs font-medium">{path}</span>
         <button
+          type="button"
           title="Close file"
           aria-label={`Close ${path}`}
           onClick={onClose}

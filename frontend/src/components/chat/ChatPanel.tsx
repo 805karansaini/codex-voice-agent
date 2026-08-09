@@ -186,8 +186,6 @@ export default function ChatPanel({
         voiceContextLabel={voiceContextLabel}
         voiceTranscriptPreview={voiceTranscriptPreview}
         voiceMuted={voiceMuted}
-        voiceSupported={voiceSupported}
-        voiceDisabled={voiceDisabled}
         voiceInputMode={voiceInputMode}
         mode={mode}
         input={input}
@@ -215,7 +213,6 @@ export default function ChatPanel({
         onCodexModelChange={onCodexModelChange}
         onCodingHarnessChange={onCodingHarnessChange}
         onCodexReasoningEffortChange={onCodexReasoningEffortChange}
-        onToggleVoice={onToggleVoice}
         onToggleMute={onToggleMute}
         onHoldToTalk={onHoldToTalk}
         onReleaseToMute={onReleaseToMute}

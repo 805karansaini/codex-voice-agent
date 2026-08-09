@@ -1,5 +1,16 @@
 import React from "react";
-import { ArrowUp, Mic, MicOff, PencilLine, RefreshCw, WifiOff, X } from "lucide-react";
+import {
+  ArrowUp,
+  ChevronDown,
+  Info,
+  Mic,
+  MicOff,
+  PencilLine,
+  RefreshCw,
+  SlidersHorizontal,
+  WifiOff,
+  X,
+} from "lucide-react";
 
 import { cn } from "../../utils";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
@@ -20,8 +31,6 @@ type ComposerFooterProps = {
   voiceContextLabel: string;
   voiceTranscriptPreview: string;
   voiceMuted: boolean;
-  voiceSupported: boolean;
-  voiceDisabled: boolean;
   voiceInputMode: VoiceInputMode;
   mode: ChatMode;
   input: string;
@@ -49,7 +58,6 @@ type ComposerFooterProps = {
   onCodexModelChange: (model: string) => void;
   onCodingHarnessChange: (harness: CodingHarness) => void;
   onCodexReasoningEffortChange: (effort: string) => void;
-  onToggleVoice: () => void;
   onToggleMute: () => void;
   onHoldToTalk: () => void;
   onReleaseToMute: () => void;
@@ -73,8 +81,6 @@ export default function ComposerFooter({
   voiceContextLabel,
   voiceTranscriptPreview,
   voiceMuted,
-  voiceSupported,
-  voiceDisabled,
   voiceInputMode,
   mode,
   input,
@@ -102,7 +108,6 @@ export default function ComposerFooter({
   onCodexModelChange,
   onCodingHarnessChange,
   onCodexReasoningEffortChange,
-  onToggleVoice,
   onToggleMute,
   onHoldToTalk,
   onReleaseToMute,
@@ -186,7 +191,7 @@ export default function ComposerFooter({
                   : backendRefreshing
                     ? "Backend reconnected. Refreshing projects, chats, and models…"
                     : backendStatus.kind === "missing_key"
-                      ? "Google API key is missing. Vodex and voice are unavailable; Codex mode still works."
+                      ? "Google API key is missing. Voice mode is unavailable; Code mode still works."
                       : "Checking the backend connection…"}
             </span>
             {(backendOffline || backendRecoveryFailed) && (
@@ -285,23 +290,8 @@ export default function ComposerFooter({
                     {!isMobile && <span>{voiceMuted ? "Unmute" : "Mute"}</span>}
                   </button>
                 )}
-                <button
-                  type="button"
-                  aria-label="End live voice session"
-                  onClick={onToggleVoice}
-                  className="flex min-h-14 min-w-14 items-center justify-center gap-1.5 rounded-md bg-danger px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm transition-colors hover:brightness-110 sm:min-h-0 sm:min-w-0"
-                >
-                  <MicOff className="h-5 w-5 sm:h-3.5 sm:w-3.5" />
-                  {!isMobile && <span>End</span>}
-                </button>
               </div>
             )}
-          </div>
-        )}
-
-        {codingHarness === "claude" && selectedHarness?.usagePolicy && (
-          <div className="mb-2 rounded-lg border border-warn/25 bg-warn/5 px-3 py-2 text-[11px] text-fg-muted">
-            {selectedHarness.usagePolicy}
           </div>
         )}
 
@@ -320,6 +310,8 @@ export default function ComposerFooter({
 
         <div className="surface-elevated ring-accent-focus overflow-hidden rounded-xl border border-line bg-surface-1 transition-all">
           <textarea
+            id="message-composer"
+            aria-label="Message Vodex"
             ref={textareaRef}
             value={input}
             onChange={onInputChange}
@@ -343,79 +335,158 @@ export default function ComposerFooter({
             className="block w-full resize-none bg-transparent px-4 py-3.5 text-[14px] leading-relaxed text-fg placeholder:text-fg-dim focus:outline-none disabled:opacity-50"
           />
 
-          <div className="flex items-center justify-between border-t border-line-soft px-2 py-1.5 bg-surface-1/80">
-            <div className="flex items-center gap-2">
-              {codingHarnesses.length > 0 && (
-                <select
-                  aria-label="Coding agent"
-                  value={codingHarness}
-                  onChange={(event) => onCodingHarnessChange(event.target.value as CodingHarness)}
-                  disabled={busy}
-                  className="rounded border border-line bg-surface-2 px-2 py-1 text-[11px] text-fg"
-                >
-                  {codingHarnesses.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.displayName}
-                      {!item.authenticated ? " (sign in required)" : ""}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {codexModels.length > 0 && (
-                <>
+          <div
+            className={cn(
+              "border-t border-line-soft bg-surface-1/80 p-2",
+              isMobile ? "flex items-start gap-2" : "flex flex-wrap items-center justify-between",
+            )}
+          >
+            {isMobile ? (
+              <details className="group/settings min-w-0 flex-1 rounded-lg border border-line bg-surface-2">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-[12px] font-medium text-fg">
+                  <SlidersHorizontal className="h-4 w-4 shrink-0 text-accent" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {selectedHarness?.displayName || provider}
+                    {selectedCodexModel ? ` · ${selectedCodexModel.displayName}` : ""}
+                    {codexReasoningEffort ? ` · ${codexReasoningEffort}` : ""}
+                  </span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-fg-muted transition-transform group-open/settings:rotate-180" />
+                </summary>
+                <div className="grid gap-2 border-t border-line-soft p-2.5">
+                  {codingHarnesses.length > 0 && (
+                    <label className="grid gap-1 text-[11.5px] text-fg-muted">
+                      Agent
+                      <select
+                        aria-label="Coding agent"
+                        value={codingHarness}
+                        onChange={(event) =>
+                          onCodingHarnessChange(event.target.value as CodingHarness)
+                        }
+                        disabled={busy}
+                        className="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2.5 text-[13px] text-fg"
+                      >
+                        {codingHarnesses.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.displayName}
+                            {!item.authenticated ? " (sign in required)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {codexModels.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="grid min-w-0 gap-1 text-[11.5px] text-fg-muted">
+                        Model
+                        <select
+                          aria-label={`${provider} model`}
+                          value={codexModel}
+                          onChange={(event) => onCodexModelChange(event.target.value)}
+                          disabled={busy || codexModels.length === 0}
+                          className="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2 text-[13px] text-fg"
+                        >
+                          {codexModels.map((item) => (
+                            <option key={item.id} value={item.model}>
+                              {item.displayName}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="grid min-w-0 gap-1 text-[11.5px] text-fg-muted">
+                        Reasoning
+                        <select
+                          aria-label={`${provider} reasoning effort`}
+                          value={codexReasoningEffort}
+                          onChange={(event) => onCodexReasoningEffortChange(event.target.value)}
+                          disabled={busy || !selectedCodexModel}
+                          className="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface-1 px-2 text-[13px] text-fg"
+                        >
+                          {(selectedCodexModel?.supportedReasoningEfforts || []).map((item) => (
+                            <option key={item.reasoningEffort} value={item.reasoningEffort}>
+                              {item.reasoningEffort || "Default"}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
+                  {selectedHarness?.usagePolicy && (
+                    <p className="flex gap-1.5 text-[11.5px] leading-relaxed text-fg-muted">
+                      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
+                      {selectedHarness.usagePolicy}
+                    </p>
+                  )}
+                </div>
+              </details>
+            ) : (
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="text-[11.5px] font-medium text-fg-muted">Agent</span>
+                {codingHarnesses.length > 0 && (
                   <select
-                    aria-label={`${provider} model`}
-                    value={codexModel}
-                    onChange={(event) => onCodexModelChange(event.target.value)}
-                    disabled={busy || codexModels.length === 0}
-                    className="max-w-36 rounded border border-line bg-surface-2 px-2 py-1 text-[11px] text-fg"
+                    aria-label="Coding agent"
+                    value={codingHarness}
+                    onChange={(event) => onCodingHarnessChange(event.target.value as CodingHarness)}
+                    disabled={busy}
+                    className="rounded border border-line bg-surface-2 px-2 py-1.5 text-[12px] text-fg"
                   >
-                    {codexModels.map((item) => (
-                      <option key={item.id} value={item.model}>
+                    {codingHarnesses.map((item) => (
+                      <option key={item.id} value={item.id}>
                         {item.displayName}
+                        {!item.authenticated ? " (sign in required)" : ""}
                       </option>
                     ))}
                   </select>
-                  <select
-                    aria-label={`${provider} reasoning effort`}
-                    value={codexReasoningEffort}
-                    onChange={(event) => onCodexReasoningEffortChange(event.target.value)}
-                    disabled={busy || !selectedCodexModel}
-                    className="rounded border border-line bg-surface-2 px-2 py-1 text-[11px] text-fg"
-                  >
-                    {(selectedCodexModel?.supportedReasoningEfforts || []).map((item) => (
-                      <option key={item.reasoningEffort} value={item.reasoningEffort}>
-                        {item.reasoningEffort || "Default"}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
-              {voiceSupported && (
-                <button
-                  title={voiceTitle}
-                  onClick={onToggleVoice}
-                  disabled={voiceDisabled}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11.5px] disabled:opacity-40 transition-colors",
-                    voiceActive
-                      ? "bg-accent/15 text-accent font-semibold"
-                      : "text-fg-muted hover:bg-surface-2 hover:text-fg",
-                  )}
-                >
-                  {voiceMuted ? (
-                    <MicOff className="h-3.5 w-3.5" />
-                  ) : (
-                    <Mic className="h-3.5 w-3.5" />
-                  )}
-                  <span>Voice</span>
-                </button>
-              )}
-            </div>
+                )}
+                {codexModels.length > 0 && (
+                  <>
+                    <select
+                      aria-label={`${provider} model`}
+                      value={codexModel}
+                      onChange={(event) => onCodexModelChange(event.target.value)}
+                      disabled={busy || codexModels.length === 0}
+                      className="max-w-36 rounded border border-line bg-surface-2 px-2 py-1.5 text-[12px] text-fg"
+                    >
+                      {codexModels.map((item) => (
+                        <option key={item.id} value={item.model}>
+                          {item.displayName}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label={`${provider} reasoning effort`}
+                      value={codexReasoningEffort}
+                      onChange={(event) => onCodexReasoningEffortChange(event.target.value)}
+                      disabled={busy || !selectedCodexModel}
+                      className="rounded border border-line bg-surface-2 px-2 py-1.5 text-[12px] text-fg"
+                    >
+                      {(selectedCodexModel?.supportedReasoningEfforts || []).map((item) => (
+                        <option key={item.reasoningEffort} value={item.reasoningEffort}>
+                          {item.reasoningEffort || "Default"}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                {selectedHarness?.usagePolicy && (
+                  <details className="group/access">
+                    <summary
+                      className="grid h-8 w-8 cursor-pointer list-none place-items-center rounded-md text-fg-muted hover:bg-surface-2 hover:text-fg"
+                      aria-label={`${provider} access details`}
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </summary>
+                    <p className="mt-1 max-w-72 rounded-lg border border-line bg-surface-2 p-3 text-[11.5px] leading-relaxed text-fg-muted shadow-lg">
+                      {selectedHarness.usagePolicy}
+                    </p>
+                  </details>
+                )}
+              </div>
+            )}
 
-            <div className="flex items-center gap-2">
+            <div className={cn("flex items-center gap-2", !isMobile && "ml-auto")}>
               {busy && mode === "agent" && (
                 <button
+                  type="button"
                   onClick={() => {
                     setCancelling(true);
                     onCancelTask();
@@ -428,10 +499,12 @@ export default function ComposerFooter({
                 </button>
               )}
               <button
+                type="button"
                 onClick={onSubmit}
                 disabled={!canSend}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold transition-all",
+                  "flex items-center gap-1.5 rounded-md px-3.5 text-[12px] font-semibold transition-all",
+                  isMobile ? "min-h-11" : "min-h-0 py-1.5",
                   canSend
                     ? "bg-accent text-accent-foreground hover:brightness-110 shadow-sm"
                     : "bg-surface-2 text-fg-dim cursor-not-allowed",

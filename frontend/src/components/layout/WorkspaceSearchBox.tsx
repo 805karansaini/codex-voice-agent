@@ -124,6 +124,7 @@ export default function WorkspaceSearchBox({
             ) : (
               searchResults.map((result, index) => (
                 <button
+                  type="button"
                   key={`${result.type}-${result.id}`}
                   ref={(node) => {
                     resultRefs.current[index] = node;

@@ -28,8 +28,48 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * How long a non-streaming request may run. A hung local backend otherwise
+ * leaves the interface waiting forever with no way to recover.
+ */
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+/** Status used for failures that never reached the backend. */
+export const NO_RESPONSE_STATUS = 0;
+/** Status used for requests the client gave up on. */
+export const TIMEOUT_STATUS = 408;
+
 function authHeaders(headers: HeadersInit = {}): HeadersInit {
   return API_TOKEN ? { ...headers, Authorization: `Bearer ${API_TOKEN}` } : headers;
+}
+
+function isNamedError(error: unknown, name: string): boolean {
+  return error instanceof Error && error.name === name;
+}
+
+/**
+ * Turns a rejected `fetch` into an `ApiError` the interface can explain. A
+ * deliberate cancellation is passed through untouched so callers can tell it
+ * apart from a real failure.
+ */
+export function describeRequestFailure(error: unknown): unknown {
+  if (isNamedError(error, "TimeoutError")) {
+    return new ApiError(
+      TIMEOUT_STATUS,
+      "The backend did not respond in time. It may still be starting or busy.",
+    );
+  }
+  if (isNamedError(error, "AbortError")) return error;
+  if (error instanceof TypeError) {
+    return new ApiError(NO_RESPONSE_STATUS, "Could not reach the Vodex backend.");
+  }
+  return error instanceof Error ? new ApiError(NO_RESPONSE_STATUS, error.message) : error;
+}
+
+function timeoutSignal(timeoutMs: number): AbortSignal | undefined {
+  // Older embedded webviews lack AbortSignal.timeout. There the request simply
+  // stays untimed rather than failing outright.
+  return typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
 }
 
 async function errorDetail(res: Response, fallback: string): Promise<string> {
@@ -42,10 +82,16 @@ async function apiFetch(
   init: RequestInit = {},
   errorMessage = "Request failed",
 ): Promise<Response> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: authHeaders(init.headers),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: authHeaders(init.headers),
+      signal: init.signal ?? timeoutSignal(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw describeRequestFailure(error);
+  }
   if (!res.ok) throw new ApiError(res.status, await errorDetail(res, errorMessage));
   return res;
 }
@@ -56,7 +102,13 @@ async function apiJson<T>(
   errorMessage = "Request failed",
 ): Promise<T> {
   const res = await apiFetch(path, init, errorMessage);
-  return res.json() as Promise<T>;
+  try {
+    return (await res.json()) as T;
+  } catch {
+    // A proxy or misrouted request can answer 200 with something that is not
+    // JSON. Report that as a request failure instead of a parser error.
+    throw new ApiError(res.status, `${errorMessage}: the backend sent an unreadable response.`);
+  }
 }
 
 async function apiVoid(
@@ -307,7 +359,7 @@ export async function fetchCodexModels(): Promise<CodexModel[]> {
   const response = await apiJson<{ models: CodexModel[] }>(
     "/api/codex/models",
     {},
-    "Failed to load Codex models",
+    "Failed to load coding agent models",
   );
   return response.models;
 }
@@ -325,12 +377,16 @@ export async function enqueueCodexJob(options: CodexJobOptions): Promise<CodexJo
   return apiJson(
     "/api/codex/jobs",
     jsonPost(codexJobPayload(options)),
-    "Failed to enqueue Codex job",
+    "Failed to enqueue coding agent job",
   );
 }
 
 export async function fetchCodexJob(jobId: string): Promise<CodexJob> {
-  return apiJson(`/api/codex/jobs/${encodeURIComponent(jobId)}`, {}, "Failed to fetch Codex job");
+  return apiJson(
+    `/api/codex/jobs/${encodeURIComponent(jobId)}`,
+    {},
+    "Failed to fetch coding agent job",
+  );
 }
 
 export async function postChatStream(

@@ -91,6 +91,9 @@ export function useAppController() {
     startRailDrag,
     startPanelDrag,
     startFileViewerDrag,
+    resizeRail,
+    resizePanel,
+    resizeFileViewer,
     handleTouchStart,
     handleTouchEnd,
   } = useAppLayout();
@@ -440,7 +443,7 @@ export function useAppController() {
       const scope = chatId ? "conversation" : "project";
       setError(
         blocker === "job"
-          ? `Wait for the voice-started Codex task to finish before ${action} this ${scope}.`
+          ? `Wait for the voice-started coding agent task to finish before ${action} this ${scope}.`
           : `End the live voice session before ${action} this ${scope}.`,
       );
       return true;
@@ -703,6 +706,9 @@ export function useAppController() {
       onStartRailDrag: startRailDrag,
       onStartPanelDrag: startPanelDrag,
       onStartFileViewerDrag: startFileViewerDrag,
+      onResizeRail: resizeRail,
+      onResizePanel: resizePanel,
+      onResizeFileViewer: resizeFileViewer,
       onModeChange: (nextMode) => {
         if (busy) {
           setError("Wait for the current response to finish before changing modes.");
@@ -744,7 +750,9 @@ export function useAppController() {
           return;
         }
         if (hasActiveBackgroundJob(store.messages)) {
-          setError("Wait for the background Codex task to finish before clearing this chat.");
+          setError(
+            "Wait for the background coding agent task to finish before clearing this chat.",
+          );
           return;
         }
         const projectId = store.activeProject?.id;

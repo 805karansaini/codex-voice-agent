@@ -54,7 +54,7 @@
   --surface-3: oklch(0.275 0.018 255);
   --fg: oklch(0.965 0.006 245);
   --fg-muted: oklch(0.77 0.012 245);
-  --fg-dim: oklch(0.59 0.012 245);
+  --fg-dim: oklch(0.66 0.012 245);
   --line: oklch(0.305 0.016 255);
   --line-soft: oklch(0.245 0.014 255);
   --accent: oklch(0.75 0.145 195);
@@ -65,6 +65,17 @@
 
   --background: var(--surface-0);
   --foreground: var(--fg);
+
+  /* Code surfaces and syntax tokens. Both themes define the full set so code
+     blocks and file previews stay readable when the theme flips. */
+  --code-surface: oklch(0.14 0.01 260);
+  --code-header: oklch(0.17 0.01 260);
+  --syntax-comment: var(--fg-dim);
+  --syntax-keyword: oklch(0.74 0.16 305);
+  --syntax-string: oklch(0.8 0.15 145);
+  --syntax-function: oklch(0.82 0.15 80);
+  --syntax-number: oklch(0.76 0.15 35);
+  --syntax-punctuation: var(--fg-dim);
 }
 
 :root[data-theme="light"] {
@@ -75,7 +86,7 @@
   --surface-3: oklch(0.895 0.006 250); /* hover / chips */
   --fg: oklch(0.22 0.015 260);
   --fg-muted: oklch(0.42 0.014 260);
-  --fg-dim: oklch(0.58 0.012 260);
+  --fg-dim: oklch(0.48 0.012 260);
   --line: oklch(0.86 0.008 260);
   --line-soft: oklch(0.915 0.006 260);
   --accent: oklch(0.55 0.15 220); /* deeper cyan-blue for contrast */
@@ -83,6 +94,18 @@
   --success: oklch(0.58 0.15 150);
   --warn: oklch(0.68 0.16 70);
   --danger: oklch(0.58 0.21 25);
+
+  /* Light code surfaces sit above the panel, with tokens darkened so they keep
+     contrast against a light background instead of washing out. */
+  --code-surface: oklch(0.99 0.002 250);
+  --code-header: oklch(0.955 0.004 250);
+  /* Darker than --fg-dim so comment text still clears AA on light surfaces. */
+  --syntax-comment: oklch(0.54 0.012 260);
+  --syntax-keyword: oklch(0.47 0.19 305);
+  --syntax-string: oklch(0.44 0.13 145);
+  --syntax-function: oklch(0.48 0.13 70);
+  --syntax-number: oklch(0.5 0.16 35);
+  --syntax-punctuation: var(--fg-dim);
 }
 
 @layer base {
@@ -128,6 +151,9 @@
     background: color-mix(in oklab, var(--color-fg) 14%, transparent);
     border-radius: 8px;
   }
+  summary::-webkit-details-marker {
+    display: none;
+  }
 }
 
 @layer utilities {
@@ -136,7 +162,7 @@
   }
   .label {
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
     font-weight: 500;
@@ -273,13 +299,16 @@
     align-items: center;
     gap: 6px;
     padding: 7px 9px;
-    border-bottom: 1px solid var(--color-line-soft);
     color: var(--color-fg);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 11.5px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+
+  .codex-timeline[open] > .codex-timeline-title {
+    border-bottom: 1px solid var(--color-line-soft);
   }
 
   .codex-timeline-status {
@@ -288,7 +317,7 @@
     border-radius: 999px;
     padding: 1px 6px;
     color: var(--color-fg-muted);
-    font-size: 9px;
+    font-size: 10.5px;
   }
 
   .codex-timeline-list {
@@ -322,7 +351,7 @@
   .codex-timeline-summary {
     margin: 0;
     color: var(--color-fg-muted);
-    font-size: 11.5px;
+    font-size: 12px;
     line-height: 1.35;
     overflow-wrap: anywhere;
   }
@@ -331,7 +360,7 @@
     margin: 2px 0 0;
     color: var(--color-fg-dim);
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11px;
     line-height: 1.35;
     overflow-wrap: anywhere;
   }
@@ -428,6 +457,43 @@
       transform: translateY(0);
     }
   }
+
+  /* Reduced motion. Looping indicators carry state (voice listening, streaming
+     reply), so they are frozen in a legible resting pose rather than hidden. */
+  @media (prefers-reduced-motion: reduce) {
+    .caret::after,
+    .pulse-dot,
+    .animate-bounce-bar,
+    .equalizer i,
+    .animate-in {
+      animation: none;
+    }
+    .pulse-dot {
+      opacity: 1;
+    }
+    .caret::after {
+      opacity: 1;
+    }
+    .animate-in {
+      opacity: 1;
+      transform: none;
+    }
+    .equalizer i {
+      transform: scaleY(0.55);
+    }
+    .equalizer i:nth-child(2) {
+      transform: scaleY(1);
+    }
+    .equalizer i:nth-child(3) {
+      transform: scaleY(0.8);
+    }
+    .equalizer.paused i {
+      transform: scaleY(0.2);
+    }
+    .action-chat-timeline {
+      scroll-behavior: auto;
+    }
+  }
 }
 
 /* Markdown & Code Block styles (used by MarkdownRenderer) */
@@ -497,7 +563,7 @@
   .code-block-wrapper {
     margin: 12px 0;
     border-radius: var(--radius-md);
-    background: oklch(0.14 0.01 260);
+    background: var(--code-surface);
     border: 1px solid var(--color-line);
     overflow: hidden;
   }
@@ -506,7 +572,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 14px;
-    background: oklch(0.17 0.01 260);
+    background: var(--code-header);
     border-bottom: 1px solid var(--color-line);
   }
   .code-block-lang {
@@ -554,28 +620,28 @@
   .file-preview .token.prolog,
   .file-preview .token.doctype,
   .file-preview .token.cdata {
-    color: var(--color-fg-dim);
+    color: var(--syntax-comment);
   }
   .file-preview .token.keyword,
   .file-preview .token.atrule {
-    color: oklch(0.74 0.16 305);
+    color: var(--syntax-keyword);
   }
   .file-preview .token.string,
   .file-preview .token.attr-value,
   .file-preview .token.inserted {
-    color: oklch(0.8 0.15 145);
+    color: var(--syntax-string);
   }
   .file-preview .token.function,
   .file-preview .token.class-name {
-    color: oklch(0.82 0.15 80);
+    color: var(--syntax-function);
   }
   .file-preview .token.number,
   .file-preview .token.boolean,
   .file-preview .token.constant {
-    color: oklch(0.76 0.15 35);
+    color: var(--syntax-number);
   }
   .file-preview .token.operator,
   .file-preview .token.punctuation {
-    color: var(--color-fg-dim);
+    color: var(--syntax-punctuation);
   }
 }

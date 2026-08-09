@@ -1,4 +1,4 @@
-import type { DoctorCheck } from "../../types";
+import type { CodingHarnessInfo, DoctorCheck } from "../../types";
 import { cn } from "../../utils";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 
@@ -8,6 +8,8 @@ const VOICE_INPUT_MODES: { id: VoiceInputMode; label: string }[] = [
 ];
 
 type ConsoleVoicePanelProps = {
+  isMobile: boolean;
+  codingHarnesses: CodingHarnessInfo[];
   doctorChecks: DoctorCheck[];
   voices: SpeechSynthesisVoice[];
   selectedVoiceURI: string;
@@ -20,6 +22,8 @@ type ConsoleVoicePanelProps = {
 };
 
 export default function ConsoleVoicePanel({
+  isMobile,
+  codingHarnesses,
   doctorChecks,
   voices,
   selectedVoiceURI,
@@ -37,12 +41,56 @@ export default function ConsoleVoicePanel({
       aria-labelledby="console-tab-voice"
       className="space-y-4 text-xs"
     >
+      <div className="panel border border-line bg-surface-2 p-3">
+        <div className="mb-2">
+          <span className="label font-semibold">Coding agents</span>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-fg-muted">
+            Vodex uses the login configured for each local coding agent. Provider usage policies and
+            subscription limits still apply.
+          </p>
+        </div>
+        <div className="space-y-2">
+          {codingHarnesses.map((agent) => {
+            const ready = agent.available && agent.authenticated;
+            return (
+              <div
+                key={agent.id}
+                className="rounded-md border border-line-soft bg-surface-1 px-2.5 py-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className={cn("h-2 w-2 rounded-full", ready ? "bg-success" : "bg-warn")} />
+                  <span className="font-semibold text-fg">{agent.displayName}</span>
+                  <span className="ml-auto text-[10.5px] font-medium text-fg-muted">
+                    {ready ? "Connected" : agent.available ? "Sign in needed" : "Unavailable"}
+                  </span>
+                </div>
+                {agent.subscriptionType && (
+                  <p className="mt-1 text-[11.5px] text-fg-muted">
+                    Account: {agent.subscriptionType}
+                  </p>
+                )}
+                {agent.usagePolicy && (
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-fg-muted">
+                    {agent.usagePolicy}
+                  </p>
+                )}
+                {agent.error && <p className="mt-1 text-[11.5px] text-warn">{agent.error}</p>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="panel p-3 bg-surface-2 border border-line">
         <div className="mb-2 flex items-center justify-between gap-2">
           <span className="label font-semibold">Setup doctor</span>
           <button
+            type="button"
             onClick={onRefreshDoctor}
-            className="rounded border border-line bg-surface-3 px-2 py-1 font-mono text-[10px] uppercase text-fg-dim hover:text-fg"
+            className={cn(
+              "rounded border border-line bg-surface-3 px-2 font-mono text-[10.5px] uppercase text-fg-dim hover:text-fg",
+              isMobile ? "min-h-11" : "py-1",
+            )}
           >
             Refresh
           </button>
@@ -83,8 +131,10 @@ export default function ConsoleVoicePanel({
               key={option.id}
               type="button"
               onClick={() => onVoiceInputModeChange(option.id)}
+              aria-pressed={voiceInputMode === option.id}
               className={cn(
                 "rounded px-2 py-1.5 text-[11.5px] font-semibold transition-colors",
+                isMobile && "min-h-11",
                 voiceInputMode === option.id
                   ? "bg-surface-3 text-fg shadow-sm"
                   : "text-fg-dim hover:text-fg",
@@ -97,9 +147,15 @@ export default function ConsoleVoicePanel({
       </div>
 
       <div className="panel p-3 bg-surface-2 border border-line">
-        <label className="label mb-2 block font-semibold">Fallback TTS Voice</label>
+        <label htmlFor="fallback-tts-voice" className="label mb-2 block font-semibold">
+          Fallback TTS Voice
+        </label>
         <select
-          className="w-full rounded-md border border-line bg-surface-3 px-2 py-1.5 text-[12.5px] focus:border-accent focus:outline-none text-fg"
+          id="fallback-tts-voice"
+          className={cn(
+            "w-full rounded-md border border-line bg-surface-3 px-2 py-1.5 text-[12.5px] text-fg focus:border-accent focus:outline-none",
+            isMobile && "min-h-11",
+          )}
           value={selectedVoiceURI}
           onChange={(e) => onSelectedVoiceChange(e.target.value)}
           disabled={voices.length === 0}
@@ -122,8 +178,12 @@ export default function ConsoleVoicePanel({
             Browser autoplay was blocked.
           </p>
           <button
+            type="button"
             onClick={() => onPlayResponseAudio(pendingAudioUrl)}
-            className="w-full bg-danger text-white rounded py-1 px-3 hover:brightness-110 font-semibold text-[11.5px]"
+            className={cn(
+              "w-full rounded bg-danger px-3 py-1 text-[11.5px] font-semibold text-white hover:brightness-110",
+              isMobile && "min-h-11",
+            )}
           >
             Play Response Audio
           </button>

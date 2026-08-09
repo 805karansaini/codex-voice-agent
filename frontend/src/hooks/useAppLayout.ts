@@ -1,30 +1,45 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isNumberInRange, loadJSON, saveJSON } from "../utils/storage";
+import { clampWidth, type ResizeBounds } from "../utils/panelResize.ts";
 
 export type MobileView = "explorer" | "files" | "chat" | "console";
 
-const COMPACT_LAYOUT_MAX_WIDTH = 1100;
+const COMPACT_LAYOUT_MAX_WIDTH = 1200;
 
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.max(minimum, Math.min(maximum, value));
-}
+export const RAIL_WIDTH_BOUNDS: ResizeBounds = { min: 180, max: 420 };
+export const PANEL_WIDTH_BOUNDS: ResizeBounds = { min: 260, max: 600 };
+export const FILE_VIEWER_WIDTH_BOUNDS: ResizeBounds = { min: 260, max: 900 };
+
+const ACTIVITY_RAIL_WIDTH = 56;
 
 export function useAppLayout() {
   const [railOpen, setRailOpen] = useState(true);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth <= COMPACT_LAYOUT_MAX_WIDTH : false,
   );
   const [mobileView, setMobileView] = useState<MobileView>("chat");
   const [railWidth, setRailWidth] = useState(() =>
-    loadJSON("cva.railWidth.v2", 268, isNumberInRange(180, 420)),
+    loadJSON(
+      "cva.railWidth.v2",
+      268,
+      isNumberInRange(RAIL_WIDTH_BOUNDS.min, RAIL_WIDTH_BOUNDS.max),
+    ),
   );
   const [panelWidth, setPanelWidth] = useState(() =>
-    loadJSON("cva.panelWidth.v2", 380, isNumberInRange(260, 600)),
+    loadJSON(
+      "cva.panelWidth.v2",
+      380,
+      isNumberInRange(PANEL_WIDTH_BOUNDS.min, PANEL_WIDTH_BOUNDS.max),
+    ),
   );
   const [fileViewerWidth, setFileViewerWidth] = useState(() =>
-    loadJSON("cva.fileViewerWidth.v1", 420, isNumberInRange(260, 900)),
+    loadJSON(
+      "cva.fileViewerWidth.v1",
+      420,
+      isNumberInRange(FILE_VIEWER_WIDTH_BOUNDS.min, FILE_VIEWER_WIDTH_BOUNDS.max),
+    ),
   );
   const [isDragging, setIsDragging] = useState(false);
   const touchStartX = useRef<number | null>(null);
@@ -63,7 +78,7 @@ export function useAppLayout() {
   const startRailDrag = useCallback(
     (event: React.MouseEvent) => {
       beginHorizontalDrag(event, (clientX) => {
-        setRailWidth(clamp(clientX - 56, 180, 420));
+        setRailWidth(clampWidth(clientX - ACTIVITY_RAIL_WIDTH, RAIL_WIDTH_BOUNDS));
       });
     },
     [beginHorizontalDrag],
@@ -74,7 +89,7 @@ export function useAppLayout() {
       const startX = event.clientX;
       const startWidth = panelWidth;
       beginHorizontalDrag(event, (clientX) => {
-        setPanelWidth(clamp(startWidth + startX - clientX, 260, 600));
+        setPanelWidth(clampWidth(startWidth + startX - clientX, PANEL_WIDTH_BOUNDS));
       });
     },
     [beginHorizontalDrag, panelWidth],
@@ -85,11 +100,23 @@ export function useAppLayout() {
       const startX = event.clientX;
       const startWidth = fileViewerWidth;
       beginHorizontalDrag(event, (clientX) => {
-        setFileViewerWidth(clamp(startWidth + startX - clientX, 260, 900));
+        setFileViewerWidth(clampWidth(startWidth + startX - clientX, FILE_VIEWER_WIDTH_BOUNDS));
       });
     },
     [beginHorizontalDrag, fileViewerWidth],
   );
+
+  const resizeRail = useCallback((width: number) => {
+    setRailWidth(clampWidth(width, RAIL_WIDTH_BOUNDS));
+  }, []);
+
+  const resizePanel = useCallback((width: number) => {
+    setPanelWidth(clampWidth(width, PANEL_WIDTH_BOUNDS));
+  }, []);
+
+  const resizeFileViewer = useCallback((width: number) => {
+    setFileViewerWidth(clampWidth(width, FILE_VIEWER_WIDTH_BOUNDS));
+  }, []);
 
   useEffect(() => saveJSON("cva.railWidth.v2", railWidth), [railWidth]);
   useEffect(() => saveJSON("cva.panelWidth.v2", panelWidth), [panelWidth]);
@@ -165,6 +192,9 @@ export function useAppLayout() {
     startRailDrag,
     startPanelDrag,
     startFileViewerDrag,
+    resizeRail,
+    resizePanel,
+    resizeFileViewer,
     handleTouchStart,
     handleTouchEnd,
   };

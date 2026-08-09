@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Folder,
   FileCode2,
   GitBranch,
@@ -8,7 +9,6 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Search,
-  Sparkles,
   SquareTerminal,
   X,
 } from "lucide-react";
@@ -68,13 +68,14 @@ export default function AppTitleBar({
     return (
       <header className="relative z-50 flex h-14 shrink-0 items-center justify-between border-b border-line bg-surface-1 px-3 shadow-sm">
         <button
+          type="button"
           onClick={() =>
             onMobileViewChange(
               mobileView === "explorer" || mobileView === "files" ? "chat" : "explorer",
             )
           }
           className={cn(
-            "flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted transition-colors",
+            "flex h-11 w-11 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted transition-colors",
             (mobileView === "explorer" || mobileView === "files") &&
               "bg-surface-3 text-accent border-accent/30",
           )}
@@ -88,7 +89,8 @@ export default function AppTitleBar({
         </button>
 
         <div className="flex flex-col items-center min-w-0">
-          <span className="max-w-[220px] truncate text-[13.5px] font-semibold tracking-tight">
+          <span className="max-w-[210px] truncate text-[13.5px] font-semibold tracking-tight">
+            Vodex ·{" "}
             {mobileView === "explorer"
               ? "Workspace"
               : mobileView === "files"
@@ -109,16 +111,17 @@ export default function AppTitleBar({
             type="button"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => setMobileSearchOpen((open) => !open)}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted"
+            className="flex h-11 w-11 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted"
             aria-label={mobileSearchOpen ? "Close search" : "Search chats"}
             aria-expanded={mobileSearchOpen}
           >
             {mobileSearchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </button>
           <button
+            type="button"
             onClick={() => onMobileViewChange(mobileView === "console" ? "chat" : "console")}
             className={cn(
-              "relative flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted transition-colors",
+              "relative flex h-11 w-11 items-center justify-center rounded-lg border border-line bg-surface-2 text-fg-muted transition-colors",
               mobileView === "console" && "bg-surface-3 text-accent border-accent/30",
             )}
             aria-label={mobileView === "console" ? "Return to chat" : "Open console"}
@@ -151,7 +154,7 @@ export default function AppTitleBar({
     <header className="relative z-50 flex h-13 shrink-0 items-center gap-4 border-b border-line bg-surface-1 px-3.5 shadow-sm">
       <div className="flex items-center gap-2 min-w-0">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/25 bg-accent/15 text-accent shadow-sm">
-          <Sparkles className="h-4 w-4" />
+          <AudioLines className="h-4 w-4" />
         </div>
         <span className="text-[14px] font-semibold tracking-[-0.02em]">Vodex</span>
         <span className="mx-1 text-fg-dim">/</span>
@@ -188,6 +191,7 @@ export default function AppTitleBar({
           onOpenSearchResult={onOpenSearchResult}
         />
         <button
+          type="button"
           title={railOpen ? "Hide workspace sidebar" : "Show workspace sidebar"}
           aria-label={railOpen ? "Hide workspace sidebar" : "Show workspace sidebar"}
           aria-pressed={railOpen}
@@ -206,6 +210,7 @@ export default function AppTitleBar({
           )}
         </button>
         <button
+          type="button"
           title={filePanelOpen ? "Hide files" : "Show files"}
           aria-label={filePanelOpen ? "Hide files" : "Show files"}
           aria-pressed={filePanelOpen}
@@ -220,6 +225,7 @@ export default function AppTitleBar({
           <FileCode2 className="h-3.5 w-3.5" />
         </button>
         <button
+          type="button"
           title={panelOpen ? "Hide console panel" : "Show console panel"}
           aria-label={panelOpen ? "Hide console panel" : "Show console panel"}
           aria-pressed={panelOpen}

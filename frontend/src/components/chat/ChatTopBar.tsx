@@ -49,26 +49,36 @@ export default function ChatTopBar({
       )}
 
       <div className={cn("flex items-center gap-2", isMobile && "w-full justify-between")}>
-        <div className="inline-flex items-center rounded-md border border-line bg-surface-2 p-0.5">
+        <div
+          className="inline-flex items-center rounded-md border border-line bg-surface-2 p-0.5"
+          role="group"
+          aria-label="Experience mode"
+        >
           {(["agent", "codex"] as const).map((item) => (
             <button
+              type="button"
               key={item}
               onClick={() => onModeChange(item)}
               aria-pressed={mode === item}
               className={cn(
-                "rounded-md px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-wider transition-all",
+                "rounded-md px-3 py-1.5 font-mono text-[11.5px] uppercase tracking-wider transition-all",
+                isMobile ? "min-h-11" : "min-h-0",
                 mode === item ? "bg-surface-3 text-fg shadow-sm" : "text-fg-dim hover:text-fg",
               )}
             >
-              {item === "codex" ? "codex" : "vodex"}
+              {item === "codex" ? "code" : "voice"}
             </button>
           ))}
         </div>
 
         <button
+          type="button"
           onClick={onExport}
           disabled={exportDisabled}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-2 px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-wider text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          className={cn(
+            "inline-flex items-center justify-center gap-1.5 rounded-lg border border-line bg-surface-2 px-3 py-1.5 font-mono text-[11.5px] uppercase tracking-wider text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40",
+            isMobile ? "min-h-11 min-w-11" : "min-h-0 min-w-0",
+          )}
           title="Export chat as markdown"
         >
           <Download className="h-3.5 w-3.5" />
@@ -77,19 +87,21 @@ export default function ChatTopBar({
 
         {voiceSupported && (
           <button
+            type="button"
             onClick={onToggleVoice}
             disabled={voiceDisabled}
             aria-label={voiceActive ? "End live voice session" : "Start live voice session"}
             aria-pressed={voiceActive}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-wider transition-all disabled:cursor-not-allowed disabled:opacity-40",
+              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[11.5px] uppercase tracking-wider transition-all disabled:cursor-not-allowed disabled:opacity-40",
+              isMobile ? "min-h-11" : "min-h-0",
               voiceActive
                 ? "border-accent bg-accent/15 text-accent glow-accent"
                 : "border-line bg-surface-2 text-fg-muted hover:text-fg",
             )}
           >
             <Circle className={cn("h-2 w-2 fill-current", voiceActive && "pulse-dot")} />
-            {voiceActive ? "Live" : "Idle"}
+            {voiceActive ? "End" : "Start"}
           </button>
         )}
       </div>

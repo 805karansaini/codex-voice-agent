@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
+import { scrollBehavior } from "../utils/motion.ts";
+
 const FOLLOW_THRESHOLD_PX = 96;
 
 export function isNearScrollBottom(
@@ -109,7 +111,7 @@ export function useMessageAutoScroll({
   const jumpToLatest = useCallback(() => {
     followingRef.current = true;
     setShowJumpToLatest(false);
-    scrollChatToBottom(scrollContainerRef.current, "smooth");
+    scrollChatToBottom(scrollContainerRef.current, scrollBehavior("smooth"));
   }, [scrollContainerRef]);
 
   return { showJumpToLatest, jumpToLatest };

@@ -38,22 +38,38 @@ export default function ConsoleHeader({
 
       <div className="flex items-center gap-2">
         <button
+          type="button"
           title={isMobile ? "Go back to chat" : "Hide console panel"}
+          aria-label={isMobile ? "Go back to chat" : "Hide console panel"}
           onClick={isMobile ? onBackToChat : onHide}
-          className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg"
+          className={cn(
+            "grid place-items-center rounded text-fg-muted hover:bg-surface-2 hover:text-fg",
+            isMobile ? "h-11 w-11" : "h-6 w-6",
+          )}
         >
           <X className="h-3.5 w-3.5" />
         </button>
 
         <button
+          type="button"
           onClick={onClear}
           disabled={!canClear}
-          className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded border border-line bg-surface-2 text-fg-dim hover:text-fg hover:border-fg-muted disabled:opacity-40"
+          title={
+            canClear
+              ? "Clear this thread"
+              : "Clearing is unavailable while a thread is missing or work is running"
+          }
+          className={cn(
+            "rounded border border-line bg-surface-2 px-1.5 font-mono text-[10.5px] uppercase text-fg-dim hover:border-fg-muted hover:text-fg disabled:opacity-40",
+            isMobile ? "min-h-11" : "py-0.5",
+          )}
         >
           Clear
         </button>
 
         <span
+          role="status"
+          aria-label={`Backend status: ${status.label}`}
           className="flex items-center gap-1.5 font-mono text-[10px] text-fg-dim"
           title={status.label}
         >

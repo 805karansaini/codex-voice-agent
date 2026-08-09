@@ -1,4 +1,11 @@
-import type { ActionEntry, DebugEntry, DoctorCheck, Handoff, Message } from "../../types";
+import type {
+  ActionEntry,
+  CodingHarnessInfo,
+  DebugEntry,
+  DoctorCheck,
+  Handoff,
+  Message,
+} from "../../types";
 import type { ConsoleTabId } from "../../hooks/useConsolePanelState";
 import type { BackendStatus } from "../../hooks/useBackendStatus";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
@@ -21,6 +28,7 @@ type ConsolePanelProps = {
   actions: ActionEntry[];
   handoffs: Handoff[];
   messages: Message[];
+  codingHarnesses: CodingHarnessInfo[];
   doctorChecks: DoctorCheck[];
   voices: SpeechSynthesisVoice[];
   selectedVoiceURI: string;
@@ -46,6 +54,7 @@ export default function ConsolePanel({
   actions,
   handoffs,
   messages,
+  codingHarnesses,
   doctorChecks,
   voices,
   selectedVoiceURI,
@@ -77,7 +86,7 @@ export default function ConsolePanel({
         onClear={onClear}
       />
 
-      <ConsoleTabs activeTab={activeTab} onChange={onTabChange} />
+      <ConsoleTabs isMobile={isMobile} activeTab={activeTab} onChange={onTabChange} />
 
       <div className="flex-1 overflow-y-auto p-3.5">
         {activeTab === "stream" && <ConsoleStreamPanel entries={debugEntries} />}
@@ -88,6 +97,8 @@ export default function ConsolePanel({
 
         {activeTab === "voice" && (
           <ConsoleVoicePanel
+            isMobile={isMobile}
+            codingHarnesses={codingHarnesses}
             doctorChecks={doctorChecks}
             voices={voices}
             selectedVoiceURI={selectedVoiceURI}

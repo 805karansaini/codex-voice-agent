@@ -136,6 +136,7 @@ export default function ProjectFilesPanel({
       return (
         <div key={node.path}>
           <button
+            type="button"
             onClick={() => toggleFolder(node.path)}
             aria-expanded={isExpanded}
             className="flex w-full items-center gap-1 px-2 py-1 text-left text-[12.5px] text-fg-muted hover:bg-surface-2 hover:text-fg"
@@ -160,6 +161,7 @@ export default function ProjectFilesPanel({
     const Icon = fileIcon(node.path);
     return (
       <button
+        type="button"
         key={node.path}
         onClick={() => selectFile(node.path)}
         title={node.path}
@@ -196,6 +198,7 @@ export default function ProjectFilesPanel({
         </div>
         <div className="flex items-center gap-1">
           <button
+            type="button"
             title="Collapse all folders"
             onClick={collapseAll}
             disabled={expanded.size === 0}
@@ -204,6 +207,7 @@ export default function ProjectFilesPanel({
             Collapse all
           </button>
           <button
+            type="button"
             title="Refresh files"
             aria-label={`Refresh files for ${project.name}`}
             onClick={() => void loadFiles()}

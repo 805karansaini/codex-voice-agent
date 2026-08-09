@@ -92,6 +92,7 @@ export default function WorkspaceSidebar({
       <div className="flex shrink-0 items-center justify-between border-b border-line-soft px-3.5 py-3">
         <span className="label">Workspace</span>
         <button
+          type="button"
           title="Add Project"
           onClick={onAddProject}
           aria-label="Add project"
@@ -106,6 +107,7 @@ export default function WorkspaceSidebar({
           <div className="p-4 text-center">
             <p className="text-[12.5px] text-fg-dim">No projects yet.</p>
             <button
+              type="button"
               onClick={onAddProject}
               className="mt-2 text-[12px] text-accent hover:underline flex items-center gap-1 mx-auto"
             >
@@ -138,9 +140,13 @@ export default function WorkspaceSidebar({
                   )}
                 >
                   <button
+                    type="button"
                     onClick={() => onToggleProject(project.id, isExpanded)}
                     aria-expanded={isExpanded}
-                    className="flex min-w-0 flex-1 items-center gap-1.5"
+                    className={cn(
+                      "flex min-w-0 flex-1 items-center gap-1.5",
+                      isMobile && "min-h-11",
+                    )}
                   >
                     <ChevronRight
                       className={cn(
@@ -156,6 +162,7 @@ export default function WorkspaceSidebar({
                   </button>
 
                   <button
+                    type="button"
                     title="New chat"
                     aria-label={`New chat in ${project.name}`}
                     onClick={(event) => {
@@ -163,24 +170,25 @@ export default function WorkspaceSidebar({
                       onCreateChat(project.id);
                     }}
                     className={cn(
-                      "p-0.5 rounded hover:bg-surface-3 hover:text-accent text-fg-dim transition-all shrink-0",
+                      "rounded hover:bg-surface-3 hover:text-accent text-fg-dim transition-all shrink-0",
                       isMobile
-                        ? "opacity-100"
-                        : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                        ? "grid h-11 w-11 place-items-center opacity-100"
+                        : "p-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
                     )}
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
 
                   <button
+                    type="button"
                     title="Remove Project"
                     aria-label={`Remove project ${project.name}`}
                     onClick={() => onRemoveProject(project.id, project.name)}
                     className={cn(
-                      "p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
+                      "rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
                       isMobile
-                        ? "opacity-100"
-                        : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                        ? "grid h-11 w-11 place-items-center opacity-100"
+                        : "p-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
                     )}
                   >
                     <Trash2 className="h-3 w-3" />
@@ -202,38 +210,44 @@ export default function WorkspaceSidebar({
                           )}
                         >
                           <button
+                            type="button"
                             data-chat-switcher
                             aria-current={isChatActive ? "page" : undefined}
                             onClick={() => onSelectChat(project.id, chat.id)}
                             onKeyDown={onChatKeyDown}
-                            className="flex items-center gap-1.5 flex-1 min-w-0"
+                            className={cn(
+                              "flex min-w-0 flex-1 items-center gap-1.5",
+                              isMobile && "min-h-11",
+                            )}
                             title={chat.title}
                           >
                             <span className="truncate">{chat.title}</span>
                           </button>
 
                           <button
+                            type="button"
                             title="Rename chat"
                             aria-label={`Rename chat ${chat.title}`}
                             onClick={() => onRenameChat(project.id, chat.id, chat.title)}
                             className={cn(
-                              "p-0.5 rounded hover:bg-surface-3 hover:text-fg text-fg-dim transition-all shrink-0",
+                              "rounded hover:bg-surface-3 hover:text-fg text-fg-dim transition-all shrink-0",
                               isMobile
-                                ? "opacity-100"
-                                : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                                ? "grid h-11 w-11 place-items-center opacity-100"
+                                : "p-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
                             )}
                           >
                             <Pencil className="h-3 w-3" />
                           </button>
                           <button
+                            type="button"
                             title="Delete chat"
                             aria-label={`Delete chat ${chat.title}`}
                             onClick={() => onRemoveChat(project.id, chat.id)}
                             className={cn(
-                              "p-0.5 rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
+                              "rounded hover:bg-surface-3 hover:text-danger text-fg-dim transition-all shrink-0",
                               isMobile
-                                ? "opacity-100"
-                                : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                                ? "grid h-11 w-11 place-items-center opacity-100"
+                                : "p-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
                             )}
                           >
                             <Trash2 className="h-3 w-3" />
@@ -243,6 +257,7 @@ export default function WorkspaceSidebar({
                     })}
                     {projectChats.length > chatLimit && (
                       <button
+                        type="button"
                         onClick={() => onShowMoreChats(project.id)}
                         aria-label={`Show more chats in ${project.name}`}
                         className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-fg-dim hover:bg-surface-2 hover:text-accent font-medium border border-dashed border-line-soft/60"
@@ -266,6 +281,7 @@ export default function WorkspaceSidebar({
             aria-label="Workspace views"
           >
             <button
+              type="button"
               onClick={() => onViewChange("chats")}
               aria-pressed={activeView === "chats"}
               className={cn(
@@ -279,6 +295,7 @@ export default function WorkspaceSidebar({
               Chats
             </button>
             <button
+              type="button"
               onClick={() => onViewChange("files")}
               aria-pressed={activeView === "files"}
               className={cn(
@@ -294,6 +311,7 @@ export default function WorkspaceSidebar({
           </nav>
           <div className="flex items-center justify-between gap-3 p-3">
             <button
+              type="button"
               onClick={onToggleTheme}
               className="flex flex-1 items-center justify-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:bg-surface-3 hover:text-fg"
             >
@@ -302,6 +320,7 @@ export default function WorkspaceSidebar({
             </button>
 
             <button
+              type="button"
               onClick={onOpenVoiceSettings}
               className="flex flex-1 items-center justify-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-1.5 text-xs text-fg-muted hover:bg-surface-3 hover:text-fg"
             >
