@@ -78,7 +78,7 @@ export function useLiveVoiceSessionHandlers({
       if (activeVoiceJobIdRef.current) {
         updateAction(activeVoiceActionIdRef.current, {
           status: "running",
-          detail: "Voice session closed. Codex is still running.",
+          detail: "Voice session closed. The coding agent is still running.",
         });
         return;
       }
@@ -246,6 +246,7 @@ export function useLiveVoiceSessionHandlers({
       onHandoffStart: (_name: string, task: string, workdir: string, harness: CodingHarness) => {
         const ctx = voiceCtxRef.current;
         if (!ctx) return;
+        const provider = harness === "claude" ? "Claude" : "Codex";
         let codexMessageId = activeAssistantVoiceMsgIdRef.current;
         if (!codexMessageId) {
           codexMessageId = crypto.randomUUID();
@@ -253,11 +254,12 @@ export function useLiveVoiceSessionHandlers({
           store.appendMessage(ctx.chatId, {
             id: codexMessageId,
             role: "assistant",
-            text: task || "Codex is starting the local work.",
+            text: task || `${provider} is starting the local work.`,
             usedCodex: true,
             streaming: true,
             workdir: workdir || ctx.project.path,
             codexStatus: "running",
+            codingHarness: harness,
           });
         }
         activeCodexMsgIdRef.current = codexMessageId;
@@ -267,11 +269,12 @@ export function useLiveVoiceSessionHandlers({
             usedCodex: true,
             streaming: true,
             codexStatus: m.codexStatus || "running",
+            codingHarness: harness,
             workdir: workdir || m.workdir,
           }));
         }
         const id = consoleForChat(ctx.chatId).addAction({
-          title: "Vodex handoff to Codex",
+          title: `Vodex handoff to ${provider}`,
           status: "running",
           detail: task,
           streamingResponse: "",
@@ -284,8 +287,8 @@ export function useLiveVoiceSessionHandlers({
           projectId: ctx.project.id,
           chatId: ctx.chatId,
           status: "running",
-          task: task || "Codex is starting the local work.",
-          message: task || "Codex is starting the local work.",
+          task: task || `${provider} is starting the local work.`,
+          message: task || `${provider} is starting the local work.`,
           startedAt: Date.now(),
           workdir: workdir || ctx.project.path,
           harness,
@@ -299,6 +302,15 @@ export function useLiveVoiceSessionHandlers({
         }
       },
       onHandoffFailed: (_name: string, message: string) => {
+        const ctx = voiceCtxRef.current;
+        if (ctx && activeAssistantVoiceMsgIdRef.current) {
+          store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (current) => ({
+            ...current,
+            streaming: false,
+            text: message || current.text || "The coding agent task failed.",
+            codexStatus: "failed",
+          }));
+        }
         if (activeVoiceActionIdRef.current) {
           updateAction(activeVoiceActionIdRef.current, {
             status: "failed",
@@ -317,7 +329,7 @@ export function useLiveVoiceSessionHandlers({
         store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
           ...m,
           streaming: true,
-          text: m.text || "Codex is running this task in the background.",
+          text: m.text || "The coding agent is running this task in the background.",
         }));
         if (activeVoiceActionIdRef.current) {
           updateAction(activeVoiceActionIdRef.current, {
@@ -333,9 +345,10 @@ export function useLiveVoiceSessionHandlers({
         store.updateMessage(ctx.chatId, activeAssistantVoiceMsgIdRef.current, (m) => ({
           ...m,
           streaming: false,
+          codexStatus: "completed",
           text:
             m.text ||
-            "Codex finished the local work. The full output is available below, but Vodex did not finish a final response.",
+            "The coding agent finished the local work. The full output is available below, but Vodex did not finish a final response.",
         }));
       },
       onCodexEvent: (codexEvent: CodexTimelineEvent) => {
@@ -372,7 +385,8 @@ export function useLiveVoiceSessionHandlers({
           if (!ctx) return;
           const codexMessageId =
             activeCodexMsgIdRef.current || activeAssistantVoiceMsgIdRef.current;
-          const task = stringValue(details?.task, summary) || "Codex is running the local task.";
+          const task =
+            stringValue(details?.task, summary) || "The coding agent is running the local task.";
           const harness: CodingHarness = details?.harness === "claude" ? "claude" : "codex";
           activeVoiceJobIdRef.current = backgroundJobId;
           updateAction(activeVoiceActionIdRef.current, {
@@ -403,6 +417,7 @@ export function useLiveVoiceSessionHandlers({
               workdir: patch.workdir || message.workdir,
               codexEvents: patch.events || message.codexEvents || [],
               codexStatus: patch.status || message.codexStatus || "running",
+              codingHarness: harness,
               artifacts: appendArtifacts(message.artifacts, ...(patch.artifacts || [])),
             }));
           };
@@ -510,6 +525,7 @@ export function useLiveVoiceSessionHandlers({
               usedCodex: true,
               codexEvents: details?.codex_events || m.codexEvents || [],
               codexStatus: stringValue(details?.codex_status, m.codexStatus),
+              codingHarness: details?.harness === "claude" ? "claude" : m.codingHarness,
               codexTurnId: stringValue(details?.codex_turn_id, m.codexTurnId),
               codexThreadId: stringValue(details?.codex_thread_id, m.codexThreadId),
               artifacts: appendArtifacts(m.artifacts, ...artifacts, artifact, changeArtifact),
@@ -520,13 +536,14 @@ export function useLiveVoiceSessionHandlers({
             store.appendMessage(ctx.chatId, {
               id,
               role: "assistant",
-              text: "Codex finished the local work. The full output is available below while Vodex prepares the final response.",
+              text: "The coding agent finished the local work. The full output is available below while Vodex prepares the final response.",
               usedCodex: true,
               streaming: true,
               workdir,
               artifacts: appendArtifacts([], ...artifacts, artifact, changeArtifact),
               codexEvents: details?.codex_events || [],
               codexStatus: stringValue(details?.codex_status),
+              codingHarness: details?.harness === "claude" ? "claude" : "codex",
               codexTurnId: stringValue(details?.codex_turn_id),
               codexThreadId: stringValue(details?.codex_thread_id),
             });
@@ -544,7 +561,7 @@ export function useLiveVoiceSessionHandlers({
           onBackgroundJobSettled?.();
         } else if (ctx) {
           consoleForChat(ctx.chatId).addAction({
-            title: "Vodex handoff to Codex",
+            title: `Vodex handoff to ${details?.harness === "claude" ? "Claude" : "Codex"}`,
             status: "done",
             detail: summary,
             streamingResponse: summary,

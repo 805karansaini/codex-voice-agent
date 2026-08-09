@@ -1,10 +1,10 @@
 import {
+  AudioLines,
   ArrowDown,
   Check,
   Copy,
   FolderPlus,
   Plus,
-  Sparkles,
   SquareTerminal,
   TriangleAlert,
   Zap,
@@ -13,11 +13,9 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 
 import type { ChatArtifact, CodingHarness, Message, Project } from "../../types";
 import { cn } from "../../utils";
-import { changeArtifacts } from "../../utils/artifacts";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import ArtifactCard from "../artifacts/ArtifactCard";
-import ChangeReviewChip from "../artifacts/ChangeReviewChip";
-import CodexTimeline from "../codex/CodexTimeline";
+import AgentTaskCard from "../codex/AgentTaskCard";
 import MarkdownRenderer from "../common/MarkdownRenderer";
 
 type ChatStreamProps = {
@@ -121,10 +119,12 @@ export default function ChatStream({
               </div>
               <h3 className="text-base font-semibold">Connect a Project</h3>
               <p className="text-[13px] text-fg-muted mt-1.5 leading-relaxed">
-                A project links the agent to a folder on your system. It can read files, write code,
-                run commands, and execute tests directly in place.
+                Vodex works from the project folder you choose and brings in the selected coding
+                agent when you ask. Agents may edit that folder; you decide whether to commit or
+                revert their changes.
               </p>
               <button
+                type="button"
                 onClick={onAddProject}
                 className="mt-5 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-xs font-semibold text-accent-foreground hover:brightness-110 transition-all glow-accent"
               >
@@ -149,10 +149,15 @@ export default function ChatStream({
                   ? `Give ${provider} a concrete local task to inspect, change, test, or review.`
                   : `Ask, plan, or talk it through—Vodex can bring in ${provider} when local work is needed.`}
               </p>
+              <p className="mt-2 text-[11.5px] text-fg-muted">
+                Selected project · configured agent login · commit and revert stay under your
+                control
+              </p>
 
               <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left max-w-lg mx-auto">
                 {suggestions.map((suggestion) => (
                   <button
+                    type="button"
                     key={suggestion}
                     onClick={() => onSuggestion(suggestion)}
                     className="group flex items-center gap-2.5 rounded-xl border border-line bg-surface-1/80 p-3.5 text-[12.5px] shadow-sm transition-all hover:-translate-y-0.5 hover:border-accent/30 hover:bg-surface-2"
@@ -184,7 +189,11 @@ export default function ChatStream({
                 );
               }
 
-              const diffs = changeArtifacts(message.artifacts);
+              const isAgentTask = Boolean(
+                message.usedCodex ||
+                message.backgroundJobId ||
+                (message.codexEvents && message.codexEvents.length > 0),
+              );
               return (
                 <article
                   key={message.id}
@@ -192,10 +201,21 @@ export default function ChatStream({
                 >
                   <div className={cn("flex gap-3", isMobile ? "max-w-full" : "max-w-[94%]")}>
                     <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-accent/20 bg-accent/10 text-accent shadow-sm">
-                      <Sparkles className="h-3.5 w-3.5" />
+                      <AudioLines className="h-3.5 w-3.5" />
                     </div>
                     <div className="min-w-0 flex-1 px-0.5 py-1 text-[14px] leading-relaxed text-fg/95">
-                      {message.text ? (
+                      {isAgentTask ? (
+                        <AgentTaskCard
+                          message={message}
+                          onCommitChangeReview={onCommitChangeReview}
+                          onRevertChangeReview={onRevertChangeReview}
+                          copyControl={
+                            !message.streaming && message.text ? (
+                              <CopyResponseButton text={message.text} alwaysVisible={isMobile} />
+                            ) : undefined
+                          }
+                        />
+                      ) : message.text ? (
                         <MarkdownRenderer content={message.text} />
                       ) : (
                         message.streaming && (
@@ -206,22 +226,10 @@ export default function ChatStream({
                           </div>
                         )
                       )}
-                      {message.streaming && message.text && (
+                      {!isAgentTask && message.streaming && message.text && (
                         <span className="caret animate-pulse" />
                       )}
-                      {diffs.length > 0 && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {diffs.map((artifact) => (
-                            <ChangeReviewChip
-                              key={artifact.id}
-                              artifact={artifact}
-                              onCommit={onCommitChangeReview}
-                              onRevert={onRevertChangeReview}
-                            />
-                          ))}
-                        </div>
-                      )}
-                      {message.artifacts && message.artifacts.length > 0 && (
+                      {!isAgentTask && message.artifacts && message.artifacts.length > 0 && (
                         <div className="mt-3 flex flex-col gap-2">
                           {message.artifacts.map((artifact) => (
                             <ArtifactCard
@@ -232,11 +240,7 @@ export default function ChatStream({
                           ))}
                         </div>
                       )}
-                      {(message.usedCodex ||
-                        (message.codexEvents && message.codexEvents.length > 0)) && (
-                        <CodexTimeline events={message.codexEvents} status={message.codexStatus} />
-                      )}
-                      {!message.streaming && message.text && (
+                      {!isAgentTask && !message.streaming && message.text && (
                         <div className="mt-1 flex justify-end">
                           <CopyResponseButton text={message.text} alwaysVisible={isMobile} />
                         </div>

@@ -51,6 +51,7 @@ export function historyRowsToMessages(rows: HistoryRow[]): Message[] {
       codexTurnId: row.meta?.codex_turn_id,
       codexThreadId: row.meta?.codex_thread_id,
       ...(row.meta?.background_job_id ? { backgroundJobId: row.meta.background_job_id } : {}),
+      ...(row.meta?.coding_harness ? { codingHarness: row.meta.coding_harness } : {}),
       geminiLiveUsage: row.meta?.gemini_live_usage,
     }));
 }

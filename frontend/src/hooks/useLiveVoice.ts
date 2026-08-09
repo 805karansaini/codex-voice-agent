@@ -322,8 +322,8 @@ export function useLiveVoice({
       }
       pendingSpeechRef.current = null;
       websocket.send(JSON.stringify({ type: "speak_text", text }));
-      transition("thinking", "Reading the completed Codex result.");
-      log("[Voice] Queued completed Codex result for speech.");
+      transition("thinking", "Reading the completed coding agent result.");
+      log("[Voice] Queued completed coding agent result for speech.");
     },
     [clearPendingSpeechTimer, log, transition],
   );
@@ -550,31 +550,33 @@ export function useLiveVoice({
           if (payload.event) cbRef.current.onCodexEvent?.(payload.event);
           if (payload.event?.summary) {
             describe(payload.event.summary);
-            log(`[Codex Event] ${payload.event.summary}`);
+            log(`[Coding Agent Event] ${payload.event.summary}`);
           }
         } else if (payload.type === "status") {
-          describe(payload.message || "Codex is working...");
+          describe(payload.message || "The coding agent is working...");
           log(`[Status] ${payload.message}`);
         } else if (payload.type === "tool_call_failed") {
           clearToolResultFallback();
-          transition("thinking", "Codex task failed.");
+          const provider = payload.harness === "claude" ? "Claude" : "Codex";
+          transition("thinking", `${provider} task failed.`);
           setAssistantPreview("");
           cbRef.current.onHandoffFailed?.(
             payload.name || "run_codex_task",
-            payload.message || "Codex task failed.",
+            payload.message || `${provider} task failed.`,
           );
           log(`[Tool Call Failed] ${payload.name || "tool"}: ${payload.message}`);
         } else if (payload.type === "tool_result") {
           usedCodexRef.current = true;
+          const provider = payload.harness === "claude" ? "Claude" : "Codex";
           if (payload.background_job_id) {
-            transition("working", "Codex is running in the background.");
+            transition("working", `${provider} is running in the background.`);
           } else {
-            transition("thinking", "Codex task completed. Vodex is formulating a response.");
+            transition("thinking", `${provider} task completed. Vodex is formulating a response.`);
           }
           setAssistantPreview("");
           cbRef.current.onHandoff(
             payload.name || "run_codex_task",
-            String(payload.result || "").trim() || "Codex task completed.",
+            String(payload.result || "").trim() || `${provider} task completed.`,
             payload.workdir || "",
             payload,
           );
@@ -583,11 +585,11 @@ export function useLiveVoice({
             toolResultFallbackTimerRef.current = window.setTimeout(() => {
               transition(
                 "live",
-                "Codex result is available in chat. Vodex did not finish a final response.",
+                `${provider} result is available in chat. Vodex did not finish a final response.`,
               );
               cbRef.current.onHandoffTimeout?.();
               log(
-                "Gemini did not finish after Codex completed; surfaced the Codex result in chat.",
+                `Gemini did not finish after ${provider} completed; surfaced the ${provider} result in chat.`,
               );
               toolResultFallbackTimerRef.current = null;
             }, TOOL_RESULT_FALLBACK_MS);
@@ -598,9 +600,10 @@ export function useLiveVoice({
         } else if (payload.type === "tool_start_gemini_delivery_failed") {
           clearToolResultFallback();
           const deliveryFailureMessage = liveVoiceStartDeliveryFailureMessage(payload.message);
+          const provider = payload.harness === "claude" ? "Claude" : "Codex";
           transition(
             "working",
-            "Codex is still running. Vodex is reconnecting to follow its progress.",
+            `${provider} is still running. Vodex is reconnecting to follow its progress.`,
           );
           cbRef.current.onHandoffStartDeliveryFailed?.(deliveryFailureMessage);
           log(`[Tool Start Delivery Failed] ${deliveryFailureMessage}`);
@@ -745,7 +748,7 @@ export function useLiveVoice({
   const completeBackgroundCodexJob = useCallback(() => {
     if (stateRef.current !== "working") return;
     transition("live", "Live with Gemini — speak again when ready.");
-    log("[Codex] Background task settled; cleared working status.");
+    log("[Coding agent] Background task settled; cleared working status.");
   }, [log, transition]);
 
   useEffect(

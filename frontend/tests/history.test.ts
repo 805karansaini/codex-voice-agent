@@ -274,6 +274,19 @@ test("mergeBackendHistoryWithLocalMessages replaces local direct Codex messages 
   );
 });
 
+test("historyRowsToMessages preserves the coding harness for task labels", () => {
+  const messages = historyRowsToMessages([
+    {
+      id: "claude-result",
+      role: "assistant",
+      text: "Completed output",
+      meta: { direct_codex: true, coding_harness: "claude" },
+    },
+  ]);
+
+  assert.equal(messages[0]?.codingHarness, "claude");
+});
+
 test("mergeBackendHistoryWithLocalMessages keeps a placeholder while its request is the only saved row", () => {
   const rows = [
     {

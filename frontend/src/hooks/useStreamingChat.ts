@@ -51,6 +51,7 @@ export function useStreamingChat({
         role: "assistant",
         text: `Started a background ${provider} task. I will update this message when it finishes.`,
         usedCodex: true,
+        codingHarness: harness,
         streaming: true,
         workdir: project.path,
       });
@@ -120,6 +121,7 @@ export function useStreamingChat({
               ...current,
               streaming: false,
               text: message,
+              codexStatus: "failed",
             }));
             telemetry.updateAction(actionId, { status: "failed", streamingResponse: message });
             onBackgroundFailure?.(message);
@@ -129,6 +131,7 @@ export function useStreamingChat({
               ...current,
               streaming: false,
               text: current.text && !current.streaming ? current.text : message,
+              codexStatus: "failed",
             }));
             telemetry.updateAction(actionId, { status: "failed", streamingResponse: message });
             onBackgroundFailure?.(message);
@@ -140,6 +143,7 @@ export function useStreamingChat({
           ...message,
           streaming: false,
           text: failureMessage,
+          codexStatus: "failed",
         }));
         telemetry.updateAction(actionId, {
           status: "failed",
@@ -169,6 +173,7 @@ export function useStreamingChat({
         role: "assistant",
         text: "",
         streaming: true,
+        codingHarness: harness,
       });
 
       const controller = new AbortController();
@@ -284,6 +289,7 @@ export function useStreamingChat({
               ...current,
               streaming: false,
               text: current.text || "Vodex failed.",
+              codexStatus: usedCodex ? "failed" : current.codexStatus,
             }));
             if (activeActionId) {
               telemetry.updateAction(activeActionId, {
@@ -315,6 +321,7 @@ export function useStreamingChat({
             ...message,
             streaming: false,
             text: message.text || "Cancelled.",
+            codexStatus: message.usedCodex ? "cancelled" : message.codexStatus,
           }));
           if (activeActionId) {
             telemetry.updateAction(activeActionId, {
@@ -330,6 +337,7 @@ export function useStreamingChat({
           ...current,
           streaming: false,
           text: current.text || message,
+          codexStatus: current.usedCodex ? "failed" : current.codexStatus,
         }));
         if (activeActionId) {
           telemetry.updateAction(activeActionId, { status: "failed", streamingResponse: message });

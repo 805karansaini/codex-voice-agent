@@ -11,7 +11,8 @@ export type CodexJobHandlers = {
 
 export function codexJobProgress(job: CodexJob): string {
   const updates = job.progress_updates || [];
-  return job.latest_status || updates[updates.length - 1] || "Codex is still working.";
+  const provider = job.harness === "claude" ? "Claude" : "Codex";
+  return job.latest_status || updates[updates.length - 1] || `${provider} is still working.`;
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -48,16 +49,20 @@ export async function watchCodexJob(
         continue;
       }
       if (job.status === "done") {
-        handlers.onDone(job, job.result || "Codex background task completed.");
+        const provider = job.harness === "claude" ? "Claude" : "Codex";
+        handlers.onDone(job, job.result || `${provider} background task completed.`);
         return;
       }
-      handlers.onFailed(job, job.error || "Codex background task failed.");
+      const provider = job.harness === "claude" ? "Claude" : "Codex";
+      handlers.onFailed(job, job.error || `${provider} background task failed.`);
       return;
     } catch (error) {
       if (handlers.isCurrent?.() === false) return;
       consecutiveErrors += 1;
       if (consecutiveErrors >= maxConsecutiveErrors) {
-        handlers.onError(error instanceof Error ? error.message : "Failed to poll Codex job");
+        handlers.onError(
+          error instanceof Error ? error.message : "Failed to poll coding agent job",
+        );
         return;
       }
       await wait(retryDelayMs);

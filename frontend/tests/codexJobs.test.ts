@@ -30,6 +30,11 @@ test("codexJobProgress uses the latest available progress message", () => {
   );
 });
 
+test("codexJobProgress names the selected provider in fallback status", () => {
+  assert.equal(codexJobProgress(job("running", { harness: "claude" })), "Claude is still working.");
+  assert.equal(codexJobProgress(job("running", { harness: "codex" })), "Codex is still working.");
+});
+
 test("watchCodexJob reports progress and one terminal result", async () => {
   const responses = [
     job("running", { latest_status: "Building" }),

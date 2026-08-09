@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CircleAlert, Clipboard, FileCode2 } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Clipboard,
+  FileCode2,
+  GitCommitHorizontal,
+  Undo2,
+} from "lucide-react";
 
 import MarkdownRenderer from "../common/MarkdownRenderer";
 import { ChatArtifact } from "../../types";
@@ -9,9 +18,13 @@ import { copyTextToClipboard } from "../../utils/clipboard";
 export default function ArtifactCard({
   artifact,
   defaultOpen = false,
+  onCommit,
+  onRevert,
 }: {
   artifact: ChatArtifact;
   defaultOpen?: boolean;
+  onCommit?: (artifact: ChatArtifact) => void;
+  onRevert?: (artifact: ChatArtifact) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [raw, setRaw] = useState(false);
@@ -77,7 +90,7 @@ export default function ArtifactCard({
                 onClick={() => setRaw(false)}
                 aria-pressed={!raw}
                 className={cn(
-                  "rounded px-2 py-1 text-[11px]",
+                  "min-h-11 rounded px-2 py-1 text-[11.5px]",
                   !raw ? "bg-accent text-accent-foreground" : "text-fg-muted",
                 )}
               >
@@ -88,29 +101,53 @@ export default function ArtifactCard({
                 onClick={() => setRaw(true)}
                 aria-pressed={raw}
                 className={cn(
-                  "rounded px-2 py-1 text-[11px]",
+                  "min-h-11 rounded px-2 py-1 text-[11.5px]",
                   raw ? "bg-accent text-accent-foreground" : "text-fg-muted",
                 )}
               >
                 Raw
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => void copyArtifact()}
-              disabled={copyStatus === "copying"}
-              title={copyStatus === "failed" ? "Unable to copy this output. Try again." : undefined}
-              className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-[11px] text-fg-muted hover:text-fg"
-            >
-              {copyStatus === "copied" ? (
-                <Check className="h-3.5 w-3.5" />
-              ) : copyStatus === "failed" ? (
-                <CircleAlert className="h-3.5 w-3.5" />
-              ) : (
-                <Clipboard className="h-3.5 w-3.5" />
-              )}
-              {copyLabel}
-            </button>
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              {artifact.changed_files?.length && artifact.workdir && onCommit && onRevert ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onCommit(artifact)}
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-accent/30 bg-accent/10 px-2.5 text-[11.5px] font-semibold text-accent hover:bg-accent/15"
+                  >
+                    <GitCommitHorizontal className="h-3.5 w-3.5" />
+                    Commit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRevert(artifact)}
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 text-[11.5px] font-semibold text-fg-muted hover:text-fg"
+                  >
+                    <Undo2 className="h-3.5 w-3.5" />
+                    Revert
+                  </button>
+                </>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void copyArtifact()}
+                disabled={copyStatus === "copying"}
+                title={
+                  copyStatus === "failed" ? "Unable to copy this output. Try again." : undefined
+                }
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 text-[11.5px] text-fg-muted hover:text-fg"
+              >
+                {copyStatus === "copied" ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : copyStatus === "failed" ? (
+                  <CircleAlert className="h-3.5 w-3.5" />
+                ) : (
+                  <Clipboard className="h-3.5 w-3.5" />
+                )}
+                {copyLabel}
+              </button>
+            </div>
             <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
               {copyStatus === "copied"
                 ? "Output copied to clipboard."

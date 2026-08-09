@@ -15,6 +15,7 @@ export type Message = {
   codexTurnId?: string;
   codexThreadId?: string;
   backgroundJobId?: string;
+  codingHarness?: CodingHarness;
   geminiLiveUsage?: GeminiLiveUsage;
 };
 
@@ -110,6 +111,7 @@ export type HistoryRow = {
     project_id?: string;
     chat_id?: string;
     background_job_id?: string;
+    coding_harness?: CodingHarness;
     user_visible?: boolean;
   };
 };
