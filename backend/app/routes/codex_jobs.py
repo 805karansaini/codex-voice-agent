@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..codex_runner import list_codex_models
+from ..coding_runner import list_coding_harnesses, normalize_coding_harness
 from ..prompting import improve_codex_task_prompt
 from ..services.background_jobs import CodexBackgroundJob
 
@@ -15,6 +16,7 @@ class CodexJobRequest(BaseModel):
     workdir: str | None = None
     project_id: str | None = None
     chat_id: str | None = None
+    harness: str = "codex"
     model: str | None = None
     reasoning_effort: str | None = None
 
@@ -40,6 +42,7 @@ def create_router(
             workdir=workdir,
             project_id=req.project_id,
             chat_id=req.chat_id,
+            harness=normalize_coding_harness(req.harness),
             model=req.model,
             reasoning_effort=req.reasoning_effort,
         )
@@ -48,6 +51,10 @@ def create_router(
     @router.get("/api/codex/models")
     async def get_codex_models() -> dict[str, object]:
         return {"models": await list_codex_models()}
+
+    @router.get("/api/coding/harnesses")
+    async def get_coding_harnesses() -> dict[str, object]:
+        return {"harnesses": await list_coding_harnesses()}
 
     @router.get("/api/codex/jobs")
     async def list_codex_jobs(chat_id: str | None = None) -> list[dict[str, object]]:

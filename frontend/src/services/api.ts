@@ -9,6 +9,8 @@ import type {
   SearchResult,
   DoctorCheck,
   CodexModel,
+  CodingHarness,
+  CodingHarnessInfo,
 } from "../types";
 
 const configuredApiBase: unknown = import.meta.env?.VITE_API_BASE_URL;
@@ -97,6 +99,7 @@ function codexJobPayload(options: CodexJobOptions) {
     workdir: options.workdir,
     project_id: options.projectId,
     chat_id: options.chatId,
+    harness: options.harness,
     model: options.model,
     reasoning_effort: options.reasoningEffort,
   };
@@ -108,6 +111,7 @@ function chatStreamPayload(options: ChatStreamOptions) {
     workdir: options.workdir,
     project_id: options.projectId,
     chat_id: options.chatId,
+    harness: options.harness,
     model: options.model,
     reasoning_effort: options.reasoningEffort,
   };
@@ -285,6 +289,7 @@ export async function commitChangeReview(
 }
 
 interface ModelSelection {
+  harness: CodingHarness;
   model?: string;
   reasoningEffort?: string;
 }
@@ -305,6 +310,15 @@ export async function fetchCodexModels(): Promise<CodexModel[]> {
     "Failed to load Codex models",
   );
   return response.models;
+}
+
+export async function fetchCodingHarnesses(): Promise<CodingHarnessInfo[]> {
+  const response = await apiJson<{ harnesses: CodingHarnessInfo[] }>(
+    "/api/coding/harnesses",
+    {},
+    "Failed to load coding agents",
+  );
+  return response.harnesses;
 }
 
 export async function enqueueCodexJob(options: CodexJobOptions): Promise<CodexJob> {

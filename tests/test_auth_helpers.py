@@ -143,6 +143,7 @@ class AuthHelperTests(unittest.TestCase):
                 "Codex login",
                 "Default work folder",
                 "Codex SDK",
+                "Claude Agent SDK",
             }.issubset(names)
         )
         self.assertTrue(

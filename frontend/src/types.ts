@@ -1,5 +1,6 @@
 export type Role = "user" | "assistant";
 export type ChatMode = "agent" | "codex";
+export type CodingHarness = "codex" | "claude";
 
 export type Message = {
   id: string;
@@ -149,6 +150,7 @@ export type CodexJob = {
   workdir: string;
   project_id?: string;
   chat_id?: string;
+  harness?: CodingHarness;
   model?: string;
   reasoning_effort?: string;
   status: "queued" | "running" | "done" | "failed";
@@ -176,6 +178,17 @@ export type CodexModel = {
     reasoningEffort: string;
     description?: string;
   }>;
+};
+
+export type CodingHarnessInfo = {
+  id: CodingHarness;
+  displayName: string;
+  available: boolean;
+  authenticated: boolean;
+  error?: string;
+  subscriptionType?: string | null;
+  usagePolicy?: string;
+  models: CodexModel[];
 };
 
 export type ConsoleState = {

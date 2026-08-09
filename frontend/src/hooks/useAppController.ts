@@ -30,7 +30,7 @@ import { useVoiceInputMode } from "./useVoiceInputMode";
 import { useWorkspaceSearch } from "./useWorkspaceSearch";
 import { useWorkspaceSidebarState } from "./useWorkspaceSidebarState";
 import * as api from "../services/api";
-import type { ChatMode, CodexModel } from "../types";
+import type { ChatMode, CodexModel, CodingHarness, CodingHarnessInfo } from "../types";
 import {
   type BackendRecoveryState,
   backendRecoverySucceeded,
@@ -50,10 +50,16 @@ export function useAppController() {
   const { syncError, clearSyncError, refreshWorkspace } = store;
   const [error, setError] = useState("");
   const [mode, setMode] = useState<ChatMode>("agent");
+  const [codingHarnesses, setCodingHarnesses] = useState<CodingHarnessInfo[]>([]);
+  const [codingHarness, setCodingHarness] = useState<CodingHarness>("codex");
   const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
   const [codexModel, setCodexModel] = useState("");
   const [codexReasoningEffort, setCodexReasoningEffort] = useState("");
   const codexSelectionRef = useRef({ model: "", reasoningEffort: "" });
+  const harnessSelectionsRef = useRef<Record<CodingHarness, typeof codexSelectionRef.current>>({
+    codex: { model: "", reasoningEffort: "" },
+    claude: { model: "", reasoningEffort: "" },
+  });
   const [activityView, setActivityView] = useState<"chats" | "files">("chats");
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -127,14 +133,19 @@ export function useAppController() {
   }, [syncError, clearSyncError]);
   const loadCodexModels = useCallback(async (): Promise<boolean> => {
     try {
-      const models = await api.fetchCodexModels();
+      const harnesses = await api.fetchCodingHarnesses();
+      setCodingHarnesses(harnesses);
+      const selectedHarness = harnesses.find((item) => item.id === codingHarness);
+      const models = selectedHarness?.models || [];
       setCodexModels(models);
+      const storedSelection = harnessSelectionsRef.current[codingHarness];
       const selection = reconcileCodexSelection(
         models,
-        codexSelectionRef.current.model,
-        codexSelectionRef.current.reasoningEffort,
+        storedSelection.model,
+        storedSelection.reasoningEffort,
       );
       codexSelectionRef.current = selection;
+      harnessSelectionsRef.current[codingHarness] = selection;
       setCodexModel(selection.model);
       setCodexReasoningEffort(selection.reasoningEffort);
       return true;
@@ -142,7 +153,7 @@ export function useAppController() {
       setCodexModels([]);
       return false;
     }
-  }, []);
+  }, [codingHarness]);
   useEffect(() => {
     void loadCodexModels();
   }, [loadCodexModels]);
@@ -197,17 +208,40 @@ export function useAppController() {
       const selected = codexModels.find((item) => item.model === model);
       const reasoningEffort = defaultReasoningEffort(selected);
       codexSelectionRef.current = { model, reasoningEffort };
+      harnessSelectionsRef.current[codingHarness] = { model, reasoningEffort };
       setCodexReasoningEffort(reasoningEffort);
     },
-    [codexModels],
+    [codexModels, codingHarness],
   );
-  const handleCodexReasoningEffortChange = useCallback((reasoningEffort: string) => {
-    codexSelectionRef.current = {
-      ...codexSelectionRef.current,
-      reasoningEffort,
-    };
-    setCodexReasoningEffort(reasoningEffort);
-  }, []);
+  const handleCodexReasoningEffortChange = useCallback(
+    (reasoningEffort: string) => {
+      codexSelectionRef.current = {
+        ...codexSelectionRef.current,
+        reasoningEffort,
+      };
+      harnessSelectionsRef.current[codingHarness] = codexSelectionRef.current;
+      setCodexReasoningEffort(reasoningEffort);
+    },
+    [codingHarness],
+  );
+  const handleCodingHarnessChange = useCallback(
+    (harness: CodingHarness) => {
+      setCodingHarness(harness);
+      const models = codingHarnesses.find((item) => item.id === harness)?.models || [];
+      const storedSelection = harnessSelectionsRef.current[harness];
+      const selection = reconcileCodexSelection(
+        models,
+        storedSelection.model,
+        storedSelection.reasoningEffort,
+      );
+      codexSelectionRef.current = selection;
+      harnessSelectionsRef.current[harness] = selection;
+      setCodexModels(models);
+      setCodexModel(selection.model);
+      setCodexReasoningEffort(selection.reasoningEffort);
+    },
+    [codingHarnesses],
+  );
   const {
     voiceContext,
     getWorkdir,
@@ -230,6 +264,9 @@ export function useAppController() {
     getWorkdir,
     getProjectId,
     getChatId,
+    getCodingHarness: () => codingHarness,
+    getCodingModel: () => codexModel || undefined,
+    getCodingEffort: () => codexReasoningEffort || undefined,
     onAudio: (audioUrl) => void playResponseAudio(audioUrl),
     onDebug: (message) => consoleForChat(getChatId() || "").addDebug(message),
     ...liveVoiceHandlers,
@@ -283,6 +320,7 @@ export function useAppController() {
     setError,
     codexModel,
     codexReasoningEffort,
+    codingHarness,
   });
   const { removeProject, removeChat } = store;
   const removeProjectWithRecovery = useCallback(
@@ -461,8 +499,12 @@ export function useAppController() {
     if (!activeFailedSubmission) return;
     restoreComposer(activeFailedSubmission.text);
     setMode(activeFailedSubmission.mode);
+    const restoredHarness = activeFailedSubmission.harness || "codex";
+    handleCodingHarnessChange(restoredHarness);
+    const restoredModels =
+      codingHarnesses.find((item) => item.id === restoredHarness)?.models || [];
     const selection = reconcileCodexSelection(
-      codexModels,
+      restoredModels,
       activeFailedSubmission.model || codexSelectionRef.current.model,
       activeFailedSubmission.reasoningEffort || codexSelectionRef.current.reasoningEffort,
     );
@@ -475,7 +517,13 @@ export function useAppController() {
       activeFailedSubmission.userMessageId,
     );
     setError("");
-  }, [activeFailedSubmission, clearFailedSubmission, codexModels, restoreComposer]);
+  }, [
+    activeFailedSubmission,
+    clearFailedSubmission,
+    codingHarnesses,
+    handleCodingHarnessChange,
+    restoreComposer,
+  ]);
   const dismissError = useCallback(() => {
     setError("");
   }, []);
@@ -571,6 +619,8 @@ export function useAppController() {
       failedRequestCount: activeFailedSubmissions.length,
       backendRecoveryState,
       codexModels,
+      codingHarnesses,
+      codingHarness,
       codexModel,
       codexReasoningEffort,
       textareaRef,
@@ -682,6 +732,7 @@ export function useAppController() {
       onRetryBackend: retryBackend,
       onJumpToLatest: jumpToLatest,
       onCodexModelChange: handleCodexModelChange,
+      onCodingHarnessChange: handleCodingHarnessChange,
       onCodexReasoningEffortChange: handleCodexReasoningEffortChange,
       onToggleMute: liveVoice.toggleMute,
       onHoldToTalk: holdToTalk,

@@ -14,6 +14,8 @@ import type {
   DebugEntry,
   DoctorCheck,
   CodexModel,
+  CodingHarness,
+  CodingHarnessInfo,
   Handoff,
   Message,
   Project,
@@ -67,6 +69,8 @@ export type WorkspaceLayoutProps = {
     failedRequestCount: number;
     backendRecoveryState: BackendRecoveryState;
     codexModels: CodexModel[];
+    codingHarnesses: CodingHarnessInfo[];
+    codingHarness: CodingHarness;
     codexModel: string;
     codexReasoningEffort: string;
     textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -126,6 +130,7 @@ export type WorkspaceLayoutProps = {
     onRetryBackend: () => void;
     onJumpToLatest: () => void;
     onCodexModelChange: (model: string) => void;
+    onCodingHarnessChange: (harness: CodingHarness) => void;
     onCodexReasoningEffortChange: (effort: string) => void;
     onToggleMute: () => void;
     onHoldToTalk: () => void;
@@ -376,6 +381,8 @@ export default function WorkspaceLayout({
           backendStatus={status}
           backendRecoveryState={backendRecoveryState}
           codexModels={chat.codexModels}
+          codingHarnesses={chat.codingHarnesses}
+          codingHarness={chat.codingHarness}
           codexModel={chat.codexModel}
           codexReasoningEffort={chat.codexReasoningEffort}
           textareaRef={textareaRef}
@@ -388,6 +395,7 @@ export default function WorkspaceLayout({
           onRetryBackend={onRetryBackend}
           onJumpToLatest={onJumpToLatest}
           onCodexModelChange={handlers.onCodexModelChange}
+          onCodingHarnessChange={handlers.onCodingHarnessChange}
           onCodexReasoningEffortChange={handlers.onCodexReasoningEffortChange}
           onToggleMute={onToggleMute}
           onHoldToTalk={onHoldToTalk}

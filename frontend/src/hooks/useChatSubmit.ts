@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 
 import type { useProjectStore } from "./useProjectStore";
-import type { ChatMode, Project } from "../types";
+import type { ChatMode, CodingHarness, Project } from "../types";
 import { chatTitleFrom } from "../utils";
 import {
   type ChatSubmission,
@@ -23,6 +23,7 @@ type UseChatSubmitOptions = {
     message: string,
     project: Project,
     chatId: string,
+    harness: CodingHarness,
     model?: string,
     reasoningEffort?: string,
   ) => Promise<void>;
@@ -31,12 +32,14 @@ type UseChatSubmitOptions = {
     project: Project,
     chatId: string,
     userMessageId: string,
+    harness: CodingHarness,
     model?: string,
     reasoningEffort?: string,
     onBackgroundFailure?: (message: string) => void,
   ) => Promise<void>;
   codexModel?: string;
   codexReasoningEffort?: string;
+  codingHarness: CodingHarness;
   activeAbortControllerRef: { current: AbortController | null };
   setError: (message: string) => void;
 };
@@ -52,6 +55,7 @@ export function useChatSubmit({
   setError,
   codexModel,
   codexReasoningEffort,
+  codingHarness,
 }: UseChatSubmitOptions) {
   const [busy, setBusy] = useState(false);
   const [busyChatId, setBusyChatId] = useState("");
@@ -74,6 +78,7 @@ export function useChatSubmit({
             submission.project,
             submission.chatId,
             submission.userMessageId,
+            submission.harness || codingHarness,
             submission.model,
             submission.reasoningEffort,
             (message) => recordFailedSubmission(submission, message),
@@ -83,6 +88,7 @@ export function useChatSubmit({
             submission.text,
             submission.project,
             submission.chatId,
+            submission.harness || codingHarness,
             submission.model,
             submission.reasoningEffort,
           );
@@ -96,7 +102,14 @@ export function useChatSubmit({
         setBusyChatId("");
       }
     },
-    [activeAbortControllerRef, recordFailedSubmission, setError, streamAgent, streamCodex],
+    [
+      activeAbortControllerRef,
+      codingHarness,
+      recordFailedSubmission,
+      setError,
+      streamAgent,
+      streamCodex,
+    ],
   );
 
   const send = useCallback(
@@ -132,11 +145,22 @@ export function useChatSubmit({
         chatId,
         userMessageId,
         mode,
+        harness: codingHarness,
         model: codexModel,
         reasoningEffort: codexReasoningEffort,
       });
     },
-    [busy, input, mode, resetComposer, runSubmission, store, codexModel, codexReasoningEffort],
+    [
+      busy,
+      codingHarness,
+      codexModel,
+      codexReasoningEffort,
+      input,
+      mode,
+      resetComposer,
+      runSubmission,
+      store,
+    ],
   );
 
   const clearFailedSubmission = useCallback(

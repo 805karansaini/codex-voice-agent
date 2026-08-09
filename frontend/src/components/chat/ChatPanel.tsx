@@ -1,6 +1,14 @@
 import type { ChangeEvent, RefObject } from "react";
 
-import type { ChatArtifact, ChatMode, CodexModel, Message, Project } from "../../types";
+import type {
+  ChatArtifact,
+  ChatMode,
+  CodexModel,
+  CodingHarness,
+  CodingHarnessInfo,
+  Message,
+  Project,
+} from "../../types";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
 import type { BackendStatus } from "../../hooks/useBackendStatus";
 import type { BackendRecoveryState } from "../../utils/backendRecovery";
@@ -43,6 +51,8 @@ type ChatPanelProps = {
   backendRecoveryState: BackendRecoveryState;
   backendStatus: BackendStatus;
   codexModels: CodexModel[];
+  codingHarnesses: CodingHarnessInfo[];
+  codingHarness: CodingHarness;
   codexModel: string;
   codexReasoningEffort: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -62,6 +72,7 @@ type ChatPanelProps = {
   onRetryBackend: () => void;
   onJumpToLatest: () => void;
   onCodexModelChange: (model: string) => void;
+  onCodingHarnessChange: (harness: CodingHarness) => void;
   onCodexReasoningEffortChange: (effort: string) => void;
   onToggleMute: () => void;
   onHoldToTalk: () => void;
@@ -103,6 +114,8 @@ export default function ChatPanel({
   backendRecoveryState,
   backendStatus,
   codexModels,
+  codingHarnesses,
+  codingHarness,
   codexModel,
   codexReasoningEffort,
   textareaRef,
@@ -122,6 +135,7 @@ export default function ChatPanel({
   onRetryBackend,
   onJumpToLatest,
   onCodexModelChange,
+  onCodingHarnessChange,
   onCodexReasoningEffortChange,
   onToggleMute,
   onHoldToTalk,
@@ -146,6 +160,7 @@ export default function ChatPanel({
         isMobile={isMobile}
         busy={busy}
         mode={mode}
+        codingHarness={codingHarness}
         activeProject={activeProject}
         messages={messages}
         suggestions={suggestions}
@@ -185,6 +200,8 @@ export default function ChatPanel({
         backendStatus={backendStatus}
         backendRecoveryState={backendRecoveryState}
         codexModels={codexModels}
+        codingHarnesses={codingHarnesses}
+        codingHarness={codingHarness}
         codexModel={codexModel}
         codexReasoningEffort={codexReasoningEffort}
         textareaRef={textareaRef}
@@ -196,6 +213,7 @@ export default function ChatPanel({
         onDismissFailedRequest={onDismissFailedRequest}
         onRetryBackend={onRetryBackend}
         onCodexModelChange={onCodexModelChange}
+        onCodingHarnessChange={onCodingHarnessChange}
         onCodexReasoningEffortChange={onCodexReasoningEffortChange}
         onToggleVoice={onToggleVoice}
         onToggleMute={onToggleMute}

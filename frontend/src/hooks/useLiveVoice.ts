@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CodexTimelineEvent, GeminiLiveUsage, LiveVoiceState } from "../types";
+import type { CodexTimelineEvent, CodingHarness, GeminiLiveUsage, LiveVoiceState } from "../types";
 import type { ServerEvent } from "../types/protocol";
 import { parseServerEventJson } from "../types/protocol.ts";
 import { getWebSocketUrl } from "../services/api";
@@ -29,10 +29,13 @@ interface UseLiveVoiceProps {
   getWorkdir: () => string | undefined;
   getProjectId: () => string | undefined;
   getChatId: () => string | undefined;
+  getCodingHarness: () => CodingHarness;
+  getCodingModel: () => string | undefined;
+  getCodingEffort: () => string | undefined;
   onAudio: (audioUrl: string) => void;
   onDebug: (message: string) => void;
   onHandoff: (name: string, summary: string, workdir?: string, details?: ServerEvent) => void;
-  onHandoffStart?: (name: string, task: string, workdir: string) => void;
+  onHandoffStart?: (name: string, task: string, workdir: string, harness: CodingHarness) => void;
   onHandoffProgress?: (name: string, text: string) => void;
   onHandoffFailed?: (name: string, message: string) => void;
   onHandoffStartDeliveryFailed?: (message: string) => void;
@@ -55,6 +58,9 @@ export function useLiveVoice({
   getWorkdir,
   getProjectId,
   getChatId,
+  getCodingHarness,
+  getCodingModel,
+  getCodingEffort,
   onAudio,
   onDebug,
   onHandoff,
@@ -156,6 +162,9 @@ export function useLiveVoice({
     getWorkdir,
     getProjectId,
     getChatId,
+    getCodingHarness,
+    getCodingModel,
+    getCodingEffort,
   });
 
   useEffect(() => {
@@ -177,6 +186,9 @@ export function useLiveVoice({
       getWorkdir,
       getProjectId,
       getChatId,
+      getCodingHarness,
+      getCodingModel,
+      getCodingEffort,
     };
   }, [
     onAudio,
@@ -196,6 +208,9 @@ export function useLiveVoice({
     getWorkdir,
     getProjectId,
     getChatId,
+    getCodingHarness,
+    getCodingModel,
+    getCodingEffort,
   ]);
 
   const log = useCallback((text: string) => cbRef.current.onDebug(text), []);
@@ -266,6 +281,7 @@ export function useLiveVoice({
       const workdir = cbRef.current.getWorkdir();
       const projectId = cbRef.current.getProjectId();
       const chatId = cbRef.current.getChatId();
+      const harness = cbRef.current.getCodingHarness();
       if (!workdir || websocket.readyState !== WebSocket.OPEN) return;
       log(`[Config] Sending session config: chatId=${chatId}, workdir=${workdir}`);
       websocket.send(
@@ -274,6 +290,9 @@ export function useLiveVoice({
           workdir,
           project_id: projectId,
           chat_id: chatId,
+          harness,
+          model: cbRef.current.getCodingModel(),
+          reasoning_effort: cbRef.current.getCodingEffort(),
         }),
       );
     },
@@ -514,11 +533,13 @@ export function useLiveVoice({
         } else if (payload.type === "tool_call_started") {
           clearToolResultFallback();
           usedCodexRef.current = true;
-          transition("working", `Codex is running: ${payload.task || ""}`);
+          const provider = payload.harness === "claude" ? "Claude" : "Codex";
+          transition("working", `${provider} is running: ${payload.task || ""}`);
           cbRef.current.onHandoffStart?.(
             payload.name || "run_codex_task",
             payload.task || "",
             payload.workdir || "",
+            payload.harness === "claude" ? "claude" : "codex",
           );
           log(`[Tool Call Started] ${payload.name || "tool"}. Task: "${payload.task || ""}"`);
         } else if (payload.type === "tool_progress") {
@@ -587,7 +608,8 @@ export function useLiveVoice({
           transition("reconnecting", "Gemini is reconnecting after missing a tool response.");
           log(`[Tool Response Delivery Failed] ${payload.message}`);
         } else if (payload.type === "background_job_completed") {
-          const result = String(payload.result || "Codex background task completed.").trim();
+          const provider = payload.harness === "claude" ? "Claude" : "Codex";
+          const result = String(payload.result || `${provider} background task completed.`).trim();
           const handoffId = String(payload.handoff?.id || "");
           setAssistantPreview("");
           cbRef.current.onHandoff("run_codex_task", result, payload.handoff?.workdir || "", {
@@ -602,7 +624,7 @@ export function useLiveVoice({
             );
           }
           requestSpeech(result);
-          log("[Codex] Received server-delivered background completion.");
+          log(`[${provider}] Received server-delivered background completion.`);
         } else if (payload.type === "error") {
           transition("error", payload.message || "Live voice failed.");
           log(`Live voice error: ${payload.message || "unknown error"}`);

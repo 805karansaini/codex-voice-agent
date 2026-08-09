@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
-import type { ChatArtifact, Message, Project } from "../../types";
+import type { ChatArtifact, CodingHarness, Message, Project } from "../../types";
 import { cn } from "../../utils";
 import { changeArtifacts } from "../../utils/artifacts";
 import { copyTextToClipboard } from "../../utils/clipboard";
@@ -24,6 +24,7 @@ type ChatStreamProps = {
   isMobile: boolean;
   busy: boolean;
   mode: "agent" | "codex";
+  codingHarness: CodingHarness;
   activeProject?: Project | null;
   messages: Message[];
   suggestions: string[];
@@ -90,6 +91,7 @@ export default function ChatStream({
   isMobile,
   busy,
   mode,
+  codingHarness,
   activeProject,
   messages,
   suggestions,
@@ -102,6 +104,7 @@ export default function ChatStream({
   onRevertChangeReview,
   onJumpToLatest,
 }: ChatStreamProps) {
+  const provider = codingHarness === "claude" ? "Claude" : "Codex";
   return (
     <div className="relative min-h-0 flex-1">
       <section
@@ -136,15 +139,15 @@ export default function ChatStream({
               </div>
               <p className="label mb-2">Ready in {activeProject.name}</p>
               <h2 className="text-[19px] font-semibold tracking-[-0.02em]">
-                {mode === "codex" ? "What should Codex do?" : "How can Vodex help?"}
+                {mode === "codex" ? `What should ${provider} do?` : "How can Vodex help?"}
               </h2>
               <p className="mx-auto mt-2 max-w-md truncate font-mono text-[11.5px] text-fg-dim">
                 {activeProject.path}
               </p>
               <p className="mt-3 text-[13.5px] text-fg-muted">
                 {mode === "codex"
-                  ? "Give Codex a concrete local task to inspect, change, test, or review."
-                  : "Ask, plan, or talk it through—Vodex can bring in Codex when local work is needed."}
+                  ? `Give ${provider} a concrete local task to inspect, change, test, or review.`
+                  : `Ask, plan, or talk it through—Vodex can bring in ${provider} when local work is needed.`}
               </p>
 
               <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left max-w-lg mx-auto">

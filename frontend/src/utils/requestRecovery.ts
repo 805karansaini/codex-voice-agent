@@ -1,4 +1,4 @@
-import type { ChatMode, Project } from "../types";
+import type { ChatMode, CodingHarness, Project } from "../types";
 
 export type FailedChatSubmission = {
   text: string;
@@ -6,6 +6,7 @@ export type FailedChatSubmission = {
   chatId: string;
   userMessageId: string;
   mode: ChatMode;
+  harness?: CodingHarness;
   model?: string;
   reasoningEffort?: string;
   errorMessage: string;

@@ -18,14 +18,21 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from .claude_runner import (
+    claude_auth_status,
+    close_claude_session,
+    close_claude_sessions,
+    close_claude_sessions_for,
+    probe_claude_sdk_auth_status,
+)
 from .codex_runner import (
     CancellationToken,
     close_codex_thread_session,
     close_codex_thread_sessions,
     close_codex_thread_sessions_for,
     resolve_workdir,
-    run_codex_stream_with_timer,
 )
+from .coding_runner import coding_harness_label, run_coding_stream_with_timer
 from .gemini_agent import _pcm_to_wav_data_url, ask_gemini_stream, live_connect_config
 from .history import (
     ArtifactStore,
@@ -82,6 +89,9 @@ class _LiveClientConfig(TypedDict):
     chat_id: str | None
     workdir: str
     conversation_context: str
+    harness: str
+    model: str | None
+    reasoning_effort: str | None
 
 
 class _LiveCompletion(TypedDict):
@@ -89,6 +99,7 @@ class _LiveCompletion(TypedDict):
     result: str
     artifacts: list[dict[str, object]]
     background_job_id: NotRequired[str]
+    harness: NotRequired[str]
 
 
 @dataclass(frozen=True)
@@ -416,6 +427,7 @@ def _persist_background_codex_handoff(job: CodexBackgroundJob) -> dict[str, obje
                     "background_job_id": job.id,
                     "result": job.result,
                     "artifacts": job.artifacts,
+                    "harness": job.harness,
                 }
             )
     return handoff
@@ -445,7 +457,7 @@ _background_jobs = BackgroundJobService(
     app_log=app_log,
     create_tool_artifact=_create_tool_artifact_for_job,
     create_change_review_artifact=_create_change_review_artifact_for_job,
-    run_codex_stream=run_codex_stream_with_timer,
+    run_codex_stream=run_coding_stream_with_timer,
     create_handoff=_persist_background_codex_handoff,
 )
 
@@ -454,11 +466,21 @@ _CodexBackgroundJob = CodexBackgroundJob
 _codex_jobs = _background_jobs.jobs
 
 
+async def _close_coding_session(conversation_id: str | None) -> None:
+    await close_codex_thread_session(conversation_id)
+    await close_claude_session(conversation_id)
+
+
+async def _close_coding_sessions_for(conversation_ids: list[str]) -> None:
+    await close_codex_thread_sessions_for(conversation_ids)
+    await close_claude_sessions_for(conversation_ids)
+
+
 def _sync_background_job_dependencies() -> None:
     _background_jobs.configure(
         history=history,
         app_log=app_log,
-        run_codex_stream=run_codex_stream_with_timer,
+        run_codex_stream=run_coding_stream_with_timer,
         create_handoff=_persist_background_codex_handoff,
     )
 
@@ -480,6 +502,7 @@ async def _enqueue_codex_background_job(
     workdir: str,
     project_id: str | None,
     chat_id: str | None,
+    harness: str = "codex",
     model: str | None = None,
     reasoning_effort: str | None = None,
     source: str = "direct",
@@ -496,6 +519,7 @@ async def _enqueue_codex_background_job(
                 project_id=project_id,
                 chat_id=chat_id,
                 source=source,
+                harness=harness,
                 model=model,
                 reasoning_effort=reasoning_effort,
             )
@@ -509,6 +533,7 @@ async def _enqueue_codex_background_job(
                 workdir=workdir,
                 task_chars=len(task),
                 source=source,
+                harness=harness,
             )
             return job
     except ForegroundActivityUnavailable as exc:
@@ -523,6 +548,7 @@ async def lifespan(app: FastAPI):
     finally:
         await _background_jobs.close()
         await close_codex_thread_sessions()
+        await close_claude_sessions()
 
 
 app = FastAPI(title="Vodex", lifespan=lifespan)
@@ -648,7 +674,7 @@ app.include_router(
         console=console,
         project_root=_project_root,
         resolve_workdir=resolve_workdir,
-        close_sessions=close_codex_thread_sessions_for,
+        close_sessions=_close_coding_sessions_for,
         cancel_background_jobs=_background_jobs.cancel_and_remove,
         foreground_activity=_foreground_activity.activity,
         cleanup_foreground_work=_foreground_activity.cleanup,
@@ -676,6 +702,9 @@ def _live_client_config_from_payload(
         "chat_id": chat_id,
         "workdir": workdir,
         "conversation_context": _chat_context(chat_id, workdir),
+        "harness": "claude" if payload.get("harness") == "claude" else "codex",
+        "model": str(payload.get("model") or "").strip() or None,
+        "reasoning_effort": str(payload.get("reasoning_effort") or "").strip() or None,
     }
 
 
@@ -714,31 +743,32 @@ def _live_tool_call_request(
 
 def _codex_status_for_chat(chat_id: str | None) -> str:
     if not chat_id:
-        return "No chat is selected, so I cannot find a Codex background job."
+        return "No chat is selected, so I cannot find a coding-agent background job."
     jobs = [job for job in list(_codex_jobs.values()) if job.chat_id == chat_id]
     if not jobs:
-        return "Codex is not currently running a background task in this chat."
+        return "No coding agent is currently running a background task in this chat."
     jobs.sort(key=lambda item: item.updated_at, reverse=True)
     job = jobs[0]
+    provider = coding_harness_label(job.harness)
     if job.status == "done":
-        result = str(job.result).strip() if job.result else "Codex finished."
+        result = str(job.result).strip() if job.result else f"{provider} finished."
         return (
-            "Codex finished the latest task. Use this exact completed Codex result when the "
-            f"user asks what Codex found or asks you to read/summarize it:\n{result}"
+            f"{provider} finished the latest task. Use this exact completed {provider} result when the "
+            f"user asks what {provider} found or asks you to read/summarize it:\n{result}"
         )
     if job.status == "failed":
-        return f"Codex failed the latest task. {job.error or 'No error details were recorded.'}"
-    progress = job.latest_status or "Codex is still working."
-    return f"Codex is still running. Latest progress: {progress}"
+        return f"{provider} failed the latest task. {job.error or 'No error details were recorded.'}"
+    progress = job.latest_status or f"{provider} is still working."
+    return f"{provider} is still running. Latest progress: {progress}"
 
 
 def _background_result_speech_prompt(text: str) -> str:
     return (
-        "A background Codex task finished while the voice session remained open. "
+        "A background coding-agent task finished while the voice session remained open. "
         "Read the following result aloud clearly and with useful detail. Do not say only "
         "that it is done. If the result is long, speak a concise but complete version "
         "that preserves the important list items, decisions, and outcomes.\n\n"
-        f"Codex result:\n{text}"
+        f"Coding-agent result:\n{text}"
     )
 
 
@@ -754,17 +784,24 @@ async def _start_live_codex_background_job(
     call_name: str | None,
     send_json: Any,
     live_log: LiveSessionLogger,
+    harness: str = "codex",
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> _LiveCodexResult:
+    provider = coding_harness_label(harness)
     job = await _enqueue_codex_background_job(
         task=request.task,
         enhanced_task=request.enhanced_task,
         workdir=request.workdir,
         project_id=project_id,
         chat_id=chat_id,
+        harness=harness,
+        model=model,
+        reasoning_effort=reasoning_effort,
         source="voice",
     )
     message = (
-        "Codex is running this task in the background. "
+        f"{provider} is running this task in the background. "
         "You can ask for status at any time, and the final result will appear in this chat when it finishes."
     )
     live_log.write(
@@ -790,6 +827,7 @@ async def _start_live_codex_background_job(
             "codex_status": "running",
             "background_job_id": job.id,
             "background_job_status": job.status,
+            "harness": job.harness,
         }
     )
     return _LiveCodexResult(
@@ -857,7 +895,7 @@ def _codex_doctor_auth_check() -> dict[str, object]:
     )
 
 
-def _doctor_checks() -> list[dict[str, object]]:
+def _doctor_checks(claude_auth: dict[str, Any] | None = None) -> list[dict[str, object]]:
     checks = [
         _doctor_check(
             "Google API key",
@@ -898,6 +936,32 @@ def _doctor_checks() -> list[dict[str, object]]:
             codex_ok,
             "Available" if codex_ok else "Missing",
             "Install backend dependencies with uv sync.",
+        )
+    )
+    try:
+        __import__("claude_agent_sdk")
+        claude_sdk_ok = True
+    except Exception:
+        claude_sdk_ok = False
+    checks.append(
+        _doctor_check(
+            "Claude Agent SDK",
+            claude_sdk_ok,
+            "Available" if claude_sdk_ok else "Missing",
+            "Install backend dependencies with uv sync.",
+        )
+    )
+    claude_auth = claude_auth or claude_auth_status()
+    checks.append(
+        _doctor_check(
+            "Claude Code login",
+            bool(claude_auth.get("installed") and claude_auth.get("loggedIn")),
+            (
+                "Signed in with the local Claude Code CLI"
+                if claude_auth.get("loggedIn")
+                else "Claude Code CLI is not signed in"
+            ),
+            "" if claude_auth.get("loggedIn") else "Run claude auth login in Terminal.",
         )
     )
     return checks
@@ -1250,6 +1314,7 @@ class ChatRequest(BaseModel):
     workdir: str | None = None
     project_id: str | None = None
     chat_id: str | None = None
+    harness: str = "codex"
     model: str | None = None
     reasoning_effort: str | None = None
 
@@ -1281,7 +1346,8 @@ async def health() -> dict[str, object]:
 
 @app.get("/api/doctor")
 async def doctor() -> dict[str, object]:
-    checks = await asyncio.to_thread(_doctor_checks)
+    claude_auth = await probe_claude_sdk_auth_status()
+    checks = await asyncio.to_thread(_doctor_checks, claude_auth)
     return {"ok": all(bool(check["ok"]) for check in checks), "checks": checks}
 
 
@@ -1331,7 +1397,7 @@ async def clear_history(
         for scoped_chat_id in chat_ids:
             await _background_jobs.cancel_and_remove(chat_id=scoped_chat_id)
         if chat_ids:
-            await close_codex_thread_sessions_for(chat_ids)
+            await _close_coding_sessions_for(chat_ids)
             _clear_live_chat_state(chat_ids)
 
         def clear_scoped_data() -> None:
@@ -1425,7 +1491,7 @@ def export_chat_markdown(chat_id: str) -> Response:
 async def delete_chat(chat_id: str) -> dict[str, object]:
     async with _foreground_activity.cleanup(chat_ids=[chat_id]):
         await _background_jobs.cancel_and_remove(chat_id=chat_id)
-        await close_codex_thread_session(chat_id)
+        await _close_coding_session(chat_id)
         _clear_live_chat_state([chat_id])
 
         def delete_chat_data() -> None:
@@ -1516,6 +1582,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         "workdir": workdir,
                         "project_id": req.project_id,
                         "chat_id": req.chat_id,
+                        "coding_harness": req.harness,
                     },
                 )
                 _write_model_context_packet(
@@ -1575,6 +1642,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         conversation_id=req.chat_id,
                         conversation_context=conversation_context,
                         project_root=project_root,
+                        coding_harness=req.harness,
                         codex_model=req.model,
                         codex_reasoning_effort=req.reasoning_effort,
                     ):
@@ -1607,7 +1675,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                                 _create_tool_artifact,
                                 chat_id=req.chat_id,
                                 message_id=None,
-                                title=f"{event.get('name') or 'Codex'} output",
+                                title=f"{coding_harness_label(req.harness)} output",
                                 content=event.get("result"),
                                 source=str(event.get("name") or "run_codex_task"),
                                 workdir=str(event.get("workdir") or workdir),
@@ -1660,6 +1728,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                                     "codex_turn_id": final_codex_turn_id,
                                     "codex_thread_id": final_codex_thread_id,
                                     "codex_status": final_codex_status,
+                                    "coding_harness": req.harness,
                                     "workdir": final_workdir,
                                     "project_id": req.project_id,
                                     "chat_id": req.chat_id,
@@ -1708,6 +1777,9 @@ async def live_voice(websocket: WebSocket) -> None:
     session_project_id: str | None = None
     session_chat_id: str | None = None
     session_conversation_context = ""
+    session_coding_harness = "codex"
+    session_coding_model: str | None = None
+    session_coding_effort: str | None = None
     session_ended_by_tool = False
     completion_queue: asyncio.Queue[_LiveCompletion] = asyncio.Queue()
     received_gemini_server_message = False
@@ -1791,6 +1863,7 @@ async def live_voice(websocket: WebSocket) -> None:
 
     async def send_client_audio(session: _LiveSession, initial: dict | None = None) -> None:
         nonlocal session_workdir, session_project_id, session_chat_id, session_conversation_context
+        nonlocal session_coding_harness, session_coding_model, session_coding_effort
         pending = initial
         while True:
             payload = pending if pending is not None else await websocket.receive_json()
@@ -1818,6 +1891,9 @@ async def live_voice(websocket: WebSocket) -> None:
                     session_chat_id = config["chat_id"]
                     session_workdir = config["workdir"]
                     session_conversation_context = config["conversation_context"]
+                    session_coding_harness = config.get("harness") or "codex"
+                    session_coding_model = config.get("model")
+                    session_coding_effort = config.get("reasoning_effort")
                 live_log.write(
                     "client.config",
                     chat_id=session_chat_id,
@@ -1999,6 +2075,7 @@ async def live_voice(websocket: WebSocket) -> None:
                                 "task": request.enhanced_task,
                                 "original_task": request.task,
                                 "workdir": request.workdir,
+                                "harness": session_coding_harness,
                             }
                         )
 
@@ -2009,6 +2086,9 @@ async def live_voice(websocket: WebSocket) -> None:
                             call_name=call.name,
                             send_json=websocket.send_json,
                             live_log=live_log,
+                            harness=session_coding_harness,
+                            model=session_coding_model,
+                            reasoning_effort=session_coding_effort,
                         )
                         started_background_job = True
                         turn_state.add_codex_result(
@@ -2246,6 +2326,9 @@ async def live_voice(websocket: WebSocket) -> None:
             session_chat_id = config["chat_id"]
             session_workdir = config["workdir"]
             session_conversation_context = config["conversation_context"]
+            session_coding_harness = config.get("harness") or "codex"
+            session_coding_model = config.get("model")
+            session_coding_effort = config.get("reasoning_effort")
             live_log.write(
                 "client.initial_config",
                 chat_id=session_chat_id,

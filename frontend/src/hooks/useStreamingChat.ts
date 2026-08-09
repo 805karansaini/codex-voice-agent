@@ -2,7 +2,7 @@ import { useCallback } from "react";
 
 import * as api from "../services/api";
 import { watchCodexJob } from "../services/codexJobs";
-import type { Project } from "../types";
+import type { CodingHarness, Project } from "../types";
 import { appendArtifacts } from "../utils/artifacts";
 import { appendCodexEvent } from "../utils/codexEvents";
 import { readSseStream } from "../utils/sse";
@@ -32,13 +32,15 @@ export function useStreamingChat({
       project: Project,
       chatId: string,
       userMessageId: string,
+      harness: CodingHarness,
       model?: string,
       reasoningEffort?: string,
       onBackgroundFailure?: (message: string) => void,
     ) => {
+      const provider = harness === "claude" ? "Claude" : "Codex";
       const telemetry = consoleForChat(chatId);
       const actionId = telemetry.addAction({
-        title: "Background Codex task",
+        title: `Background ${provider} task`,
         status: "running",
         detail: task,
         workdir: project.path,
@@ -47,7 +49,7 @@ export function useStreamingChat({
       store.appendMessage(chatId, {
         id: assistantId,
         role: "assistant",
-        text: "Started a background Codex task. I will update this message when it finishes.",
+        text: `Started a background ${provider} task. I will update this message when it finishes.`,
         usedCodex: true,
         streaming: true,
         workdir: project.path,
@@ -59,6 +61,7 @@ export function useStreamingChat({
           workdir: project.path,
           projectId: project.id,
           chatId,
+          harness,
           model,
           reasoningEffort,
         });
@@ -132,7 +135,7 @@ export function useStreamingChat({
           },
         });
       } catch (err) {
-        const failureMessage = err instanceof Error ? err.message : "Codex request failed.";
+        const failureMessage = err instanceof Error ? err.message : `${provider} request failed.`;
         store.updateMessage(chatId, assistantId, (message) => ({
           ...message,
           streaming: false,
@@ -155,6 +158,7 @@ export function useStreamingChat({
       message: string,
       project: Project,
       chatId: string,
+      harness: CodingHarness,
       model?: string,
       reasoningEffort?: string,
     ) => {
@@ -182,6 +186,7 @@ export function useStreamingChat({
             workdir: project.path,
             projectId: project.id,
             chatId,
+            harness,
             model,
             reasoningEffort,
           },
@@ -222,7 +227,7 @@ export function useStreamingChat({
           } else if (evt.type === "tool_call") {
             usedCodex = true;
             activeActionId = telemetry.addAction({
-              title: "Vodex handoff to Codex",
+              title: `Vodex handoff to ${harness === "claude" ? "Claude" : "Codex"}`,
               status: "running",
               detail: String(evt.task || "Local task"),
               streamingResponse: "",

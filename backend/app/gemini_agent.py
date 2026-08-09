@@ -8,7 +8,8 @@ from typing import Any, AsyncIterator, cast
 from google import genai
 from google.genai import types
 
-from .codex_runner import CancellationToken, run_codex_stream_with_timer
+from .codex_runner import CancellationToken
+from .coding_runner import run_coding_stream_with_timer
 from .prompting import improve_codex_task_prompt
 from .settings import Settings
 
@@ -36,7 +37,7 @@ TOOL-CALLING RULES (you must unmistakably follow these):
    completely. If the user asks to see content, show it in your response instead of
    telling them to open a file elsewhere.
 6. For the task parameter: use a lightly cleaned version of the user's request.
-   Improve grammar and clarity only. Do not inject chat history — Codex has its own
+   Improve grammar and clarity only. Do not inject chat history — the selected coding agent has its own
    session memory.
 7. For follow-up requests ("make those changes", "what about X"), use the recent
    conversation context to understand intent. Do not ask the user to repeat.
@@ -45,11 +46,11 @@ TOOL-CALLING RULES (you must unmistakably follow these):
 9. If recent artifact references already contain the answer and the user asks to
    show or revisit prior output, use those references. Call the tool again only
    when the user asks for fresh local state or a new task.
-10. If the user asks whether Codex is still running, asks for progress, or asks for
-   current status of a background Codex task, call `get_codex_status`.
+10. If the user asks whether the coding agent is still running, asks for progress, or asks for
+   current status of a background task, call `get_codex_status`.
 11. Treat ordinary local-work instructions as authorization to proceed. Do not ask
    for confirmation before routine inspection, edits, tests, builds, or commits.
-   Delegate the complete task to Codex and let it use its judgment. Ask first only
+   Delegate the complete task to the selected coding agent and let it use its judgment. Ask first only
    when the action would be destructive, irreversible, publish externally, spend
    money, expose secrets, or materially expand beyond what the user asked.
 
@@ -127,7 +128,7 @@ def _get_tools() -> list[types.Tool]:
                 types.FunctionDeclaration(
                     name="run_codex_task",
                     description=(
-                        "Execute a task on the user's local computer using the Codex coding agent. "
+                        "Execute a task on the user's local computer using the selected coding agent. "
                         "MUST be called for ANY request involving: files, code, directories, git, "
                         "commands, tests, builds, debugging, reviews, diffs, or project inspection. "
                         "Call this tool instead of answering from memory for any local-work question."
@@ -137,8 +138,8 @@ def _get_tools() -> list[types.Tool]:
                 types.FunctionDeclaration(
                     name="get_codex_status",
                     description=(
-                        "Get the latest known status and progress for Codex background jobs "
-                        "in the current chat. Use this when the user asks if Codex is still "
+                        "Get the latest known status and progress for coding-agent background jobs "
+                        "in the current chat. Use this when the user asks if the agent is still "
                         "running, what progress has been made, or whether a background task finished."
                     ),
                     parameters=get_codex_status_parameters,
@@ -221,6 +222,7 @@ async def ask_gemini_stream(
     conversation_id: str | None = None,
     conversation_context: str | None = None,
     project_root: str | None = None,
+    coding_harness: str = "codex",
     codex_model: str | None = None,
     codex_reasoning_effort: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
@@ -349,7 +351,7 @@ async def ask_gemini_stream(
                 }
                 final_response = ""
                 resolved_workdir = chosen_workdir
-                async for event in run_codex_stream_with_timer(
+                async for event in run_coding_stream_with_timer(
                     enhanced_task,
                     chosen_workdir,
                     settings,
@@ -357,12 +359,17 @@ async def ask_gemini_stream(
                     conversation_id,
                     codex_model,
                     codex_reasoning_effort,
+                    coding_harness,
                 ):
                     if event.get("type") == "codex_event":
                         codex_events.append(event)
                         codex_turn_id = event.get("turn_id") or codex_turn_id
                         codex_thread_id = event.get("thread_id") or codex_thread_id
-                        yield {"type": "codex_event", "event": event}
+                        yield {
+                            "type": "codex_event",
+                            "event": event,
+                            "harness": coding_harness,
+                        }
                     elif event.get("type") == "delta":
                         text_delta = event.get("text", "")
                         final_response += text_delta
@@ -370,12 +377,14 @@ async def ask_gemini_stream(
                             "type": "tool_progress",
                             "name": call.name,
                             "text": text_delta,
+                            "harness": coding_harness,
                         }
                     elif event.get("type") == "status":
                         yield {
                             "type": "status",
                             "message": event.get("message"),
                             "elapsed": event.get("elapsed"),
+                            "harness": coding_harness,
                         }
                     elif event.get("type") == "done":
                         final_response = event.get("text", final_response)
@@ -386,12 +395,17 @@ async def ask_gemini_stream(
                         codex_status = event.get("status") or codex_status
                     elif event.get("type") == "error":
                         final_response = f"Error: {event.get('message')}"
-                        yield {"type": "error", "message": event.get("message")}
+                        yield {
+                            "type": "error",
+                            "message": event.get("message"),
+                            "harness": coding_harness,
+                        }
                 tool_call = {
                     "name": call.name,
                     "args": {**args, "enhanced_task": enhanced_task},
                     "result": final_response,
                     "workdir": resolved_workdir,
+                    "harness": coding_harness,
                 }
                 tool_calls.append(tool_call)
                 yield {
@@ -403,6 +417,7 @@ async def ask_gemini_stream(
                     "codex_turn_id": codex_turn_id,
                     "codex_thread_id": codex_thread_id,
                     "codex_status": codex_status,
+                    "harness": coding_harness,
                 }
                 response_parts.append(
                     types.Part(

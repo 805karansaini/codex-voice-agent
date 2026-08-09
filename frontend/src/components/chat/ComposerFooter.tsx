@@ -3,7 +3,7 @@ import { ArrowUp, Mic, MicOff, PencilLine, RefreshCw, WifiOff, X } from "lucide-
 
 import { cn } from "../../utils";
 import type { VoiceInputMode } from "../../hooks/useVoiceInputMode";
-import type { ChatMode, CodexModel } from "../../types";
+import type { ChatMode, CodexModel, CodingHarness, CodingHarnessInfo } from "../../types";
 import type { BackendStatus } from "../../hooks/useBackendStatus";
 import type { BackendRecoveryState } from "../../utils/backendRecovery";
 import { isRequestUnavailable } from "../../utils/controlAvailability";
@@ -34,6 +34,8 @@ type ComposerFooterProps = {
   backendStatus: BackendStatus;
   backendRecoveryState: BackendRecoveryState;
   codexModels: CodexModel[];
+  codingHarnesses: CodingHarnessInfo[];
+  codingHarness: CodingHarness;
   codexModel: string;
   codexReasoningEffort: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -45,6 +47,7 @@ type ComposerFooterProps = {
   onDismissFailedRequest: () => void;
   onRetryBackend: () => void;
   onCodexModelChange: (model: string) => void;
+  onCodingHarnessChange: (harness: CodingHarness) => void;
   onCodexReasoningEffortChange: (effort: string) => void;
   onToggleVoice: () => void;
   onToggleMute: () => void;
@@ -84,6 +87,8 @@ export default function ComposerFooter({
   backendStatus,
   backendRecoveryState,
   codexModels,
+  codingHarnesses,
+  codingHarness,
   codexModel,
   codexReasoningEffort,
   textareaRef,
@@ -95,6 +100,7 @@ export default function ComposerFooter({
   onDismissFailedRequest,
   onRetryBackend,
   onCodexModelChange,
+  onCodingHarnessChange,
   onCodexReasoningEffortChange,
   onToggleVoice,
   onToggleMute,
@@ -117,6 +123,8 @@ export default function ComposerFooter({
     backendRecoveryState === "refreshing";
   const canSend = Boolean(input.trim() && hasActiveProject && !busy && !backendUnavailable);
   const selectedCodexModel = codexModels.find((item) => item.model === codexModel);
+  const selectedHarness = codingHarnesses.find((item) => item.id === codingHarness);
+  const provider = codingHarness === "claude" ? "Claude" : "Codex";
 
   React.useEffect(() => {
     if (!busy) {
@@ -291,6 +299,12 @@ export default function ComposerFooter({
           </div>
         )}
 
+        {codingHarness === "claude" && selectedHarness?.usagePolicy && (
+          <div className="mb-2 rounded-lg border border-warn/25 bg-warn/5 px-3 py-2 text-[11px] text-fg-muted">
+            {selectedHarness.usagePolicy}
+          </div>
+        )}
+
         {busy && (
           <div className="mb-2 flex items-center gap-2 px-1 text-[11.5px] text-fg-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-accent pulse-dot" />
@@ -298,7 +312,7 @@ export default function ComposerFooter({
               {cancelling
                 ? "Cancelling response…"
                 : mode === "codex"
-                  ? `Starting Codex task · ${formatElapsed(elapsed)}`
+                  ? `Starting ${provider} task · ${formatElapsed(elapsed)}`
                   : `Response in progress · ${formatElapsed(elapsed)}`}
             </span>
           </div>
@@ -331,10 +345,26 @@ export default function ComposerFooter({
 
           <div className="flex items-center justify-between border-t border-line-soft px-2 py-1.5 bg-surface-1/80">
             <div className="flex items-center gap-2">
+              {codingHarnesses.length > 0 && (
+                <select
+                  aria-label="Coding agent"
+                  value={codingHarness}
+                  onChange={(event) => onCodingHarnessChange(event.target.value as CodingHarness)}
+                  disabled={busy}
+                  className="rounded border border-line bg-surface-2 px-2 py-1 text-[11px] text-fg"
+                >
+                  {codingHarnesses.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.displayName}
+                      {!item.authenticated ? " (sign in required)" : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
               {codexModels.length > 0 && (
                 <>
                   <select
-                    aria-label="Codex model"
+                    aria-label={`${provider} model`}
                     value={codexModel}
                     onChange={(event) => onCodexModelChange(event.target.value)}
                     disabled={busy || codexModels.length === 0}
@@ -347,7 +377,7 @@ export default function ComposerFooter({
                     ))}
                   </select>
                   <select
-                    aria-label="Codex reasoning effort"
+                    aria-label={`${provider} reasoning effort`}
                     value={codexReasoningEffort}
                     onChange={(event) => onCodexReasoningEffortChange(event.target.value)}
                     disabled={busy || !selectedCodexModel}
@@ -355,7 +385,7 @@ export default function ComposerFooter({
                   >
                     {(selectedCodexModel?.supportedReasoningEfforts || []).map((item) => (
                       <option key={item.reasoningEffort} value={item.reasoningEffort}>
-                        {item.reasoningEffort}
+                        {item.reasoningEffort || "Default"}
                       </option>
                     ))}
                   </select>

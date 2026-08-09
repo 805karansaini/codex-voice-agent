@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable, Protocol, TypeVar, cast
 
+from ..coding_runner import coding_harness_label
 from ..history import HistoryStore
 from ..live_logging import clip_text
 from ..settings import Settings
@@ -35,6 +36,7 @@ class CodexBackgroundJob:
     project_id: str | None
     chat_id: str | None
     source: str = "direct"
+    harness: str = "codex"
     model: str | None = None
     reasoning_effort: str | None = None
     status: str = "queued"
@@ -57,6 +59,7 @@ class CodexBackgroundJob:
             "workdir": self.workdir,
             "project_id": self.project_id,
             "chat_id": self.chat_id,
+            "harness": self.harness,
             "model": self.model,
             "reasoning_effort": self.reasoning_effort,
             "status": self.status,
@@ -330,6 +333,7 @@ class BackgroundJobService:
             raise
 
     async def _complete_job(self, job: CodexBackgroundJob, event: dict[str, Any]) -> None:
+        provider = coding_harness_label(job.harness)
         job.result = str(event.get("text") or "")
         job.workdir = str(event.get("workdir") or job.workdir)
         final_events = self._compact_events(event.get("events"))
@@ -338,13 +342,13 @@ class BackgroundJobService:
         job.codex_turn_id = event.get("turn_id")
         job.codex_thread_id = event.get("thread_id")
         job.codex_status = event.get("status")
-        self.record_progress(job, "Codex completed the task.")
+        self.record_progress(job, f"{provider} completed the task.")
 
         artifact = await self._run_blocking(
             self.create_tool_artifact,
             job.chat_id,
             None,
-            "Codex output",
+            f"{provider} output",
             job.result,
             "background_codex",
             job.workdir,
@@ -362,9 +366,10 @@ class BackgroundJobService:
         await self._run_blocking(
             self.history.append,
             "assistant",
-            job.result or "Codex background task completed.",
+            job.result or f"{provider} background task completed.",
             {
                 "direct_codex": True,
+                "coding_harness": job.harness,
                 "background_job_id": job.id,
                 "artifacts": job.artifacts,
                 "workdir": job.workdir,
@@ -401,6 +406,7 @@ class BackgroundJobService:
                 "background_status": "queued",
                 "user_visible": job.source == "direct",
                 "source": job.source,
+                "coding_harness": job.harness,
                 "workdir": job.workdir,
                 "project_id": job.project_id,
                 "chat_id": job.chat_id,
@@ -412,7 +418,8 @@ class BackgroundJobService:
         if job is None:
             return
         self.touch(job, "running")
-        self.record_progress(job, "Codex started working.")
+        provider = coding_harness_label(job.harness)
+        self.record_progress(job, f"{provider} started working.")
         self.app_log.write(
             "codex_job.start", job_id=job.id, chat_id=job.chat_id, workdir=job.workdir
         )
@@ -426,6 +433,7 @@ class BackgroundJobService:
                 job.chat_id,
                 job.model,
                 job.reasoning_effort,
+                job.harness,
             ):
                 if event.get("type") == "codex_event":
                     compact_event = self._compact_event(event)
@@ -437,7 +445,7 @@ class BackgroundJobService:
                 elif event.get("type") == "status":
                     self.record_progress(job, event.get("message"))
                 elif event.get("type") == "delta":
-                    self.record_progress(job, "Codex is writing its response.")
+                    self.record_progress(job, f"{provider} is writing its response.")
                 elif event.get("type") == "done":
                     await self._complete_job(job, event)
                     return
@@ -447,7 +455,7 @@ class BackgroundJobService:
                         job.codex_events = final_events
                     self._fail_job(
                         job,
-                        str(event.get("message") or "Codex failed"),
+                        str(event.get("message") or f"{provider} failed"),
                         "codex_job.error",
                     )
                     return
@@ -464,7 +472,7 @@ class BackgroundJobService:
             if job.status == "running":
                 self._fail_job(
                     job,
-                    job.error or "Codex task ended before completion",
+                    job.error or f"{provider} task ended before completion",
                     "codex_job.error",
                 )
             await self.prune_terminal_jobs()

@@ -3,7 +3,13 @@ import { useCallback, useRef, useState } from "react";
 import { watchCodexJob } from "../services/codexJobs";
 import type { ActionPatch, ConsoleWriter } from "./useConsoleSession";
 import type { useProjectStore } from "./useProjectStore";
-import type { ChatArtifact, CodexTimelineEvent, GeminiLiveUsage, Project } from "../types";
+import type {
+  ChatArtifact,
+  CodexTimelineEvent,
+  CodingHarness,
+  GeminiLiveUsage,
+  Project,
+} from "../types";
 import type { ServerEvent } from "../types/protocol";
 import { chatTitleFrom } from "../utils";
 import { appendArtifacts } from "../utils/artifacts";
@@ -28,6 +34,7 @@ export type ActiveCodexJobStatus = {
   message: string;
   startedAt: number;
   workdir?: string;
+  harness: CodingHarness;
 };
 
 function stringValue(value: unknown, fallback = ""): string {
@@ -236,7 +243,7 @@ export function useLiveVoiceSessionHandlers({
         }
         resetActiveVoiceMessages();
       },
-      onHandoffStart: (_name: string, task: string, workdir?: string) => {
+      onHandoffStart: (_name: string, task: string, workdir: string, harness: CodingHarness) => {
         const ctx = voiceCtxRef.current;
         if (!ctx) return;
         let codexMessageId = activeAssistantVoiceMsgIdRef.current;
@@ -281,6 +288,7 @@ export function useLiveVoiceSessionHandlers({
           message: task || "Codex is starting the local work.",
           startedAt: Date.now(),
           workdir: workdir || ctx.project.path,
+          harness,
         });
       },
       onHandoffProgress: (_name: string, text: string) => {
@@ -365,6 +373,7 @@ export function useLiveVoiceSessionHandlers({
           const codexMessageId =
             activeCodexMsgIdRef.current || activeAssistantVoiceMsgIdRef.current;
           const task = stringValue(details?.task, summary) || "Codex is running the local task.";
+          const harness: CodingHarness = details?.harness === "claude" ? "claude" : "codex";
           activeVoiceJobIdRef.current = backgroundJobId;
           updateAction(activeVoiceActionIdRef.current, {
             status: "running",
@@ -412,6 +421,7 @@ export function useLiveVoiceSessionHandlers({
             message: task,
             startedAt,
             workdir,
+            harness,
           });
           const finishJob = () => {
             activeVoiceActionIdRef.current = null;
@@ -444,6 +454,7 @@ export function useLiveVoiceSessionHandlers({
                 message: progressText,
                 startedAt,
                 workdir: job.workdir || workdir,
+                harness: job.harness === "claude" ? "claude" : harness,
               });
             },
             onDone: (job, finalText) => {
