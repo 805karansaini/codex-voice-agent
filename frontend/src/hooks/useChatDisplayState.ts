@@ -1,4 +1,4 @@
-import { Message } from "../types";
+import type { CodingHarness, Message } from "../types";
 import type { useLiveVoice } from "./useLiveVoice";
 import type { ActiveCodexJobStatus } from "./useLiveVoiceSessionHandlers";
 
@@ -9,6 +9,14 @@ const formatElapsed = (seconds: number): string => {
   const secs = seconds % 60;
   return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
 };
+
+export function codingAgentWorkingName(harness: CodingHarness): string {
+  return harness === "claude" ? "Claudex" : "Codex";
+}
+
+export function codingAgentWorkingTitle(harness: CodingHarness, elapsed: number): string {
+  return `${codingAgentWorkingName(harness)} is working (${formatElapsed(elapsed)})`;
+}
 
 export function useChatDisplayState({
   liveVoice,
@@ -25,11 +33,12 @@ export function useChatDisplayState({
   messages: Message[];
   activeCodexJob?: ActiveCodexJobStatus | null;
 }) {
+  const workingHarness = activeCodexJob?.harness || "codex";
   const codexElapsed = activeCodexJob
     ? Math.max(0, Math.floor((Date.now() - activeCodexJob.startedAt) / 1000))
     : 0;
   const voiceTitle = activeCodexJob
-    ? `Codex is working (${formatElapsed(codexElapsed)})`
+    ? codingAgentWorkingTitle(workingHarness, codexElapsed)
     : liveVoice.state === "connecting"
       ? "Connecting…"
       : liveVoice.state === "reconnecting"
@@ -39,7 +48,7 @@ export function useChatDisplayState({
           : liveVoice.state === "thinking"
             ? "Vodex is responding"
             : liveVoice.state === "working"
-              ? `Codex is working (${formatElapsed(liveVoice.elapsed)})`
+              ? codingAgentWorkingTitle(workingHarness, liveVoice.elapsed)
               : liveVoice.state === "error"
                 ? "Voice needs attention"
                 : "Live voice";
