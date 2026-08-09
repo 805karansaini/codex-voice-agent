@@ -12,6 +12,17 @@ export function isNearScrollBottom(
 }
 
 type ScrollListenerTarget = Pick<HTMLElement, "addEventListener" | "removeEventListener">;
+type ScrollContainer = {
+  scrollHeight: number;
+  scrollTo(options?: ScrollToOptions): void;
+};
+
+export function scrollChatToBottom(
+  container: ScrollContainer | null,
+  behavior: ScrollBehavior = "auto",
+): void {
+  container?.scrollTo({ top: container.scrollHeight, behavior });
+}
 
 export function reconcileScrollListener(
   previous: ScrollListenerTarget | null,
@@ -28,12 +39,10 @@ export function reconcileScrollListener(
 
 export function useMessageAutoScroll({
   scrollContainerRef,
-  messageEndRef,
   contentKey,
   conversationKey,
 }: {
   scrollContainerRef: RefObject<HTMLElement | null>;
-  messageEndRef: RefObject<HTMLDivElement | null>;
   contentKey: unknown;
   conversationKey: string;
 }) {
@@ -64,7 +73,7 @@ export function useMessageAutoScroll({
       updateFollowState,
       () => {
         if (followingRef.current) {
-          messageEndRef.current?.scrollIntoView({ behavior: "auto" });
+          scrollChatToBottom(next);
         } else {
           setShowJumpToLatest(true);
         }
@@ -86,22 +95,22 @@ export function useMessageAutoScroll({
   useEffect(() => {
     followingRef.current = true;
     setShowJumpToLatest(false);
-    messageEndRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [conversationKey, messageEndRef]);
+    scrollChatToBottom(scrollContainerRef.current);
+  }, [conversationKey, scrollContainerRef]);
 
   useEffect(() => {
     if (followingRef.current) {
-      messageEndRef.current?.scrollIntoView({ behavior: "auto" });
+      scrollChatToBottom(scrollContainerRef.current);
       return;
     }
     setShowJumpToLatest(true);
-  }, [contentKey, messageEndRef]);
+  }, [contentKey, scrollContainerRef]);
 
   const jumpToLatest = useCallback(() => {
     followingRef.current = true;
     setShowJumpToLatest(false);
-    messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messageEndRef]);
+    scrollChatToBottom(scrollContainerRef.current, "smooth");
+  }, [scrollContainerRef]);
 
   return { showJumpToLatest, jumpToLatest };
 }

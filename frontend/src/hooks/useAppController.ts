@@ -470,7 +470,6 @@ export function useAppController() {
 
   const { showJumpToLatest, jumpToLatest } = useMessageAutoScroll({
     scrollContainerRef: chatScrollRef,
-    messageEndRef,
     contentKey: store.messages,
     conversationKey: store.activeChatId,
   });

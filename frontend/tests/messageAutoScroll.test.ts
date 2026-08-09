@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isNearScrollBottom, reconcileScrollListener } from "../src/hooks/useMessageAutoScroll.ts";
+import {
+  isNearScrollBottom,
+  reconcileScrollListener,
+  scrollChatToBottom,
+} from "../src/hooks/useMessageAutoScroll.ts";
 
 test("auto-scroll follows content while the reader remains near the bottom", () => {
   assert.equal(isNearScrollBottom(1_000, 620, 300), true);
@@ -11,6 +15,24 @@ test("auto-scroll follows content while the reader remains near the bottom", () 
 test("auto-scroll threshold can be tuned for compact views", () => {
   assert.equal(isNearScrollBottom(800, 450, 300, 50), true);
   assert.equal(isNearScrollBottom(800, 449, 300, 50), false);
+});
+
+test("auto-scroll moves only the chat container", () => {
+  const calls: ScrollToOptions[] = [];
+  const container = {
+    scrollHeight: 1_250,
+    scrollTo: (options: ScrollToOptions = {}) => {
+      calls.push(options);
+    },
+  };
+
+  scrollChatToBottom(container);
+  scrollChatToBottom(container, "smooth");
+
+  assert.deepEqual(calls, [
+    { top: 1_250, behavior: "auto" },
+    { top: 1_250, behavior: "smooth" },
+  ]);
 });
 
 test("scroll listeners move cleanly when the mobile chat section remounts", () => {
